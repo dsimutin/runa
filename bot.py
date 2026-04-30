@@ -65,7 +65,6 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def log_message(self, format: str, *args: object) -> None:
-        # Keep Render logs clean.
         return
 
 
@@ -75,6 +74,12 @@ def start_health_server() -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     logger.info("Health server started on port %s", PORT)
+
+
+async def post_init(application: Application) -> None:
+    """Log bot identity on startup so we can verify the token points to the right bot."""
+    me = await application.bot.get_me()
+    logger.info("Telegram bot connected: id=%s username=@%s name=%s", me.id, me.username, me.first_name)
 
 
 def tg_first_name(update: Update) -> str:
@@ -99,6 +104,20 @@ def choose_distinct_runes(count: int) -> List[Dict[str, Any]]:
     return random.sample(RUNES, count)
 
 
+def log_incoming_command(update: Update, command_name: str) -> None:
+    """Log incoming command for diagnostics."""
+    user = update.effective_user
+    chat = update.effective_chat
+    logger.info(
+        "Received /%s from user_id=%s username=%s chat_id=%s chat_type=%s",
+        command_name,
+        user.id if user else None,
+        user.username if user else None,
+        chat.id if chat else None,
+        chat.type if chat else None,
+    )
+
+
 def format_help() -> str:
     return (
         "✨ Команды бота:\n\n"
@@ -115,6 +134,7 @@ def format_help() -> str:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start command. Ask for name if it is not saved yet."""
+    log_incoming_command(update, "start")
     user_id = update.effective_user.id
     name = get_preferred_name(DB_PATH, user_id)
 
@@ -138,6 +158,7 @@ async def save_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Save preferred user name after /start."""
     user_id = update.effective_user.id
     name = (update.message.text or "").strip()
+    logger.info("Saving preferred name for user_id=%s", user_id)
 
     if not name:
         await update.message.reply_text("Напиши имя текстом, пожалуйста.")
@@ -162,11 +183,13 @@ async def save_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    log_incoming_command(update, "help")
     await update.message.reply_text(format_help())
 
 
 async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show daily main rune and auxiliary rune fixed per user/day."""
+    log_incoming_command(update, "runa")
     user_id = update.effective_user.id
     today = date.today().isoformat()
 
@@ -193,6 +216,7 @@ async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Answer user's question with one random rune."""
+    log_incoming_command(update, "ask")
     question = " ".join(context.args).strip()
 
     if not question:
@@ -267,6 +291,7 @@ async def build_ai_rasklad(name: str, question: str, runes: List[Dict[str, Any]]
 
 async def rasklad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Three-rune spread: situation, obstacle, advice."""
+    log_incoming_command(update, "rasklad")
     question = " ".join(context.args).strip()
 
     if not question:
@@ -301,7 +326,7 @@ def build_application() -> Application:
 
     init_db(DB_PATH)
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     start_conversation = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
