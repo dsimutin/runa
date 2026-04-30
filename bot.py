@@ -1,7 +1,9 @@
 import logging
 import os
 import random
+import threading
 from datetime import date
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import List, Dict, Any
 
 from dotenv import load_dotenv
@@ -38,8 +40,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo").strip()
 
 DB_PATH = os.getenv("DB_PATH", "rune_bot.db")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").rstrip("/")
-WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "telegram-webhook").strip("/")
 PORT = int(os.getenv("PORT", "10000"))
 
 ASK_NAME = 1
@@ -49,6 +49,32 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    """Tiny HTTP server so Render sees an open port while the bot uses polling."""
+
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Rune bot is running")
+
+    def do_HEAD(self) -> None:
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        # Keep Render logs clean.
+        return
+
+
+def start_health_server() -> None:
+    """Start a small HTTP server in a background thread for Render health checks."""
+    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    logger.info("Health server started on port %s", PORT)
 
 
 def tg_first_name(update: Update) -> str:
@@ -302,20 +328,9 @@ def build_application() -> Application:
 
 def main() -> None:
     app = build_application()
-
-    if WEBHOOK_URL:
-        webhook_url = f"{WEBHOOK_URL}/{WEBHOOK_PATH}"
-        logger.info("Starting bot in webhook mode on port %s, path /%s", PORT, WEBHOOK_PATH)
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=WEBHOOK_PATH,
-            webhook_url=webhook_url,
-            drop_pending_updates=True,
-        )
-    else:
-        logger.info("Starting bot in polling mode")
-        app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    start_health_server()
+    logger.info("Starting bot in polling mode. Telegram webhook will be deleted automatically.")
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
