@@ -24,7 +24,7 @@ from database import (
 )
 from rasklad_engine import generate_rasklad
 from runes_data import RUNES, get_rune_by_name
-from runes_interpretations import PSYCHOTYPES
+from runes_interpretations import PSYCHOTYPES, get_interpretation
 
 try:
     from openai import OpenAI
@@ -194,6 +194,10 @@ def get_user_palette(update: Update) -> str:
     except DatabaseError:
         logger.exception("Failed to get user palette")
     return "light"
+
+
+def rune_text(rune: Dict[str, Any], palette: str) -> Dict[str, str]:
+    return get_interpretation(rune.get("key", ""), palette, rune)
 
 
 async def ensure_profile_ready(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -390,14 +394,17 @@ async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await send_private_or_group(update, context, "Не получилось достать руну дня. Попробуй позже.")
         return
 
+    palette = get_user_palette(update)
     main_rune = get_rune_by_name(main_name)
     aux_rune = get_rune_by_name(aux_name)
+    main_text = rune_text(main_rune, palette)
+    aux_text = rune_text(aux_rune, palette)
     name = user_name(update)
     text = (
         f"🌞 {name}, руна дня — {main_rune['name']}\n\n"
-        f"{main_rune['short_desc']}\n\n"
+        f"{main_text['short_desc']}\n\n"
         f"🔮 Дополнительная энергия — {aux_rune['name']}\n"
-        f"{aux_rune['short_desc']}"
+        f"{aux_text['short_desc']}"
     )
     await send_private_or_group(update, context, text, image=make_rune_card(main_rune["name"], "Руна дня"))
 
@@ -417,9 +424,11 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
     if not await ensure_profile_ready(update, context):
         return
+    palette = get_user_palette(update)
     rune = random.choice(RUNES)
+    text_data = rune_text(rune, palette)
     is_yes = random.random() < 0.5
-    answer = rune["answer_yes"] if is_yes else rune["answer_no"]
+    answer = text_data["answer_yes"] if is_yes else text_data["answer_no"]
     label = "совет" if is_yes else "предупреждение"
     name = user_name(update)
 
