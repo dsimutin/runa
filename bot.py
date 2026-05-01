@@ -7,16 +7,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from database import (
-    DatabaseError,
-    get_or_create_daily_runes,
-    get_preferred_name,
-    init_db,
-    set_preferred_name,
-)
+from database import DatabaseError, get_or_create_daily_runes, init_db
 from runes_data import RUNES, get_rune_by_name
 
 try:
@@ -34,11 +28,23 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo").strip()
 DB_PATH = os.getenv("DB_PATH", "rune_bot.db")
 PORT = int(os.getenv("PORT", "10000"))
 
+STATE_WAITING_ASK = "waiting_ask"
+STATE_WAITING_RASKLAD = "waiting_rasklad"
+
 logging.basicConfig(
     format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+
+MAIN_KEYBOARD = ReplyKeyboardMarkup(
+    [
+        ["🌞 Руна дня", "❓ Задать вопрос"],
+        ["🔮 Расклад", "ℹ️ Помощь"],
+    ],
+    resize_keyboard=True,
+)
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -72,25 +78,7 @@ async def post_init(application: Application) -> None:
     logger.info("Telegram bot connected: id=%s username=@%s name=%s", me.id, me.username, me.first_name)
 
 
-async def post_shutdown(application: Application) -> None:
-    logger.info("Application shutdown complete")
-
-
-def user_display_name(update: Update) -> str:
-    user = update.effective_user
-    if not user:
-        return "друг"
-
-    try:
-        saved_name = get_preferred_name(DB_PATH, user.id)
-    except DatabaseError:
-        logger.exception("Failed to read preferred name")
-        saved_name = None
-
-    return saved_name or user.first_name or user.username or "друг"
-
-
-def telegram_name(update: Update) -> str:
+def user_name(update: Update) -> str:
     user = update.effective_user
     if not user:
         return "друг"
@@ -112,74 +100,41 @@ def log_update(update: Update, action: str) -> None:
     )
 
 
-def format_help() -> str:
-    return (
-        "✨ Я рунический оракул.\n\n"
-        "Команды:\n"
-        "/start — запустить бота\n"
-        "/runa — руна дня + вспомогательная руна\n"
-        "/ask <вопрос> — ответ одной руной\n"
-        "/rasklad <вопрос> — трёхрунный расклад\n"
-        "/name <имя> — сохранить имя\n"
-        "/help — справка\n\n"
-        "Примеры:\n"
-        "/ask Стоит ли начинать новый проект?\n"
-        "/rasklad Как улучшить отношения?"
-    )
-
-
 def choose_distinct_runes(count: int) -> List[Dict[str, Any]]:
     return random.sample(RUNES, min(count, len(RUNES)))
 
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    log_update(update, "Received /start")
-    name = telegram_name(update)
-
-    if update.effective_user:
-        try:
-            set_preferred_name(DB_PATH, update.effective_user.id, name)
-        except DatabaseError:
-            logger.exception("Failed to save Telegram name")
-
-    await update.effective_message.reply_text(
-        f"Привет, {name}! ✨\n\n"
-        "Бот работает. Можешь сразу использовать команды.\n\n"
-        f"{format_help()}"
+def short_help() -> str:
+    return (
+        "Выбери действие кнопкой или используй команды:\n\n"
+        "🌞 /runa — руна дня\n"
+        "❓ /ask <вопрос> — ответ одной руной\n"
+        "🔮 /rasklad <вопрос> — расклад на 3 руны\n"
+        "ℹ️ /help — помощь"
     )
 
 
-async def name_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    log_update(update, "Received /name")
-    if not update.effective_user:
-        return
-
-    name = " ".join(context.args).strip()
-    if not name:
-        await update.effective_message.reply_text("Напиши имя после команды, например: /name Дима")
-        return
-
-    if len(name) > 50:
-        await update.effective_message.reply_text("Имя слишком длинное. Напиши короткий вариант.")
-        return
-
-    try:
-        set_preferred_name(DB_PATH, update.effective_user.id, name)
-    except DatabaseError:
-        logger.exception("Failed to save preferred name")
-        await update.effective_message.reply_text("Ошибка базы данных. Имя не сохранилось.")
-        return
-
-    await update.effective_message.reply_text(f"Готово, {name}. Запомнил ✨")
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    log_update(update, "Received /start")
+    context.user_data.clear()
+    name = user_name(update)
+    await update.effective_message.reply_text(
+        f"Привет, {name} ✨\n\n"
+        "Я рунический оракул. Могу дать руну дня, ответить на вопрос или сделать расклад.\n\n"
+        "Выбери действие ниже:",
+        reply_markup=MAIN_KEYBOARD,
+    )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_update(update, "Received /help")
-    await update.effective_message.reply_text(format_help())
+    context.user_data.clear()
+    await update.effective_message.reply_text(short_help(), reply_markup=MAIN_KEYBOARD)
 
 
 async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_update(update, "Received /runa")
+    context.user_data.clear()
     if not update.effective_user:
         return
 
@@ -188,47 +143,60 @@ async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         main_name, aux_name = get_or_create_daily_runes(DB_PATH, update.effective_user.id, today, RUNES)
     except DatabaseError:
         logger.exception("Failed to get daily runes")
-        await update.effective_message.reply_text("Ошибка базы данных. Попробуй позже.")
+        await update.effective_message.reply_text("Не получилось достать руну дня. Попробуй позже.", reply_markup=MAIN_KEYBOARD)
         return
 
     main_rune = get_rune_by_name(main_name)
     aux_rune = get_rune_by_name(aux_name)
+    name = user_name(update)
 
     await update.effective_message.reply_text(
-        f"🌞 Твоя руна дня: {main_rune['name']}\n"
+        f"🌞 {name}, твоя руна дня — {main_rune['name']}\n\n"
         f"{main_rune['short_desc']}\n\n"
-        f"🔮 Вспомогательная руна: {aux_rune['name']}\n"
-        f"{aux_rune['short_desc']}\n\n"
-        "Вспомогательная руна — дополнительная энергия дня: что усилит действие или на что обратить внимание."
+        f"🔮 Дополнительная энергия — {aux_rune['name']}\n\n"
+        f"{aux_rune['short_desc']}",
+        reply_markup=MAIN_KEYBOARD,
     )
 
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_update(update, "Received /ask")
     question = " ".join(context.args).strip()
-
     if not question:
-        await update.effective_message.reply_text("Напиши вопрос после команды, например: /ask Стоит ли начинать новый проект?")
+        context.user_data["state"] = STATE_WAITING_ASK
+        await update.effective_message.reply_text(
+            "Напиши вопрос одним сообщением. Я отвечу одной руной.",
+            reply_markup=MAIN_KEYBOARD,
+        )
         return
 
+    await send_one_rune_answer(update, question)
+
+
+async def send_one_rune_answer(update: Update, question: str) -> None:
     rune = random.choice(RUNES)
-    answer = rune["answer_yes"] if random.random() < 0.5 else rune["answer_no"]
+    is_yes = random.random() < 0.5
+    answer = rune["answer_yes"] if is_yes else rune["answer_no"]
+    label = "совет" if is_yes else "предупреждение"
+    name = user_name(update)
 
     await update.effective_message.reply_text(
-        f"❓ Вопрос: {question}\n\n"
-        f"ᚱ Руна ответа: {rune['name']}\n\n"
-        f"{answer}"
+        f"❓ {name}, вопрос: {question}\n\n"
+        f"ᚱ Руна ответа — {rune['name']}\n"
+        f"Тип: {label}\n\n"
+        f"{answer}",
+        reply_markup=MAIN_KEYBOARD,
     )
 
 
 def build_template_rasklad(name: str, question: str, runes: List[Dict[str, Any]]) -> str:
     situation, obstacle, advice = runes
     return (
-        f"{name}, расклад на вопрос: «{question}»\n\n"
+        f"🔮 {name}, расклад на вопрос:\n«{question}»\n\n"
         f"1. Ситуация — {situation['name']}\n{situation['meaning_situation']}\n\n"
         f"2. Препятствие — {obstacle['name']}\n{obstacle['meaning_obstacle']}\n\n"
         f"3. Совет — {advice['name']}\n{advice['meaning_advice']}\n\n"
-        f"Итог: не форсируй слабое место и действуй через совет руны {advice['name']}."
+        f"Итог: главный ключ сейчас — {advice['name']}. Не форсируй слабое место, действуй точнее."
     )
 
 
@@ -246,7 +214,7 @@ def build_gpt_prompt(name: str, question: str, runes: List[Dict[str, Any]]) -> s
 
 async def build_ai_rasklad(name: str, question: str, runes: List[Dict[str, Any]]) -> str:
     if not OPENAI_API_KEY or OpenAI is None:
-        return "Функция расклада с AI временно недоступна, используйте /ask или /runa"
+        return "Функция расклада с AI временно недоступна, используйте /ask или /runa."
 
     client = OpenAI(api_key=OPENAI_API_KEY)
     response = client.chat.completions.create(
@@ -264,30 +232,66 @@ async def build_ai_rasklad(name: str, question: str, runes: List[Dict[str, Any]]
 async def rasklad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_update(update, "Received /rasklad")
     question = " ".join(context.args).strip()
-
     if not question:
-        await update.effective_message.reply_text("Напиши вопрос после команды, например: /rasklad Как улучшить отношения?")
+        context.user_data["state"] = STATE_WAITING_RASKLAD
+        await update.effective_message.reply_text(
+            "Напиши вопрос одним сообщением. Я сделаю расклад: ситуация → препятствие → совет.",
+            reply_markup=MAIN_KEYBOARD,
+        )
         return
 
-    name = user_display_name(update)
+    await send_rasklad(update, question)
+
+
+async def send_rasklad(update: Update, question: str) -> None:
+    name = user_name(update)
     runes = choose_distinct_runes(3)
 
     try:
         text = await build_ai_rasklad(name, question, runes) if USE_GPT else build_template_rasklad(name, question, runes)
     except Exception:
         logger.exception("Failed to build rasklad")
-        await update.effective_message.reply_text("Не получилось сделать расклад. Попробуй позже.")
+        await update.effective_message.reply_text("Не получилось сделать расклад. Попробуй позже.", reply_markup=MAIN_KEYBOARD)
         return
 
-    await update.effective_message.reply_text(text)
+    await update.effective_message.reply_text(text, reply_markup=MAIN_KEYBOARD)
 
 
-async def fallback_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Respond to any plain text. This proves updates are reaching the bot."""
-    log_update(update, "Received plain text")
+async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    log_update(update, "Received text")
+    text = (update.effective_message.text or "").strip()
+
+    if text == "🌞 Руна дня":
+        await runa_command(update, context)
+        return
+    if text == "❓ Задать вопрос":
+        context.user_data["state"] = STATE_WAITING_ASK
+        await update.effective_message.reply_text("Напиши вопрос одним сообщением. Я отвечу одной руной.", reply_markup=MAIN_KEYBOARD)
+        return
+    if text == "🔮 Расклад":
+        context.user_data["state"] = STATE_WAITING_RASKLAD
+        await update.effective_message.reply_text(
+            "Напиши вопрос одним сообщением. Я сделаю расклад: ситуация → препятствие → совет.",
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return
+    if text == "ℹ️ Помощь":
+        await help_command(update, context)
+        return
+
+    state = context.user_data.get("state")
+    context.user_data.pop("state", None)
+
+    if state == STATE_WAITING_ASK:
+        await send_one_rune_answer(update, text)
+        return
+    if state == STATE_WAITING_RASKLAD:
+        await send_rasklad(update, text)
+        return
+
     await update.effective_message.reply_text(
-        "Я на связи ✅\n\n"
-        "Используй команды: /runa, /ask <вопрос>, /rasklad <вопрос>."
+        "Я на связи ✨\n\nВыбери действие кнопкой ниже или напиши /help.",
+        reply_markup=MAIN_KEYBOARD,
     )
 
 
@@ -301,14 +305,13 @@ def build_application() -> Application:
 
     init_db(DB_PATH)
 
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("name", name_command))
     app.add_handler(CommandHandler("runa", runa_command))
     app.add_handler(CommandHandler("ask", ask_command))
     app.add_handler(CommandHandler("rasklad", rasklad_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
     app.add_error_handler(error_handler)
     return app
 
