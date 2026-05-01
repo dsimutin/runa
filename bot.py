@@ -13,8 +13,17 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Repl
 from telegram.error import Forbidden
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from database import DatabaseError, get_or_create_daily_runes, init_db
+from database import (
+    DatabaseError,
+    ensure_user,
+    get_or_create_daily_runes,
+    get_user_profile,
+    init_db,
+    save_onboarding_answer,
+    start_onboarding,
+)
 from runes_data import RUNES, get_rune_by_name
+from runes_interpretations import PSYCHOTYPES
 
 try:
     from openai import OpenAI
@@ -40,6 +49,24 @@ RUNE_SYMBOLS = {
     "Эйваз": "ᛇ", "Перт": "ᛈ", "Альгиз": "ᛉ", "Соулу": "ᛊ", "Тейваз": "ᛏ", "Беркана": "ᛒ",
     "Эваз": "ᛖ", "Манназ": "ᛗ", "Лагуз": "ᛚ", "Ингуз": "ᛜ", "Дагаз": "ᛞ", "Одал": "ᛟ",
 }
+
+ONBOARDING_QUESTIONS = [
+    {
+        "text": "Ты заходишь в незнакомое место. Что замечаешь первым?",
+        "a": "Атмосферу: свет, воздух, настроение, людей",
+        "b": "Структуру: входы, выходы, правила, кто контролирует пространство",
+    },
+    {
+        "text": "Когда внутри тревожно, что помогает быстрее?",
+        "a": "Побыть в тишине, собрать ощущения, мягко вернуть себя в баланс",
+        "b": "Назвать проблему прямо, принять решение и начать действовать",
+    },
+    {
+        "text": "Какой символ тебе ближе прямо сейчас?",
+        "a": "Тёплый луч на закрытой двери",
+        "b": "Золотой ключ в тёмной комнате",
+    },
+]
 
 logging.basicConfig(
     format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
@@ -125,6 +152,63 @@ def private_link_markup(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMar
     return InlineKeyboardMarkup([[InlineKeyboardButton("Открыть личку с ботом", url=bot_link(context))]])
 
 
+def onboarding_keyboard(step: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("A", callback_data=f"onboarding:{step}:light")],
+            [InlineKeyboardButton("B", callback_data=f"onboarding:{step}:dark")],
+        ]
+    )
+
+
+def build_onboarding_question(step: int, name: str) -> str:
+    question = ONBOARDING_QUESTIONS[step - 1]
+    return (
+        f"{name}, сначала настроим твою колоду.\n\n"
+        f"Вопрос {step}/3\n"
+        f"{question['text']}\n\n"
+        f"A — {question['a']}\n"
+        f"B — {question['b']}"
+    )
+
+
+def onboarding_result_text(palette: str) -> str:
+    profile = PSYCHOTYPES[palette]
+    return (
+        "Твоя колода настроена.\n\n"
+        f"Тебе открылась {profile['description']}.\n"
+        f"Я буду читать руны через {profile['reading_style']}.\n\n"
+        "Теперь можно выбрать действие ниже."
+    )
+
+
+async def ensure_profile_ready(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return False
+
+    if not is_private(update):
+        return True
+
+    try:
+        ensure_user(DB_PATH, user.id, user_name(update))
+        profile = get_user_profile(DB_PATH, user.id)
+        if profile and profile.get("palette"):
+            return True
+
+        step = profile.get("onboarding_step", 0) if profile else 0
+        if step <= 0:
+            start_onboarding(DB_PATH, user.id)
+            step = 1
+        await message.reply_text(build_onboarding_question(step, user_name(update)), reply_markup=onboarding_keyboard(step))
+        return False
+    except DatabaseError:
+        logger.exception("Failed to prepare user profile")
+        await message.reply_text("Не получилось настроить профиль. Попробуй позже.")
+        return False
+
+
 def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -145,7 +229,6 @@ def make_rune_card(rune_name: str, subtitle: str = "") -> io.BytesIO:
     img = Image.new("RGB", (width, height), (32, 36, 32))
     draw = ImageDraw.Draw(img)
 
-    # Soft vertical gradient.
     for y in range(height):
         ratio = y / height
         r = int(43 + 56 * ratio)
@@ -153,7 +236,6 @@ def make_rune_card(rune_name: str, subtitle: str = "") -> io.BytesIO:
         b = int(43 + 28 * ratio)
         draw.line([(0, y), (width, y)], fill=(r, g, b))
 
-    # Decorative circles.
     draw.ellipse((95, 95, 805, 805), outline=(196, 174, 127), width=6)
     draw.ellipse((145, 145, 755, 755), outline=(103, 126, 86), width=3)
 
@@ -179,7 +261,6 @@ def make_rune_card(rune_name: str, subtitle: str = "") -> io.BytesIO:
 
 
 async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, *, image: io.BytesIO | None = None) -> None:
-    """In groups, send the real answer to user's DM. Telegram requires user to start bot first."""
     message = update.effective_message
     user = update.effective_user
     if not message or not user:
@@ -219,22 +300,63 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     context.user_data.clear()
     name = user_name(update)
 
-    text = (
-        f"Привет, {name} ✨\n\n"
-        "Я рунический оракул. Выбери действие ниже."
-    )
-    if is_private(update):
-        await update.effective_message.reply_text(text, reply_markup=MAIN_KEYBOARD)
-    else:
+    if not is_private(update):
         await update.effective_message.reply_text(
             "Чтобы ответы видел только ты, открой личку с ботом. В группе я буду отправлять расклады в личные сообщения.",
             reply_markup=private_link_markup(context),
         )
+        return
+
+    try:
+        ensure_user(DB_PATH, update.effective_user.id, name)
+        profile = get_user_profile(DB_PATH, update.effective_user.id)
+        if not profile or not profile.get("palette"):
+            start_onboarding(DB_PATH, update.effective_user.id)
+            await update.effective_message.reply_text(build_onboarding_question(1, name), reply_markup=onboarding_keyboard(1))
+            return
+    except DatabaseError:
+        logger.exception("Failed to start onboarding")
+        await update.effective_message.reply_text("Не получилось настроить профиль. Попробуй позже.")
+        return
+
+    text = f"Привет, {name} ✨\n\nТвоя колода уже настроена. Выбери действие ниже."
+    await update.effective_message.reply_text(text, reply_markup=MAIN_KEYBOARD)
+
+
+async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+
+    await query.answer()
+    try:
+        _, step_raw, answer = query.data.split(":", 2)
+        step = int(step_raw)
+    except (ValueError, AttributeError):
+        await query.edit_message_text("Не удалось прочитать ответ. Нажми /start и попробуй снова.")
+        return
+
+    try:
+        result = save_onboarding_answer(DB_PATH, update.effective_user.id, answer, len(ONBOARDING_QUESTIONS))
+    except DatabaseError:
+        logger.exception("Failed to save onboarding answer")
+        await query.edit_message_text("Не получилось сохранить ответ. Попробуй позже.")
+        return
+
+    if result.get("completed"):
+        await query.edit_message_text(onboarding_result_text(result["palette"]))
+        await context.bot.send_message(chat_id=update.effective_user.id, text="Выбери действие:", reply_markup=MAIN_KEYBOARD)
+        return
+
+    next_step = result["next_step"]
+    await query.edit_message_text(build_onboarding_question(next_step, user_name(update)), reply_markup=onboarding_keyboard(next_step))
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_update(update, "Received /help")
     context.user_data.clear()
+    if not await ensure_profile_ready(update, context):
+        return
     await send_private_or_group(update, context, short_help())
 
 
@@ -242,6 +364,8 @@ async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     log_update(update, "Received /runa")
     context.user_data.clear()
     if not update.effective_user:
+        return
+    if not await ensure_profile_ready(update, context):
         return
 
     today = date.today().isoformat()
@@ -266,6 +390,8 @@ async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_update(update, "Received /ask")
+    if not await ensure_profile_ready(update, context):
+        return
     question = " ".join(context.args).strip()
     if not question:
         context.user_data["state"] = STATE_WAITING_ASK
@@ -275,6 +401,8 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
+    if not await ensure_profile_ready(update, context):
+        return
     rune = random.choice(RUNES)
     is_yes = random.random() < 0.5
     answer = rune["answer_yes"] if is_yes else rune["answer_no"]
@@ -332,6 +460,8 @@ async def build_ai_rasklad(name: str, question: str, runes: List[Dict[str, Any]]
 
 async def rasklad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_update(update, "Received /rasklad")
+    if not await ensure_profile_ready(update, context):
+        return
     question = " ".join(context.args).strip()
     if not question:
         context.user_data["state"] = STATE_WAITING_RASKLAD
@@ -341,6 +471,8 @@ async def rasklad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
+    if not await ensure_profile_ready(update, context):
+        return
     name = user_name(update)
     runes = choose_distinct_runes(3)
 
@@ -351,13 +483,15 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
         await send_private_or_group(update, context, "Не получилось сделать расклад. Попробуй позже.")
         return
 
-    # Image shows advice rune as the final anchor.
     await send_private_or_group(update, context, text, image=make_rune_card(runes[2]["name"], "Совет расклада"))
 
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_update(update, "Received text")
     text = (update.effective_message.text or "").strip()
+
+    if not await ensure_profile_ready(update, context):
+        return
 
     if text == "🌞 Руна дня":
         await runa_command(update, context)
@@ -405,6 +539,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("runa", runa_command))
     app.add_handler(CommandHandler("ask", ask_command))
     app.add_handler(CommandHandler("rasklad", rasklad_command))
+    app.add_handler(MessageHandler(filters.Regex(r"^onboarding:"), onboarding_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
     app.add_error_handler(error_handler)
     return app
