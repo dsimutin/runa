@@ -121,12 +121,12 @@ def onboarding_keyboard(step: int) -> InlineKeyboardMarkup:
 
 def build_onboarding_question(step: int, name: str) -> str:
     question = ONBOARDING_QUESTIONS[step - 1]
-    return f"🜂 {name}, настройка колоды\n\nВопрос {step}/3\n{question['text']}\n\nA — {question['a']}\nB — {question['b']}"
+    return f"🜂 {name}, выбери вариант\n\nВопрос {step}/3\n{question['text']}\n\nA — {question['a']}\nB — {question['b']}"
 
 
 def onboarding_result_text(palette: str) -> str:
     profile = PSYCHOTYPES[palette]
-    return f"🜂 Колода настроена\n\nТебе открылась {profile['description']}.\n\nСтиль чтения:\n{profile['reading_style']}.\n\nТеперь выбери действие ниже."
+    return f"🜂 Колода закреплена\n\nТвоя палитра: {profile['description']}.\n\nСтиль чтения: {profile['reading_style']}.\n\nТеперь можно выбрать действие ниже."
 
 
 def get_user_palette(update: Update) -> str:
@@ -151,10 +151,7 @@ def get_rune_image_path(rune: Dict[str, Any], palette: str) -> str | None:
     if not image_file:
         return None
     deck_dir = DECK_DIRS.get(palette, "light")
-    candidates = [
-        os.path.join(BASE_DIR, deck_dir, image_file),
-        os.path.join(BASE_DIR, "decks", deck_dir, image_file),
-    ]
+    candidates = [os.path.join(BASE_DIR, deck_dir, image_file), os.path.join(BASE_DIR, "decks", deck_dir, image_file)]
     for path in candidates:
         if os.path.exists(path):
             return path
@@ -181,26 +178,26 @@ def check_deck_files() -> Dict[str, List[str]]:
 
 def format_daily_message(name: str, main_rune: Dict[str, Any], main_text: Dict[str, str], aux_rune: Dict[str, Any], aux_text: Dict[str, str]) -> str:
     return (
-        f"🌞 {name}, энергия дня\n\n"
-        f"Главная руна — {main_rune['name']}\n"
+        f"🌞 {name}, руна дня\n\n"
+        f"Основная карта — {main_rune['name']}\n"
         f"{main_text['short_desc']}\n\n"
         f"Дополнительный акцент — {aux_rune['name']}\n"
         f"{aux_text['short_desc']}\n\n"
-        f"Фокус дня\n"
-        f"Смотри, где главный знак и дополнительный акцент говорят об одном и том же. Именно там сегодня лучше действовать внимательнее."
+        f"Что сделать сегодня\n"
+        f"Выбери один конкретный шаг по основной карте. Дополнительная руна показывает, где не стоит действовать на автомате."
     )
 
 
 def format_one_rune_answer(name: str, question: str, rune: Dict[str, Any], answer: str, label: str) -> str:
     return (
-        f"❓ {name}, ответ на вопрос\n\n"
+        f"❓ {name}, ответ\n\n"
         f"Вопрос: {question}\n\n"
-        f"Руна — {rune['name']}\n"
-        f"Тип ответа — {label}\n\n"
+        f"Карта — {rune['name']}\n"
+        f"Формат — {label}\n\n"
         f"Ответ\n"
         f"{answer}\n\n"
-        f"Суть\n"
-        f"Не ищи в этом абсолютный приговор. Смотри на руну как на точку внимания: где именно сейчас нужно увидеть правду и выбрать следующий шаг."
+        f"Практический вывод\n"
+        f"Используй карту как подсказку: что проверить, где остановиться и какой шаг сделать трезво."
     )
 
 
@@ -246,17 +243,17 @@ async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TY
             await context.bot.send_message(chat_id=user.id, text=text)
         await message.reply_text("Отправил ответ тебе в личку ✨")
     except Forbidden:
-        await message.reply_text("Я могу отправить личный ответ, но сначала открой чат со мной и нажми /start.", reply_markup=private_link_markup(context))
+        await message.reply_text("Открой личку с ботом и нажми /start, тогда я смогу отправлять личные ответы.", reply_markup=private_link_markup(context))
 
 
 def short_help() -> str:
     return (
         "ℹ️ Помощь\n\n"
         "🌞 /runa — руна дня\n"
-        "❓ /ask <вопрос> — ответ одной руной\n"
-        "🔮 /rasklad <вопрос> — расклад на 3 руны\n"
-        "🜂 /profile — твоя закреплённая колода\n"
-        "🧩 /check_decks — проверка файлов колод"
+        "❓ /ask <вопрос> — ответ одной картой\n"
+        "🔮 /rasklad <вопрос> — расклад на 3 карты\n"
+        "🜂 /profile — твоя колода\n"
+        "🧩 /check_decks — проверка файлов"
     )
 
 
@@ -265,7 +262,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     context.user_data.clear()
     name = user_name(update)
     if not is_private(update):
-        await update.effective_message.reply_text("Чтобы ответы видел только ты, открой личку с ботом. В группе я буду отправлять расклады в личные сообщения.", reply_markup=private_link_markup(context))
+        await update.effective_message.reply_text("Открой личку с ботом. В группе я отправляю личные ответы только после /start.", reply_markup=private_link_markup(context))
         return
     try:
         ensure_user(DB_PATH, update.effective_user.id, name)
@@ -278,7 +275,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         logger.exception("Failed to start onboarding")
         await update.effective_message.reply_text("Не получилось настроить профиль. Попробуй позже.")
         return
-    await update.effective_message.reply_text(f"🜂 {name}, колода уже настроена\n\nВыбери действие ниже.", reply_markup=MAIN_KEYBOARD)
+    await update.effective_message.reply_text(f"🜂 {name}, колода уже закреплена\n\nВыбери действие ниже.", reply_markup=MAIN_KEYBOARD)
 
 
 async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -323,9 +320,9 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     text = (
         "🜂 Твой профиль\n\n"
         f"Колода: {'светлая' if palette == 'light' else 'тёмная'}\n"
-        f"Тип чтения: {profile['name']}\n\n"
-        f"Стиль:\n{profile['reading_style']}.\n\n"
-        "Колода закреплена за тобой. Для сброса нужно удалить чат с ботом и начать заново."
+        f"Стиль: {profile['name']}\n\n"
+        f"Как читается:\n{profile['reading_style']}.\n\n"
+        "Сброс: удалить чат с ботом и начать заново."
     )
     await send_private_or_group(update, context, text)
 
@@ -346,11 +343,7 @@ async def check_decks_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def send_missing_image_error(update: Update, context: ContextTypes.DEFAULT_TYPE, rune: Dict[str, Any], palette: str) -> None:
-    await send_private_or_group(
-        update,
-        context,
-        f"Не найдена карта {rune.get('image_file', rune.get('name', ''))} в папке {palette}. Проверь /check_decks.",
-    )
+    await send_private_or_group(update, context, f"Не найдена карта {rune.get('image_file', rune.get('name', ''))} в папке {palette}. Проверь /check_decks.")
 
 
 async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
