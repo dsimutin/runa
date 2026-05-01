@@ -1,14 +1,12 @@
-import io
 import logging
 import os
 import random
 import threading
 from datetime import date
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from PIL import Image, ImageDraw, ImageFont
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ReplyKeyboardMarkup, Update
 from telegram.error import Forbidden
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
@@ -31,7 +29,6 @@ try:
 except ImportError:
     OpenAI = None
 
-
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -45,13 +42,6 @@ DECK_DIRS = {"light": "light", "dark": "dark"}
 
 STATE_WAITING_ASK = "waiting_ask"
 STATE_WAITING_RASKLAD = "waiting_rasklad"
-
-RUNE_SYMBOLS = {
-    "Феху": "ᚠ", "Уруз": "ᚢ", "Турисаз": "ᚦ", "Ансуз": "ᚨ", "Райдо": "ᚱ", "Кеназ": "ᚲ",
-    "Гебо": "ᚷ", "Вуньо": "ᚹ", "Хагалаз": "ᚺ", "Наутиз": "ᚾ", "Иса": "ᛁ", "Йера": "ᛃ",
-    "Эйваз": "ᛇ", "Перт": "ᛈ", "Альгиз": "ᛉ", "Соулу": "ᛊ", "Тейваз": "ᛏ", "Беркана": "ᛒ",
-    "Эваз": "ᛖ", "Манназ": "ᛗ", "Лагуз": "ᛚ", "Ингуз": "ᛜ", "Дагаз": "ᛞ", "Одал": "ᛟ",
-}
 
 ONBOARDING_QUESTIONS = [
     {"text": "Ты заходишь в незнакомое место. Что замечаешь первым?", "a": "Атмосферу: свет, воздух, настроение, людей", "b": "Структуру: входы, выходы, правила, кто контролирует пространство"},
@@ -238,63 +228,20 @@ async def ensure_profile_ready(update: Update, context: ContextTypes.DEFAULT_TYP
         return False
 
 
-def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    candidates = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"]
-    for path in candidates:
-        try:
-            return ImageFont.truetype(path, size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
-
-
-def make_rune_card(rune_name: str, subtitle: str = "") -> io.BytesIO:
-    symbol = RUNE_SYMBOLS.get(rune_name, "ᚱ")
-    width, height = 900, 900
-    img = Image.new("RGB", (width, height), (32, 36, 32))
-    draw = ImageDraw.Draw(img)
-    for y in range(height):
-        ratio = y / height
-        r = int(43 + 56 * ratio)
-        g = int(49 + 37 * ratio)
-        b = int(43 + 28 * ratio)
-        draw.line([(0, y), (width, y)], fill=(r, g, b))
-    draw.ellipse((95, 95, 805, 805), outline=(196, 174, 127), width=6)
-    draw.ellipse((145, 145, 755, 755), outline=(103, 126, 86), width=3)
-    symbol_font = load_font(290)
-    name_font = load_font(58)
-    subtitle_font = load_font(34)
-
-    def centered_text(text: str, y: int, font: ImageFont.ImageFont, fill: Tuple[int, int, int]) -> None:
-        box = draw.textbbox((0, 0), text, font=font)
-        x = (width - (box[2] - box[0])) // 2
-        draw.text((x, y), text, font=font, fill=fill)
-
-    centered_text(symbol, 210, symbol_font, (238, 218, 169))
-    centered_text(rune_name, 610, name_font, (246, 239, 221))
-    if subtitle:
-        centered_text(subtitle, 690, subtitle_font, (191, 202, 174))
-    output = io.BytesIO()
-    output.name = f"{rune_name}.png"
-    img.save(output, format="PNG")
-    output.seek(0)
-    return output
-
-
-async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, *, image: io.BytesIO | InputFile | None = None) -> None:
+async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, *, image: InputFile | None = None) -> None:
     message = update.effective_message
     user = update.effective_user
     if not message or not user:
         return
     if is_private(update):
         if image:
-            await message.reply_photo(photo=image if isinstance(image, InputFile) else InputFile(image), caption=text, reply_markup=MAIN_KEYBOARD)
+            await message.reply_photo(photo=image, caption=text, reply_markup=MAIN_KEYBOARD)
         else:
             await message.reply_text(text, reply_markup=MAIN_KEYBOARD)
         return
     try:
         if image:
-            await context.bot.send_photo(chat_id=user.id, photo=image if isinstance(image, InputFile) else InputFile(image), caption=text)
+            await context.bot.send_photo(chat_id=user.id, photo=image, caption=text)
         else:
             await context.bot.send_message(chat_id=user.id, text=text)
         await message.reply_text("Отправил ответ тебе в личку ✨")
@@ -398,6 +345,14 @@ async def check_decks_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await send_private_or_group(update, context, "\n".join(lines).strip())
 
 
+async def send_missing_image_error(update: Update, context: ContextTypes.DEFAULT_TYPE, rune: Dict[str, Any], palette: str) -> None:
+    await send_private_or_group(
+        update,
+        context,
+        f"Не найдена карта {rune.get('image_file', rune.get('name', ''))} в папке {palette}. Проверь /check_decks.",
+    )
+
+
 async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_update(update, "Received /runa")
     context.user_data.clear()
@@ -415,8 +370,12 @@ async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     palette = get_user_palette(update)
     main_rune = get_rune_by_name(main_name)
     aux_rune = get_rune_by_name(aux_name)
+    image = rune_input_file(main_rune, palette)
+    if not image:
+        await send_missing_image_error(update, context, main_rune, palette)
+        return
     text = format_daily_message(user_name(update), main_rune, rune_text(main_rune, palette), aux_rune, rune_text(aux_rune, palette))
-    await send_private_or_group(update, context, text, image=rune_input_file(main_rune, palette) or make_rune_card(main_rune["name"], "Руна дня"))
+    await send_private_or_group(update, context, text, image=image)
 
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -436,12 +395,16 @@ async def send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     palette = get_user_palette(update)
     rune = random.choice(RUNES)
+    image = rune_input_file(rune, palette)
+    if not image:
+        await send_missing_image_error(update, context, rune, palette)
+        return
     text_data = rune_text(rune, palette)
     is_yes = random.random() < 0.5
     label = "совет" if is_yes else "предупреждение"
     answer = text_data["answer_yes"] if is_yes else text_data["answer_no"]
     text = format_one_rune_answer(user_name(update), question, rune, answer, label)
-    await send_private_or_group(update, context, text, image=rune_input_file(rune, palette) or make_rune_card(rune["name"], "Ответ"))
+    await send_private_or_group(update, context, text, image=image)
 
 
 def build_template_rasklad(name: str, question: str, runes: List[Dict[str, Any]], palette: str) -> str:
@@ -478,13 +441,17 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
     name = user_name(update)
     runes = choose_distinct_runes(3)
     palette = get_user_palette(update)
+    image = rune_input_file(runes[2], palette)
+    if not image:
+        await send_missing_image_error(update, context, runes[2], palette)
+        return
     try:
         text = await build_ai_rasklad(name, question, runes) if USE_GPT else build_template_rasklad(name, question, runes, palette)
     except Exception:
         logger.exception("Failed to build rasklad")
         await send_private_or_group(update, context, "Не получилось сделать расклад. Попробуй позже.")
         return
-    await send_private_or_group(update, context, text, image=rune_input_file(runes[2], palette) or make_rune_card(runes[2]["name"], "Вектор расклада"))
+    await send_private_or_group(update, context, text, image=image)
 
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
