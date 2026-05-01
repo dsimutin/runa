@@ -297,7 +297,18 @@ async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     if result.get("completed"):
         await query.edit_message_text(onboarding_result_text(result["palette"]))
-        await context.bot.send_message(chat_id=update.effective_user.id, text="Выбери действие:", reply_markup=MAIN_KEYBOARD)
+        await context.bot.send_message(
+    chat_id=update.effective_user.id,
+    text=(
+        "👇 Что можно сделать:\n\n"
+        "🌞  Руна дня — фокус на сегодня\n"
+        "❓ Вопрос — быстрый ответ одной картой\n"
+        "🔮  Расклад — разбор ситуации (3 карты)\n\n"
+        "Выбери действие ниже"
+    ),
+    reply_markup=MAIN_KEYBOARD,
+    parse_mode="Markdown"
+    )
         return
     next_step = result["next_step"]
     await query.edit_message_text(build_onboarding_question(next_step, user_name(update)), reply_markup=onboarding_keyboard(next_step))
