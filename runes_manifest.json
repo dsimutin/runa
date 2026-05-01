@@ -1,0 +1,31 @@
+{
+  "palettes": ["light", "dark"],
+  "file_extension": ".jpg",
+  "palette_rule": "After onboarding, each user gets one fixed palette: light or dark. The bot uses only that folder for this user until reset.",
+  "runes": [
+    { "number": 1, "key": "fehu", "ru": "Феху", "light": "light/01-fehu.jpg", "dark": "dark/01-fehu.jpg" },
+    { "number": 2, "key": "uruz", "ru": "Уруз", "light": "light/02-uruz.jpg", "dark": "dark/02-uruz.jpg" },
+    { "number": 3, "key": "thurisaz", "ru": "Турисаз", "light": "light/03-thurisaz.jpg", "dark": "dark/03-thurisaz.jpg" },
+    { "number": 4, "key": "ansuz", "ru": "Ансуз", "light": "light/04-ansuz.jpg", "dark": "dark/04-ansuz.jpg" },
+    { "number": 5, "key": "raido", "ru": "Райдо", "light": "light/05-raido.jpg", "dark": "dark/05-raido.jpg" },
+    { "number": 6, "key": "kenaz", "ru": "Кеназ", "light": "light/06-kenaz.jpg", "dark": "dark/06-kenaz.jpg" },
+    { "number": 7, "key": "gebo", "ru": "Гебо", "light": "light/07-gebo.jpg", "dark": "dark/07-gebo.jpg" },
+    { "number": 8, "key": "wunjo", "ru": "Вуньо", "light": "light/08-wunjo.jpg", "dark": "dark/08-wunjo.jpg" },
+    { "number": 9, "key": "hagalaz", "ru": "Хагалаз", "light": "light/09-hagalaz.jpg", "dark": "dark/09-hagalaz.jpg" },
+    { "number": 10, "key": "nauthiz", "ru": "Наутиз", "light": "light/10-nauthiz.jpg", "dark": "dark/10-nauthiz.jpg" },
+    { "number": 11, "key": "isa", "ru": "Иса", "light": "light/11-isa.jpg", "dark": "dark/11-isa.jpg" },
+    { "number": 12, "key": "jera", "ru": "Йера", "light": "light/12-jera.jpg", "dark": "dark/12-jera.jpg" },
+    { "number": 13, "key": "eihwaz", "ru": "Эйваз", "light": "light/13-eihwaz.jpg", "dark": "dark/13-eihwaz.jpg" },
+    { "number": 14, "key": "perthro", "ru": "Перт", "light": "light/14-perthro.jpg", "dark": "dark/14-perthro.jpg" },
+    { "number": 15, "key": "algiz", "ru": "Альгиз", "light": "light/15-algiz.jpg", "dark": "dark/15-algiz.jpg" },
+    { "number": 16, "key": "sowilo", "ru": "Соулу", "light": "light/16-sowilo.jpg", "dark": "dark/16-sowilo.jpg" },
+    { "number": 17, "key": "teiwaz", "ru": "Тейваз", "light": "light/17-teiwaz.jpg", "dark": "dark/17-teiwaz.jpg" },
+    { "number": 18, "key": "berkana", "ru": "Беркана", "light": "light/18-berkana.jpg", "dark": "dark/18-berkana.jpg" },
+    { "number": 19, "key": "ehwaz", "ru": "Эваз", "light": "light/19-ehwaz.jpg", "dark": "dark/19-ehwaz.jpg" },
+    { "number": 20, "key": "mannaz", "ru": "Манназ", "light": "light/20-mannaz.jpg", "dark": "dark/20-mannaz.jpg" },
+    { "number": 21, "key": "laguz", "ru": "Лагуз", "light": "light/21-laguz.jpg", "dark": "dark/21-laguz.jpg" },
+    { "number": 22, "key": "inguz", "ru": "Ингуз", "light": "light/22-inguz.jpg", "dark": "dark/22-inguz.jpg" },
+    { "number": 23, "key": "dagaz", "ru": "Дагаз", "light": "light/23-dagaz.jpg", "dark": "dark/23-dagaz.jpg" },
+    { "number": 24, "key": "othala", "ru": "Отал", "light": "light/24-othala.jpg", "dark": "dark/24-othala.jpg" }
+  ]
+}
