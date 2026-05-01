@@ -35,6 +35,156 @@ def init_db(db_path: str) -> None:
                 )
                 """
             )
+
+            # Existing SQLite databases may already have the users table from older bot versions.
+            # These migrations are safe to run repeatedly.
+            columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(users)").fetchall()
+            }
+            if "palette" not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN palette TEXT")
+            if "psychotype" not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN psychotype TEXT")
+            if "onboarding_step" not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN onboarding_step INTEGER DEFAULT 0")
+            if "onboarding_score_light" not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN onboarding_score_light INTEGER DEFAULT 0")
+            if "onboarding_score_dark" not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN onboarding_score_dark INTEGER DEFAULT 0")
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def ensure_user(db_path: str, user_id: int, preferred_name: str) -> None:
+    """Create user row if it does not exist. Existing preferences are preserved."""
+    try:
+        with get_connection(db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO users (user_id, preferred_name)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET preferred_name = excluded.preferred_name
+                """,
+                (user_id, preferred_name),
+            )
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def get_user_profile(db_path: str, user_id: int) -> Dict[str, Any] | None:
+    """Return user profile with palette/onboarding data."""
+    try:
+        with get_connection(db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT preferred_name, palette, psychotype, onboarding_step,
+                       onboarding_score_light, onboarding_score_dark
+                FROM users
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "preferred_name": row[0],
+                "palette": row[1],
+                "psychotype": row[2],
+                "onboarding_step": row[3] or 0,
+                "onboarding_score_light": row[4] or 0,
+                "onboarding_score_dark": row[5] or 0,
+            }
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def start_onboarding(db_path: str, user_id: int) -> None:
+    """Reset onboarding progress without removing daily runes."""
+    try:
+        with get_connection(db_path) as conn:
+            conn.execute(
+                """
+                UPDATE users
+                SET palette = NULL,
+                    psychotype = NULL,
+                    onboarding_step = 1,
+                    onboarding_score_light = 0,
+                    onboarding_score_dark = 0
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            )
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questions: int) -> Dict[str, Any]:
+    """Save one onboarding answer. answer must be 'light' or 'dark'."""
+    if answer not in {"light", "dark"}:
+        raise DatabaseError("Invalid onboarding answer")
+
+    try:
+        with get_connection(db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT onboarding_step, onboarding_score_light, onboarding_score_dark
+                FROM users
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if not row:
+                raise DatabaseError("User not found")
+
+            step = row[0] or 1
+            light_score = row[1] or 0
+            dark_score = row[2] or 0
+
+            if answer == "light":
+                light_score += 1
+            else:
+                dark_score += 1
+
+            if step >= total_questions:
+                palette = "light" if light_score >= dark_score else "dark"
+                psychotype = "intuitive_integrator" if palette == "light" else "will_strategist"
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET palette = ?,
+                        psychotype = ?,
+                        onboarding_step = 0,
+                        onboarding_score_light = ?,
+                        onboarding_score_dark = ?
+                    WHERE user_id = ?
+                    """,
+                    (palette, psychotype, light_score, dark_score, user_id),
+                )
+                return {
+                    "completed": True,
+                    "palette": palette,
+                    "psychotype": psychotype,
+                    "light_score": light_score,
+                    "dark_score": dark_score,
+                }
+
+            conn.execute(
+                """
+                UPDATE users
+                SET onboarding_step = ?,
+                    onboarding_score_light = ?,
+                    onboarding_score_dark = ?
+                WHERE user_id = ?
+                """,
+                (step + 1, light_score, dark_score, user_id),
+            )
+            return {
+                "completed": False,
+                "next_step": step + 1,
+                "light_score": light_score,
+                "dark_score": dark_score,
+            }
     except sqlite3.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
@@ -90,15 +240,4 @@ def get_preferred_name(db_path: str, user_id: int) -> str | None:
 
 def set_preferred_name(db_path: str, user_id: int, preferred_name: str) -> None:
     """Save or update preferred name."""
-    try:
-        with get_connection(db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO users (user_id, preferred_name)
-                VALUES (?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET preferred_name = excluded.preferred_name
-                """,
-                (user_id, preferred_name),
-            )
-    except sqlite3.Error as exc:
-        raise DatabaseError(str(exc)) from exc
+    ensure_user(db_path, user_id, preferred_name)
