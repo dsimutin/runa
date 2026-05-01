@@ -179,6 +179,16 @@ def rune_input_file(rune: Dict[str, Any], palette: str) -> InputFile | None:
     return InputFile(open(path, "rb"), filename=rune.get("image_file", "rune.jpg"))
 
 
+def check_deck_files() -> Dict[str, List[str]]:
+    missing: Dict[str, List[str]] = {}
+    for palette in ("light", "dark"):
+        missing[palette] = []
+        for rune in RUNES:
+            if not get_rune_image_path(rune, palette):
+                missing[palette].append(rune.get("image_file", rune.get("name", "unknown")))
+    return missing
+
+
 def format_daily_message(name: str, main_rune: Dict[str, Any], main_text: Dict[str, str], aux_rune: Dict[str, Any], aux_text: Dict[str, str]) -> str:
     return (
         f"🌞 {name}, энергия дня\n\n"
@@ -293,7 +303,14 @@ async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 def short_help() -> str:
-    return "ℹ️ Помощь\n\n🌞 /runa — руна дня\n❓ /ask <вопрос> — ответ одной руной\n🔮 /rasklad <вопрос> — расклад на 3 руны"
+    return (
+        "ℹ️ Помощь\n\n"
+        "🌞 /runa — руна дня\n"
+        "❓ /ask <вопрос> — ответ одной руной\n"
+        "🔮 /rasklad <вопрос> — расклад на 3 руны\n"
+        "🜂 /profile — твоя закреплённая колода\n"
+        "🧩 /check_decks — проверка файлов колод"
+    )
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -348,6 +365,37 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not await ensure_profile_ready(update, context):
         return
     await send_private_or_group(update, context, short_help())
+
+
+async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    log_update(update, "Received /profile")
+    if not await ensure_profile_ready(update, context):
+        return
+    palette = get_user_palette(update)
+    profile = PSYCHOTYPES[palette]
+    text = (
+        "🜂 Твой профиль\n\n"
+        f"Колода: {'светлая' if palette == 'light' else 'тёмная'}\n"
+        f"Тип чтения: {profile['name']}\n\n"
+        f"Стиль:\n{profile['reading_style']}.\n\n"
+        "Колода закреплена за тобой. Для сброса нужно удалить чат с ботом и начать заново."
+    )
+    await send_private_or_group(update, context, text)
+
+
+async def check_decks_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    log_update(update, "Received /check_decks")
+    missing = check_deck_files()
+    lines = ["🧩 Проверка колод", ""]
+    for palette in ("light", "dark"):
+        count = len(RUNES) - len(missing[palette])
+        title = "светлая" if palette == "light" else "тёмная"
+        lines.append(f"{title}: {count}/{len(RUNES)}")
+        if missing[palette]:
+            lines.append("Не найдены:")
+            lines.extend(f"— {name}" for name in missing[palette])
+        lines.append("")
+    await send_private_or_group(update, context, "\n".join(lines).strip())
 
 
 async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -480,6 +528,8 @@ def build_application() -> Application:
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("profile", profile_command))
+    app.add_handler(CommandHandler("check_decks", check_decks_command))
     app.add_handler(CommandHandler("runa", runa_command))
     app.add_handler(CommandHandler("ask", ask_command))
     app.add_handler(CommandHandler("rasklad", rasklad_command))
