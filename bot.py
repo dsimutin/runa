@@ -40,6 +40,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo").strip()
 DB_PATH = os.getenv("DB_PATH", "rune_bot.db")
 PORT = int(os.getenv("PORT", "10000"))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DECK_DIRS = {"light": "light", "dark": "dark"}
 
 STATE_WAITING_ASK = "waiting_ask"
 STATE_WAITING_RASKLAD = "waiting_rasklad"
@@ -154,6 +156,29 @@ def rune_text(rune: Dict[str, Any], palette: str) -> Dict[str, str]:
     return get_interpretation(rune.get("key", ""), palette, rune)
 
 
+def get_rune_image_path(rune: Dict[str, Any], palette: str) -> str | None:
+    image_file = rune.get("image_file")
+    if not image_file:
+        return None
+    deck_dir = DECK_DIRS.get(palette, "light")
+    candidates = [
+        os.path.join(BASE_DIR, deck_dir, image_file),
+        os.path.join(BASE_DIR, "decks", deck_dir, image_file),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    logger.warning("Rune image not found: palette=%s file=%s", palette, image_file)
+    return None
+
+
+def rune_input_file(rune: Dict[str, Any], palette: str) -> InputFile | None:
+    path = get_rune_image_path(rune, palette)
+    if not path:
+        return None
+    return InputFile(open(path, "rb"), filename=rune.get("image_file", "rune.jpg"))
+
+
 def format_daily_message(name: str, main_rune: Dict[str, Any], main_text: Dict[str, str], aux_rune: Dict[str, Any], aux_text: Dict[str, str]) -> str:
     return (
         f"🌞 {name}, энергия дня\n\n"
@@ -246,20 +271,20 @@ def make_rune_card(rune_name: str, subtitle: str = "") -> io.BytesIO:
     return output
 
 
-async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, *, image: io.BytesIO | None = None) -> None:
+async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, *, image: io.BytesIO | InputFile | None = None) -> None:
     message = update.effective_message
     user = update.effective_user
     if not message or not user:
         return
     if is_private(update):
         if image:
-            await message.reply_photo(photo=InputFile(image), caption=text, reply_markup=MAIN_KEYBOARD)
+            await message.reply_photo(photo=image if isinstance(image, InputFile) else InputFile(image), caption=text, reply_markup=MAIN_KEYBOARD)
         else:
             await message.reply_text(text, reply_markup=MAIN_KEYBOARD)
         return
     try:
         if image:
-            await context.bot.send_photo(chat_id=user.id, photo=InputFile(image), caption=text)
+            await context.bot.send_photo(chat_id=user.id, photo=image if isinstance(image, InputFile) else InputFile(image), caption=text)
         else:
             await context.bot.send_message(chat_id=user.id, text=text)
         await message.reply_text("Отправил ответ тебе в личку ✨")
@@ -343,7 +368,7 @@ async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     main_rune = get_rune_by_name(main_name)
     aux_rune = get_rune_by_name(aux_name)
     text = format_daily_message(user_name(update), main_rune, rune_text(main_rune, palette), aux_rune, rune_text(aux_rune, palette))
-    await send_private_or_group(update, context, text, image=make_rune_card(main_rune["name"], "Руна дня"))
+    await send_private_or_group(update, context, text, image=rune_input_file(main_rune, palette) or make_rune_card(main_rune["name"], "Руна дня"))
 
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -368,7 +393,7 @@ async def send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYP
     label = "совет" if is_yes else "предупреждение"
     answer = text_data["answer_yes"] if is_yes else text_data["answer_no"]
     text = format_one_rune_answer(user_name(update), question, rune, answer, label)
-    await send_private_or_group(update, context, text, image=make_rune_card(rune["name"], "Ответ"))
+    await send_private_or_group(update, context, text, image=rune_input_file(rune, palette) or make_rune_card(rune["name"], "Ответ"))
 
 
 def build_template_rasklad(name: str, question: str, runes: List[Dict[str, Any]], palette: str) -> str:
@@ -411,7 +436,7 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
         logger.exception("Failed to build rasklad")
         await send_private_or_group(update, context, "Не получилось сделать расклад. Попробуй позже.")
         return
-    await send_private_or_group(update, context, text, image=make_rune_card(runes[2]["name"], "Вектор расклада"))
+    await send_private_or_group(update, context, text, image=rune_input_file(runes[2], palette) or make_rune_card(runes[2]["name"], "Вектор расклада"))
 
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
