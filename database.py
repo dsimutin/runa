@@ -1,6 +1,6 @@
 import random
 import sqlite3
-from typing import List, Dict, Any, Tuple
+from typing import Any, Dict, List, Tuple
 
 
 class DatabaseError(Exception):
@@ -8,50 +8,54 @@ class DatabaseError(Exception):
 
 
 def get_connection(db_path: str) -> sqlite3.Connection:
-    """Create SQLite connection."""
-    return sqlite3.connect(db_path)
+    """Create SQLite connection with safer defaults."""
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
+
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    """Create and migrate all required tables. Safe to run repeatedly."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS daily_runes (
+            user_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            main_rune TEXT NOT NULL,
+            aux_rune TEXT NOT NULL,
+            PRIMARY KEY (user_id, date)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            preferred_name TEXT NOT NULL DEFAULT 'друг'
+        )
+        """
+    )
+
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+    migrations = {
+        "preferred_name": "ALTER TABLE users ADD COLUMN preferred_name TEXT NOT NULL DEFAULT 'друг'",
+        "palette": "ALTER TABLE users ADD COLUMN palette TEXT",
+        "psychotype": "ALTER TABLE users ADD COLUMN psychotype TEXT",
+        "onboarding_step": "ALTER TABLE users ADD COLUMN onboarding_step INTEGER NOT NULL DEFAULT 0",
+        "onboarding_score_light": "ALTER TABLE users ADD COLUMN onboarding_score_light INTEGER NOT NULL DEFAULT 0",
+        "onboarding_score_dark": "ALTER TABLE users ADD COLUMN onboarding_score_dark INTEGER NOT NULL DEFAULT 0",
+    }
+    for column, sql in migrations.items():
+        if column not in columns:
+            conn.execute(sql)
 
 
 def init_db(db_path: str) -> None:
     """Create required tables if they do not exist."""
     try:
         with get_connection(db_path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS daily_runes (
-                    user_id INTEGER NOT NULL,
-                    date TEXT NOT NULL,
-                    main_rune TEXT NOT NULL,
-                    aux_rune TEXT NOT NULL,
-                    PRIMARY KEY (user_id, date)
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id INTEGER PRIMARY KEY,
-                    preferred_name TEXT NOT NULL
-                )
-                """
-            )
-
-            # Existing SQLite databases may already have the users table from older bot versions.
-            # These migrations are safe to run repeatedly.
-            columns = {
-                row[1]
-                for row in conn.execute("PRAGMA table_info(users)").fetchall()
-            }
-            if "palette" not in columns:
-                conn.execute("ALTER TABLE users ADD COLUMN palette TEXT")
-            if "psychotype" not in columns:
-                conn.execute("ALTER TABLE users ADD COLUMN psychotype TEXT")
-            if "onboarding_step" not in columns:
-                conn.execute("ALTER TABLE users ADD COLUMN onboarding_step INTEGER DEFAULT 0")
-            if "onboarding_score_light" not in columns:
-                conn.execute("ALTER TABLE users ADD COLUMN onboarding_score_light INTEGER DEFAULT 0")
-            if "onboarding_score_dark" not in columns:
-                conn.execute("ALTER TABLE users ADD COLUMN onboarding_score_dark INTEGER DEFAULT 0")
+            ensure_schema(conn)
     except sqlite3.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
@@ -60,13 +64,14 @@ def ensure_user(db_path: str, user_id: int, preferred_name: str) -> None:
     """Create user row if it does not exist. Existing preferences are preserved."""
     try:
         with get_connection(db_path) as conn:
+            ensure_schema(conn)
             conn.execute(
                 """
                 INSERT INTO users (user_id, preferred_name)
                 VALUES (?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET preferred_name = excluded.preferred_name
                 """,
-                (user_id, preferred_name),
+                (user_id, preferred_name or "друг"),
             )
     except sqlite3.Error as exc:
         raise DatabaseError(str(exc)) from exc
@@ -76,6 +81,7 @@ def get_user_profile(db_path: str, user_id: int) -> Dict[str, Any] | None:
     """Return user profile with palette/onboarding data."""
     try:
         with get_connection(db_path) as conn:
+            ensure_schema(conn)
             row = conn.execute(
                 """
                 SELECT preferred_name, palette, psychotype, onboarding_step,
@@ -103,6 +109,7 @@ def start_onboarding(db_path: str, user_id: int) -> None:
     """Reset onboarding progress without removing daily runes."""
     try:
         with get_connection(db_path) as conn:
+            ensure_schema(conn)
             conn.execute(
                 """
                 UPDATE users
@@ -126,6 +133,7 @@ def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questi
 
     try:
         with get_connection(db_path) as conn:
+            ensure_schema(conn)
             row = conn.execute(
                 """
                 SELECT onboarding_step, onboarding_score_light, onboarding_score_dark
@@ -135,7 +143,14 @@ def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questi
                 (user_id,),
             ).fetchone()
             if not row:
-                raise DatabaseError("User not found")
+                conn.execute(
+                    """
+                    INSERT INTO users (user_id, preferred_name, onboarding_step)
+                    VALUES (?, 'друг', 1)
+                    """,
+                    (user_id,),
+                )
+                row = (1, 0, 0)
 
             step = row[0] or 1
             light_score = row[1] or 0
@@ -189,15 +204,11 @@ def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questi
         raise DatabaseError(str(exc)) from exc
 
 
-def get_or_create_daily_runes(
-    db_path: str,
-    user_id: int,
-    day: str,
-    runes: List[Dict[str, Any]],
-) -> Tuple[str, str]:
+def get_or_create_daily_runes(db_path: str, user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
     """Return user's daily runes. Create two different runes on first request of the day."""
     try:
         with get_connection(db_path) as conn:
+            ensure_schema(conn)
             row = conn.execute(
                 """
                 SELECT main_rune, aux_rune
@@ -211,7 +222,6 @@ def get_or_create_daily_runes(
                 return row[0], row[1]
 
             main_rune, aux_rune = random.sample(runes, 2)
-
             conn.execute(
                 """
                 INSERT INTO daily_runes (user_id, date, main_rune, aux_rune)
@@ -219,7 +229,6 @@ def get_or_create_daily_runes(
                 """,
                 (user_id, day, main_rune["name"], aux_rune["name"]),
             )
-
             return main_rune["name"], aux_rune["name"]
     except (sqlite3.Error, ValueError) as exc:
         raise DatabaseError(str(exc)) from exc
@@ -229,10 +238,8 @@ def get_preferred_name(db_path: str, user_id: int) -> str | None:
     """Get saved preferred name."""
     try:
         with get_connection(db_path) as conn:
-            row = conn.execute(
-                "SELECT preferred_name FROM users WHERE user_id = ?",
-                (user_id,),
-            ).fetchone()
+            ensure_schema(conn)
+            row = conn.execute("SELECT preferred_name FROM users WHERE user_id = ?", (user_id,)).fetchone()
             return row[0] if row else None
     except sqlite3.Error as exc:
         raise DatabaseError(str(exc)) from exc
