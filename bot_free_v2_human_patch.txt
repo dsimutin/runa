@@ -1,0 +1,93 @@
+PATCH FOR bot_free_v2.py
+
+Goal: keep the existing free engine, but make answers feel human and keep different tones for light/dark psychotypes.
+
+Add after line() function:
+
+
+def tone_intro(pal: str) -> str:
+    if pal == 'dark':
+        return 'Смотрю на расклад прямо и без украшений.'
+    return 'Смотрю на расклад мягко и спокойно.'
+
+
+def daily_text(main: dict, aux: dict, pal: str) -> str:
+    if pal == 'dark':
+        return (
+            f'🌞 **Твоя руна дня — {main["name"]}**\n\n'
+            f'Сегодня главный фокус — не распыляться. {line(main, pal, "short_desc")}\n\n'
+            f'**Дополнительный акцент — {aux["name"]}**\n\n'
+            f'Это показывает, где нужно держать контроль: {line(aux, pal, "short_desc")}\n\n'
+            '**Что сделать сегодня**\n'
+            'Выбери один точный шаг. Не тяни всё сразу. Отрежь лишнее и действуй там, где есть реальная отдача.\n\n'
+            '**Главный смысл дня**\n'
+            'Меньше хаоса. Больше управления.'
+        )
+    return (
+        f'🌞 **Твоя руна дня — {main["name"]}**\n\n'
+        f'Сегодня важно прислушаться к тому, что внутри уже просит внимания. {line(main, pal, "short_desc")}\n\n'
+        f'**Дополнительный акцент — {aux["name"]}**\n\n'
+        f'Эта руна мягко подсвечивает второй слой дня: {line(aux, pal, "short_desc")}\n\n'
+        '**Что сделать сегодня**\n'
+        'Не пытайся решить всё сразу. Выбери один бережный, но честный шаг — тот, после которого станет немного яснее.\n\n'
+        '**Главный смысл дня**\n'
+        'Не спешить. Услышать себя и двигаться точнее.'
+    )
+
+
+def question_text(question: str, rune: dict, pal: str, key: str) -> str:
+    if pal == 'dark':
+        return (
+            f'❓ **Разбираю вопрос:**\n«{question}»\n\n'
+            f'Выпала **{rune["name"]}**. Здесь важно смотреть не на желание, а на факты.\n\n'
+            f'**Ответ**\n{line(rune, pal, key)}\n\n'
+            '**Что делать дальше**\n'
+            'Проверь условия, ресурс и последствия. Если всё размыто — не соглашайся на автомате.'
+        )
+    return (
+        f'❓ **Разбираю твой вопрос:**\n«{question}»\n\n'
+        f'Выпала **{rune["name"]}**. Она показывает не приговор, а то, на что сейчас стоит обратить внимание.\n\n'
+        f'**Ответ**\n{line(rune, pal, key)}\n\n'
+        '**Что можно сделать**\n'
+        'Остановись на минуту и проверь, где внутри появляется спокойное согласие, а где — напряжение.'
+    )
+
+
+def spread_text(question: str, a: dict, b: dict, c: dict, pal: str) -> str:
+    if pal == 'dark':
+        return (
+            f'🔮 **Разбираю вопрос:**\n«{question}»\n\n'
+            f'{tone_intro(pal)}\n\n'
+            f'**Ситуация — {a["name"]}**\n'
+            f'Сейчас картина выглядит так: {line(a, pal, "situation")}\n\n'
+            f'**Препятствие — {b["name"]}**\n'
+            f'Главный стопор здесь: {line(b, pal, "obstacle")}\n\n'
+            f'**Что делать — {c["name"]}**\n'
+            f'Рабочий ход: {line(c, pal, "advice")}\n\n'
+            '**Итог**\n'
+            'Не распыляйся. Посчитай ресурс, убери слабое место и сделай один управляемый шаг.'
+        )
+    return (
+        f'🔮 **Разбираю твой вопрос:**\n«{question}»\n\n'
+        f'{tone_intro(pal)}\n\n'
+        f'**Ситуация — {a["name"]}**\n'
+        f'Похоже, сейчас происходит вот что: {line(a, pal, "situation")}\n\n'
+        f'**Препятствие — {b["name"]}**\n'
+        f'Может мешать это: {line(b, pal, "obstacle")}\n\n'
+        f'**Что поможет — {c["name"]}**\n'
+        f'Лучший следующий шаг: {line(c, pal, "advice")}\n\n'
+        '**Итог**\n'
+        'Не пытайся решить всё сразу. Выбери один честный шаг, который вернёт ясность и ощущение опоры.'
+    )
+
+Then replace inside runa():
+
+text = daily_text(main, aux, pal)
+
+Replace inside one_answer():
+
+text = question_text(question, rune, pal, key)
+
+Replace inside rasklad_answer():
+
+text = spread_text(question, a, b, c, pal)
