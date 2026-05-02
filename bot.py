@@ -2,40 +2,6 @@ import logging
 import os
 import random
 import threading
-# --- GITHUB INTEGRATION ---
-import requests
-import base64
-
-GITHUB_TOKEN = os.environ.get("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")  # сюда вставишь токен
-REPO = "dsimutin/runa"
-BRANCH = "main"
-
-def github_headers():
-    return {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json"
-    }
-
-def update_file_on_github(path, content, message="update from bot"):
-    url = f"https://api.github.com/repos/{REPO}/contents/{path}"
-
-    # получаем SHA, если файл есть
-    r = requests.get(url, headers=github_headers())
-    sha = None
-    if r.status_code == 200:
-        sha = r.json()["sha"]
-
-    encoded = base64.b64encode(content.encode()).decode()
-    data = {
-        "message": message,
-        "content": encoded,
-        "branch": BRANCH
-    }
-    if sha:
-        data["sha"] = sha
-
-    res = requests.put(url, headers=github_headers(), json=data)
-    print("GITHUB RESPONSE:", res.status_code, res.text)
 from datetime import date
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Dict, List
