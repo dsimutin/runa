@@ -1,14 +1,12 @@
 import logging
 import os
 import random
-import threading
 from datetime import date
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ReplyKeyboardMarkup, Update
-from telegram.error import Forbidden
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram.error import Forbidden, TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from database import (
@@ -37,6 +35,13 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo").strip()
 DB_PATH = os.getenv("DB_PATH", "rune_bot.db")
 PORT = int(os.getenv("PORT", "10000"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
+WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "webhook").strip().strip("/") or "webhook"
+ADMIN_IDS = {
+    int(raw_id.strip())
+    for raw_id in os.getenv("ADMIN_IDS", "").split(",")
+    if raw_id.strip().isdigit()
+}
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DECK_DIRS = {"light": "light", "dark": "dark"}
 
@@ -59,30 +64,12 @@ def is_private(update: Update) -> bool:
     return bool(update.effective_chat and update.effective_chat.type == "private")
 
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(b"Rune bot is running")
-
-    def do_HEAD(self) -> None:
-        self.send_response(200)
-        self.end_headers()
-
-    def log_message(self, format: str, *args: object) -> None:
-        return
-
-
-def start_health_server() -> None:
-    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    logger.info("Health server started on port %s", PORT)
+def is_admin(update: Update) -> bool:
+    user = update.effective_user
+    return bool(user and user.id in ADMIN_IDS)
 
 
 async def post_init(application: Application) -> None:
-    await application.bot.delete_webhook(drop_pending_updates=False)
     me = await application.bot.get_me()
     application.bot_data["bot_username"] = me.username
     logger.info("Telegram bot connected: id=%s username=@%s name=%s", me.id, me.username, me.first_name)
@@ -159,13 +146,6 @@ def get_rune_image_path(rune: Dict[str, Any], palette: str) -> str | None:
     return None
 
 
-def rune_input_file(rune: Dict[str, Any], palette: str) -> InputFile | None:
-    path = get_rune_image_path(rune, palette)
-    if not path:
-        return None
-    return InputFile(open(path, "rb"), filename=rune.get("image_file", "rune.jpg"))
-
-
 def check_deck_files() -> Dict[str, List[str]]:
     missing: Dict[str, List[str]] = {}
     for palette in ("light", "dark"):
@@ -225,25 +205,30 @@ async def ensure_profile_ready(update: Update, context: ContextTypes.DEFAULT_TYP
         return False
 
 
-async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, *, image: InputFile | None = None) -> None:
+async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, *, image_path: str | None = None) -> None:
     message = update.effective_message
     user = update.effective_user
     if not message or not user:
         return
-    if is_private(update):
-        if image:
-            await message.reply_photo(photo=image, caption=text, reply_markup=MAIN_KEYBOARD)
-        else:
-            await message.reply_text(text, reply_markup=MAIN_KEYBOARD)
-        return
     try:
-        if image:
-            await context.bot.send_photo(chat_id=user.id, photo=image, caption=text)
+        if is_private(update):
+            if image_path:
+                with open(image_path, "rb") as image_file:
+                    await message.reply_photo(photo=image_file, caption=text, reply_markup=MAIN_KEYBOARD)
+            else:
+                await message.reply_text(text, reply_markup=MAIN_KEYBOARD)
+            return
+        if image_path:
+            with open(image_path, "rb") as image_file:
+                await context.bot.send_photo(chat_id=user.id, photo=image_file, caption=text)
         else:
             await context.bot.send_message(chat_id=user.id, text=text)
         await message.reply_text("Отправил ответ тебе в личку ✨")
     except Forbidden:
         await message.reply_text("Открой личку с ботом и нажми /start, тогда я смогу отправлять личные ответы.", reply_markup=private_link_markup(context))
+    except (OSError, TelegramError):
+        logger.exception("Failed to send response")
+        await message.reply_text("Не получилось отправить ответ. Попробуй ещё раз позже.")
 
 
 def short_help() -> str:
@@ -252,8 +237,7 @@ def short_help() -> str:
         "🌞 /runa — руна дня\n"
         "❓ /ask <вопрос> — ответ одной картой\n"
         "🔮 /rasklad <вопрос> — расклад на 3 карты\n"
-        "🜂 /profile — твоя колода\n"
-        "🧩 /check_decks — проверка файлов"
+        "🜂 /profile — твоя колода"
     )
 
 
@@ -285,7 +269,7 @@ async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     try:
         _, step_raw, answer = query.data.split(":", 2)
-        step = int(step_raw)
+        int(step_raw)
     except (ValueError, AttributeError):
         await query.edit_message_text("Не удалось прочитать ответ. Нажми /start и попробуй снова.")
         return
@@ -298,17 +282,16 @@ async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if result.get("completed"):
         await query.edit_message_text(onboarding_result_text(result["palette"]))
         await context.bot.send_message(
-    chat_id=update.effective_user.id,
-    text=(
-        "👇 Что можно сделать:\n\n"
-        "🌞  Руна дня — фокус на сегодня\n"
-        "❓ Вопрос — быстрый ответ одной картой\n"
-        "🔮  Расклад — разбор ситуации (3 карты)\n\n"
-        "Выбери действие ниже"
-    ),
-    reply_markup=MAIN_KEYBOARD,
-    parse_mode="Markdown"
-    )
+            chat_id=update.effective_user.id,
+            text=(
+                "👇 Что можно сделать:\n\n"
+                "🌞  Руна дня — фокус на сегодня\n"
+                "❓ Вопрос — быстрый ответ одной картой\n"
+                "🔮  Расклад — разбор ситуации (3 карты)\n\n"
+                "Выбери действие ниже"
+            ),
+            reply_markup=MAIN_KEYBOARD,
+        )
         return
     next_step = result["next_step"]
     await query.edit_message_text(build_onboarding_question(next_step, user_name(update)), reply_markup=onboarding_keyboard(next_step))
@@ -340,6 +323,9 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def check_decks_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_update(update, "Received /check_decks")
+    if not is_admin(update):
+        await update.effective_message.reply_text("Эта техническая команда доступна только администратору.")
+        return
     missing = check_deck_files()
     lines = ["🧩 Проверка колод", ""]
     for palette in ("light", "dark"):
@@ -374,12 +360,12 @@ async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     palette = get_user_palette(update)
     main_rune = get_rune_by_name(main_name)
     aux_rune = get_rune_by_name(aux_name)
-    image = rune_input_file(main_rune, palette)
-    if not image:
+    image_path = get_rune_image_path(main_rune, palette)
+    if not image_path:
         await send_missing_image_error(update, context, main_rune, palette)
         return
     text = format_daily_message(user_name(update), main_rune, rune_text(main_rune, palette), aux_rune, rune_text(aux_rune, palette))
-    await send_private_or_group(update, context, text, image=image)
+    await send_private_or_group(update, context, text, image_path=image_path)
 
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -399,8 +385,8 @@ async def send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     palette = get_user_palette(update)
     rune = random.choice(RUNES)
-    image = rune_input_file(rune, palette)
-    if not image:
+    image_path = get_rune_image_path(rune, palette)
+    if not image_path:
         await send_missing_image_error(update, context, rune, palette)
         return
     text_data = rune_text(rune, palette)
@@ -408,7 +394,7 @@ async def send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYP
     label = "совет" if is_yes else "предупреждение"
     answer = text_data["answer_yes"] if is_yes else text_data["answer_no"]
     text = format_one_rune_answer(user_name(update), question, rune, answer, label)
-    await send_private_or_group(update, context, text, image=image)
+    await send_private_or_group(update, context, text, image_path=image_path)
 
 
 def build_template_rasklad(name: str, question: str, runes: List[Dict[str, Any]], palette: str) -> str:
@@ -419,12 +405,25 @@ def build_gpt_prompt(name: str, question: str, runes: List[Dict[str, Any]]) -> s
     return f"Ты пишешь короткий трёхрунный расклад на русском языке до 300 символов. Не обещай гарантированный результат.\nИмя: {name}\nВопрос: {question}\nСитуация: {runes[0]['name']} — {runes[0]['meaning_situation']}\nПрепятствие: {runes[1]['name']} — {runes[1]['meaning_obstacle']}\nСовет: {runes[2]['name']} — {runes[2]['meaning_advice']}"
 
 
-async def build_ai_rasklad(name: str, question: str, runes: List[Dict[str, Any]]) -> str:
+async def build_ai_rasklad(name: str, question: str, runes: List[Dict[str, Any]]) -> str | None:
     if not OPENAI_API_KEY or OpenAI is None:
-        return "Функция расклада с AI временно недоступна, используйте /ask или /runa."
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    response = client.chat.completions.create(model=OPENAI_MODEL, messages=[{"role": "system", "content": "Ты помощник для рунических раскладов. Пиши кратко и без категоричных обещаний."}, {"role": "user", "content": build_gpt_prompt(name, question, runes)}], max_tokens=120, temperature=0.8)
-    return response.choices[0].message.content.strip()
+        return None
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY, timeout=20.0)
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": "Ты помощник для рунических раскладов. Пиши кратко и без категоричных обещаний."},
+                {"role": "user", "content": build_gpt_prompt(name, question, runes)},
+            ],
+            max_tokens=160,
+            temperature=0.8,
+        )
+        content = response.choices[0].message.content
+        return content.strip() if content else None
+    except Exception:
+        logger.exception("OpenAI generation failed; using template rasklad")
+        return None
 
 
 async def rasklad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -445,17 +444,14 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
     name = user_name(update)
     runes = choose_distinct_runes(3)
     palette = get_user_palette(update)
-    image = rune_input_file(runes[2], palette)
-    if not image:
+    image_path = get_rune_image_path(runes[2], palette)
+    if not image_path:
         await send_missing_image_error(update, context, runes[2], palette)
         return
-    try:
-        text = await build_ai_rasklad(name, question, runes) if USE_GPT else build_template_rasklad(name, question, runes, palette)
-    except Exception:
-        logger.exception("Failed to build rasklad")
-        await send_private_or_group(update, context, "Не получилось сделать расклад. Попробуй позже.")
-        return
-    await send_private_or_group(update, context, text, image=image)
+    text = await build_ai_rasklad(name, question, runes) if USE_GPT else None
+    if not text:
+        text = build_template_rasklad(name, question, runes, palette)
+    await send_private_or_group(update, context, text, image_path=image_path)
 
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -494,7 +490,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def build_application() -> Application:
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is not set. Add it in Render Environment variables.")
+        raise RuntimeError("BOT_TOKEN is not set. Add it in environment variables.")
     init_db(DB_PATH)
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
@@ -511,8 +507,18 @@ def build_application() -> Application:
 
 
 def main() -> None:
-    start_health_server()
     app = build_application()
+    if WEBHOOK_URL:
+        logger.info("Starting bot in webhook mode on port %s path /%s", PORT, WEBHOOK_PATH)
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=WEBHOOK_PATH,
+            webhook_url=f"{WEBHOOK_URL}/{WEBHOOK_PATH}",
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=False,
+        )
+        return
     logger.info("Starting bot in polling mode")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False, close_loop=False)
 
