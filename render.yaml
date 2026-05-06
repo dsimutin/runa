@@ -4,7 +4,7 @@ services:
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
+    startCommand: WEBHOOK_URL=${RENDER_EXTERNAL_URL} WEBHOOK_PATH=webhook python bot.py
     envVars:
       - key: USE_GPT
         value: false
@@ -18,3 +18,5 @@ services:
         sync: false
       - key: WEBHOOK_URL
         sync: false
+      - key: WEBHOOK_PATH
+        value: webhook
