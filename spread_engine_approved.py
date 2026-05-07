@@ -117,3 +117,21 @@ def build_unified_spread(question: str, runes: list[dict[str, Any]], deck: str =
     bridge = escape(bridge_text(groups, topic))
     finish = escape(final_text(topic, groups[2]))
     return f"🔮 <b>Расклад</b>\n\n<i>{safe_question}</i>\n\n<b>{cards}</b>\n\n{escape(intro_by_topic(topic))}\n\n{first}\n\n{second}\n\n{bridge}\n\n───\n\n{third}\n\n───\n\n<b>{finish}</b>"
+
+
+async def send_approved_rasklad(update, context, question: str) -> None:
+    import bot
+
+    chat = update.effective_chat
+    if chat:
+        try:
+            await context.bot.send_chat_action(chat_id=chat.id, action="typing")
+        except Exception:
+            pass
+    deck = bot.get_user_palette(update) or "premium"
+    if deck not in {"light", "dark", "premium"}:
+        deck = "premium"
+    runes = bot.choose_distinct_runes(3)
+    image_path = bot.get_rune_image_path(runes[2], deck)
+    text = build_unified_spread(question, runes, deck)
+    await bot.send_private_or_group(update, context, text, image_path=image_path)
