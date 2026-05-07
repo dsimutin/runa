@@ -1,8 +1,10 @@
+import asyncio
 import hashlib
 import random
 from datetime import date
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
@@ -56,6 +58,17 @@ bot.ONBOARDING_QUESTIONS = [
         "c": "Глубокой интерпретации без лишней мистики",
     },
 ]
+
+
+async def reading_pause(update: Update, context: ContextTypes.DEFAULT_TYPE, seconds: float | None = None) -> None:
+    """Small human-like pause before a reading response."""
+    chat = update.effective_chat
+    if chat:
+        try:
+            await context.bot.send_chat_action(chat_id=chat.id, action=ChatAction.TYPING)
+        except TelegramError:
+            bot.logger.exception("Failed to send typing action")
+    await asyncio.sleep(seconds if seconds is not None else random.uniform(1.4, 2.6))
 
 
 def stable_alt(user_id: int, day: str, rune_key: str) -> bool:
@@ -139,56 +152,58 @@ bot.onboarding_result_text = onboarding_result_text
 
 def product_daily_text(name: str, main: dict, main_text: dict, aux: dict, aux_text: dict, palette: str, main_alt: bool, aux_alt: bool) -> str:
     if palette == "premium":
-        opening = f"🜁 {name}, сегодня важен не сам знак, а то, какой слой он открывает."
-        middle = "Глубинный смысл"
-        action = "Не принимай решение по первому импульсу. Посмотри, какой сценарий повторяется, и убери из него один лишний элемент."
-        signal_label = "Второй слой"
+        opening = f"🜁 {name}, я бы здесь смотрела не только на саму руну, а на повторяющийся мотив."
+        middle = "Что видно"
+        note = "Похоже, ситуация просит не резкого решения, а более точной настройки: где ты уже знаешь ответ, но всё ещё ищешь подтверждение."
+        action = "Сегодня не добавляй новых обязательств. Сначала убери один лишний узел: разговор, обещание или ожидание, которое тянет энергию."
+        signal_label = "Второй знак"
     elif palette == "dark":
-        opening = f"🌑 {name}, ситуация уже просит ясности."
-        middle = "Что важно понять"
-        action = "Назови главное напряжение прямо. Один честный шаг сейчас сильнее долгого ожидания."
-        signal_label = "Дополнительный сигнал"
+        opening = f"🌑 {name}, я бы не стала здесь торопиться, но знак довольно прямой."
+        middle = "Что видно"
+        note = "Есть место, где напряжение уже заметно. Не обязательно рубить сразу, но и делать вид, что всё спокойно, тоже не стоит."
+        action = "Выбери один разговор или одно решение, которое давно откладывается. Не дави, просто обозначь позицию."
+        signal_label = "Дополнительный знак"
     else:
-        opening = f"🌞 {name}, сегодня пространство говорит тише обычного."
-        middle = "Что это меняет"
-        action = "Убери один лишний фокус. Освободи место для главного."
-        signal_label = "Дополнительный сигнал"
+        opening = f"🌞 {name}, по этой руне я бы начала мягко: день лучше прожить внимательнее, без лишнего нажима."
+        middle = "Что видно"
+        note = "Сейчас важна не скорость. Важнее понять, что действительно твоё, а что просто забирает внимание."
+        action = "Сделай один спокойный шаг. Не пытайся закрыть всё сразу."
+        signal_label = "Дополнительный знак"
 
-    main_desc = alt_meaning(main) if main_alt else main_text["short_desc"]
-    aux_desc = alt_meaning(aux) if aux_alt else aux_text["short_desc"]
+    main_desc = alt_meaning(main, palette) if main_alt else main_text["short_desc"]
+    aux_desc = alt_meaning(aux, palette) if aux_alt else aux_text["short_desc"]
     return (
         f"{opening}\n\n"
-        f"{rune_title(main, main_alt)}\n\n"
+        f"Выпала руна\n{rune_title(main, main_alt)}\n\n"
         f"{main_desc}\n\n"
-        f"{middle}\n"
-        "Смотри не только на событие, а на рисунок, который оно повторяет.\n\n"
-        f"{signal_label} — {rune_title(aux, aux_alt)}\n\n"
+        f"{middle}\n{note}\n\n"
+        f"{signal_label}: {rune_title(aux, aux_alt)}\n"
         f"{aux_desc}\n\n"
-        "Что сделать\n"
+        "Что лучше сделать\n"
         f"{action}"
     )
 
 
 def product_question_text(name: str, question: str, rune: dict, answer: str, palette: str, alt: bool) -> str:
     if palette == "premium":
-        opening = f"🜁 {name}, здесь важен скрытый слой вопроса."
-        final = "Не ищи быстрый ответ. Сначала определи, что в этой ситуации повторяется и почему ты снова смотришь именно туда."
-        marker = "Что открывает руна"
+        opening = f"🜁 {name}, здесь ответ не совсем на поверхности. Я бы читала это через подтекст вопроса."
+        final = "Не спеши действовать в тот же день. Сначала посмотри, что повторяется: один и тот же человек, страх, обещание или сценарий."
+        marker = "Что видно по руне"
     elif palette == "dark":
-        opening = f"🌑 {name}, ответ здесь не мягкий — он точный."
-        final = "Не обходи главный факт. Проверь, где ты уже знаешь решение, но тянешь с действием."
-        marker = "Что руна показывает"
+        opening = f"🌑 {name}, здесь знак достаточно собранный. Я бы сказала аккуратно, но прямо."
+        final = "Не делай резких движений из эмоции. Но и не откладывай то, что уже требует честной позиции."
+        marker = "Что видно по руне"
     else:
-        opening = f"🌞 {name}, руна отвечает не прямо, а через внутренний сигнал."
-        final = "Не торопись с выводом. Сначала отдели реальное ощущение от шума вокруг ситуации."
-        marker = "Что руна показывает"
-    body = alt_meaning(rune) if alt else answer
+        opening = f"🌞 {name}, я бы читала это мягко. Ответ есть, но он не требует спешки."
+        final = "Дай себе небольшую паузу. Если после неё внутри станет спокойнее — направление выбрано верно."
+        marker = "Что видно по руне"
+    body = alt_meaning(rune, palette) if alt else answer
     return (
         f"{opening}\n\n"
-        f"Вопрос\n{question}\n\n"
+        f"Твой вопрос\n{question}\n\n"
         f"Карта\n{rune_title(rune, alt)}\n\n"
         f"{marker}\n{body}\n\n"
-        f"Главное сейчас\n{final}"
+        f"Совет\n{final}"
     )
 
 
@@ -220,6 +235,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     if not await bot.ensure_profile_ready(update, context):
         return
+    await reading_pause(update, context)
     today = date.today().isoformat()
     try:
         main_name, aux_name = bot.get_or_create_daily_runes(bot.DB_PATH, update.effective_user.id, today, RUNES)
@@ -241,6 +257,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
 async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
     if not await bot.ensure_profile_ready(update, context):
         return
+    await reading_pause(update, context)
     palette = bot.get_user_palette(update)
     text_palette = palette if palette != "premium" else "dark"
     rune = random.choice(RUNES)
@@ -335,7 +352,7 @@ def product_build_template_rasklad(name: str, question: str, runes: list, palett
     hidden = []
     for rune in runes:
         if random_alt():
-            hidden.append(f"— {rune['name']}: {alt_meaning(rune)}")
+            hidden.append(f"— {rune['name']}: {alt_meaning(rune, palette)}")
     if hidden:
         title = "Скрытый слой" if palette != "premium" else "Глубинный слой"
         text += f"\n\n{title}\n" + "\n".join(hidden)
