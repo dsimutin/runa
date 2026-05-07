@@ -13,12 +13,6 @@ IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"]
 DEFAULT_PALETTE = "premium"
 
 
-# -----------------------------------------------------------------------------
-# Profile guard: do NOT launch onboarding from random button flows.
-# If profile is broken/missing, repair it silently and continue.
-# Onboarding remains available through /start only for truly new users.
-# -----------------------------------------------------------------------------
-
 async def stable_profile_ready(update, context) -> bool:
     user = update.effective_user
     if not user:
@@ -41,10 +35,6 @@ product_runtime.bot.ensure_profile_ready = stable_profile_ready
 product_runtime_final.bot.ensure_profile_ready = stable_profile_ready
 
 
-# -----------------------------------------------------------------------------
-# Images: robust premium deck lookup
-# -----------------------------------------------------------------------------
-
 def safer_get_rune_image_path(rune: dict, palette: str) -> str | None:
     image_file = rune.get("image_file") or ""
     rune_key = (rune.get("key") or "").lower().strip()
@@ -52,18 +42,15 @@ def safer_get_rune_image_path(rune: dict, palette: str) -> str | None:
     wanted_stem = wanted.stem.lower()
     wanted_number = wanted_stem.split("-", 1)[0] if "-" in wanted_stem else ""
     wanted_name = wanted_stem.split("-", 1)[-1]
-
     deck_dirs = PREMIUM_DIR_CANDIDATES if palette == "premium" else [bot.DECK_DIRS.get(palette, "light")]
     folders = []
     for deck_dir in deck_dirs:
         folders.append(Path(bot.BASE_DIR) / deck_dir)
         folders.append(Path(bot.BASE_DIR) / "decks" / deck_dir)
-
     for folder in folders:
         exact = folder / image_file
         if exact.exists():
             return str(exact)
-
     for folder in folders:
         if not folder.exists() or not folder.is_dir():
             continue
@@ -84,7 +71,6 @@ def safer_get_rune_image_path(rune: dict, palette: str) -> str | None:
                 stem = p.stem.lower()
                 if stem == wanted_number or stem.startswith(wanted_number + "-") or stem.startswith(wanted_number + "_"):
                     return str(p)
-
     bot.logger.warning("Rune image not found by safer matcher: palette=%s rune=%s image_file=%s folders=%s", palette, rune_key, image_file, folders)
     return None
 
@@ -93,10 +79,6 @@ bot.get_rune_image_path = safer_get_rune_image_path
 product_runtime.bot.get_rune_image_path = safer_get_rune_image_path
 product_runtime_final.bot.get_rune_image_path = safer_get_rune_image_path
 
-
-# -----------------------------------------------------------------------------
-# Telegram HTML formatting
-# -----------------------------------------------------------------------------
 
 _original_send_private_or_group = bot.send_private_or_group
 
@@ -131,17 +113,18 @@ async def formatted_send_private_or_group(update, context, text: str, *, image_p
         await message.reply_text("Отправил ответ тебе в личку ✨")
     except Exception:
         bot.logger.exception("Formatted send failed; falling back to plain send")
-        await _original_send_private_or_group(update, context, _strip_html(text), image_path=image_path)
+        try:
+            await _original_send_private_or_group(update, context, _strip_html(text), image_path=image_path)
+        except Exception:
+            bot.logger.exception("Plain fallback also failed")
+            if message:
+                await message.reply_text("Не получилось отправить ответ. Попробуй ещё раз позже.", reply_markup=bot.MAIN_KEYBOARD)
 
 
 bot.send_private_or_group = formatted_send_private_or_group
 product_runtime.bot.send_private_or_group = formatted_send_private_or_group
 product_runtime_final.bot.send_private_or_group = formatted_send_private_or_group
 
-
-# -----------------------------------------------------------------------------
-# Final copy system
-# -----------------------------------------------------------------------------
 
 def _rune_name(rune: dict) -> str:
     return escape(rune.get("name", "Руна"))
@@ -164,6 +147,12 @@ def _title(rune: dict, reversed_state: bool) -> str:
     return f"<b>{name}</b>\nОбратное положение" if reversed_state else f"<b>{name}</b>"
 
 
+def _interp(rune: dict, palette: str) -> dict:
+    # Premium uses the darker interpretation data, but the final text rhythm stays premium.
+    source_palette = palette if palette != "premium" else "dark"
+    return bot.rune_text(rune, source_palette)
+
+
 def concise_daily_text(name: str, main: dict, main_text: dict, aux: dict, aux_text: dict, palette: str, main_alt: bool, aux_alt: bool) -> str:
     if palette == "dark":
         lead = "<b>Не игнорируй напряжение.</b>"
@@ -177,10 +166,8 @@ def concise_daily_text(name: str, main: dict, main_text: dict, aux: dict, aux_te
         lead = "<b>Не ускоряй события.</b>"
         note = "День лучше пройти спокойнее.\nНе пытайся закрыть всё сразу."
         action = "<u>Сделай один простой шаг.</u>"
-
     main_desc = alt_meaning(main, palette) if main_alt else main_text.get("short_desc", "")
     aux_desc = alt_meaning(aux, palette) if aux_alt else aux_text.get("short_desc", "")
-
     return (
         "🜂 Сегодня\n\n"
         f"{lead}\n\n"
@@ -218,16 +205,17 @@ def concise_spread_text(name: str, question: str, runes: list, palette: str) -> 
     first, second, third = runes[0], runes[1], runes[2]
     close = "<u>Сначала точность. Потом действие.</u>" if palette == "premium" else "<u>Не форсируй. Двигайся спокойно.</u>"
 
-    def line(rune: dict, label: str, fallback_key: str) -> str:
-        raw = rune.get(fallback_key) or rune.get("short_desc") or rune.get("meaning") or "Смотри на эту часть внимательнее."
-        return f"{label}\n<b>{_rune_name(rune)}</b>\n{_safe(_short_desc(raw, 95))}"
+    def line(rune: dict, label: str, key: str) -> str:
+        data = _interp(rune, palette)
+        raw = data.get(key) or data.get("short_desc") or "Здесь лучше не спешить с выводом."
+        return f"{label}\n<b>{_rune_name(rune)}</b>\n{_safe(_short_desc(raw, 125))}"
 
     return (
         "🔮 Расклад\n\n"
         f"<i>{_safe(_short_desc(question, 140))}</i>\n\n"
-        f"{line(first, '🜂 Основа', 'meaning_situation')}\n\n"
-        f"{line(second, '🜁 Что мешает', 'meaning_obstacle')}\n\n"
-        f"{line(third, '🜂 К чему идёт', 'meaning_advice')}\n\n"
+        f"{line(first, '🜂 Основа', 'situation')}\n\n"
+        f"{line(second, '🜁 Что мешает', 'obstacle')}\n\n"
+        f"{line(third, '🜂 К чему идёт', 'advice')}\n\n"
         f"{close}"
     )
 
@@ -277,14 +265,27 @@ product_runtime.HUMAN_READING_TEXT = HUMAN_READING_TEXT_FINAL
 product_runtime_final.HUMAN_READING_TEXT = HUMAN_READING_TEXT_FINAL
 
 
-# -----------------------------------------------------------------------------
-# UX state machine: menu buttons always win; every new action resets stale states.
-# -----------------------------------------------------------------------------
+async def stable_send_rasklad(update, context, question: str) -> None:
+    if not await stable_profile_ready(update, context):
+        return
+    palette = bot.get_user_palette(update)
+    runes = bot.choose_distinct_runes(3)
+    image_path = bot.get_rune_image_path(runes[2], palette)
+    if not image_path:
+        await bot.send_missing_image_error(update, context, runes[2], palette)
+        return
+    text = concise_spread_text(bot.user_name(update), question, runes, palette)
+    await bot.send_private_or_group(update, context, text, image_path=image_path)
+
+
+bot.send_rasklad = stable_send_rasklad
+product_runtime.bot.send_rasklad = stable_send_rasklad
+product_runtime_final.bot.send_rasklad = stable_send_rasklad
+
 
 async def stable_text_router(update, context):
     text = (update.effective_message.text or "").strip()
     state = context.user_data.get("state")
-
     if text == "🌞 Руна дня":
         context.user_data.clear()
         await product_runtime.product_runa_command(update, context)
@@ -312,20 +313,18 @@ async def stable_text_router(update, context):
         context.user_data.clear()
         await bot.send_private_or_group(update, context, concise_help())
         return
-
     if state == bot.STATE_WAITING_ASK:
         context.user_data.clear()
         await product_runtime.product_send_one_rune_answer(update, context, text)
         return
     if state == bot.STATE_WAITING_RASKLAD:
         context.user_data.clear()
-        await product_runtime.bot.send_rasklad(update, context, text)
+        await stable_send_rasklad(update, context, text)
         return
     if state == product_runtime.STATE_WAITING_HUMAN:
         context.user_data.clear()
         await product_runtime_final.handle_human_request(update, context, text)
         return
-
     await update.effective_message.reply_text("Выбери действие кнопкой ниже.", reply_markup=bot.MAIN_KEYBOARD)
 
 
@@ -334,7 +333,6 @@ product_runtime.product_text_router = stable_text_router
 bot.text_router = stable_text_router
 
 
-# Reduce perceived lag.
 async def shorter_reading_pause(update, context, seconds: float | None = None) -> None:
     chat = update.effective_chat
     if chat:
