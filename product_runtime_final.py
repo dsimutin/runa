@@ -18,7 +18,7 @@ from support_requests import (
     register_operator,
 )
 
-VERSION_MARKER = "RUNA FINAL 2026-05-07-3"
+VERSION_MARKER = "RUNA FINAL 2026-05-07-4"
 ALLOWED_OPERATOR_USERNAMES = {"mrgrief", "richstewardess"}
 PREMIUM_DIR_CANDIDATES = ["premium", "Premium", "Премиум", "премиум"]
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"]
@@ -126,30 +126,71 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
     user = update.effective_user
     if not user:
         return
+
     palette = bot.get_user_palette(update)
     try:
         init_support_db(bot.DB_PATH)
         request_id = create_request(bot.DB_PATH, user.id, text, palette)
-        operator_ids = list_operator_ids(bot.DB_PATH, ALLOWED_OPERATOR_USERNAMES)
+        registered_operator_ids = list_operator_ids(bot.DB_PATH, ALLOWED_OPERATOR_USERNAMES)
     except SupportRequestError:
         bot.logger.exception("Failed to create human reading request")
         await bot.send_private_or_group(update, context, "Не получилось создать заявку. Попробуй чуть позже.")
         return
-    admin_note = f"🕯 Новая заявка #{request_id}\n\nКолода: {product_runtime.PALETTE_NAMES.get(palette, palette)}\n\nВопрос:\n{text}\n\nКоманды:\n/claim {request_id} — взять в работу\n/answer {request_id} текст — ответить пользователю"
-    notified = False
-    for operator_id in operator_ids:
+
+    # Telegram bots cannot reliably send private messages to users by @username.
+    # Operators must either:
+    # 1) send /operator to the bot once, or
+    # 2) have their numeric IDs added to Render env ADMIN_IDS.
+    target_ids = set(registered_operator_ids) | set(bot.ADMIN_IDS)
+
+    admin_note = (
+        f"🕯 Новая заявка #{request_id}\n\n"
+        f"Колода: {product_runtime.PALETTE_NAMES.get(palette, palette)}\n\n"
+        f"Вопрос:\n{text}\n\n"
+        f"Команды:\n"
+        f"/claim {request_id} — взять в работу\n"
+        f"/answer {request_id} текст — ответить пользователю"
+    )
+
+    delivered_to = []
+    failed_targets = []
+    for chat_id in target_ids:
         try:
-            await context.bot.send_message(chat_id=operator_id, text=admin_note)
-            notified = True
+            await context.bot.send_message(chat_id=chat_id, text=admin_note)
+            delivered_to.append(chat_id)
         except TelegramError:
-            bot.logger.exception("Failed to notify registered operator")
-    for admin_id in bot.ADMIN_IDS:
-        try:
-            await context.bot.send_message(chat_id=admin_id, text=admin_note)
-            notified = True
-        except TelegramError:
-            bot.logger.exception("Failed to notify admin id")
-    await bot.send_private_or_group(update, context, f"🕯 Вопрос принят.\n\nЗаявка #{request_id}. Человек подключится к раскладу в течение 5–10 минут.\n\nМожно оставаться здесь — ответ придёт прямо в этот чат от бота." + ("" if notified else "\n\nОператору пока не удалось отправить уведомление. Мы сохранили заявку."))
+            failed_targets.append(chat_id)
+            bot.logger.exception("Failed to notify personal reading operator chat_id=%s", chat_id)
+
+    expected_registered = len(registered_operator_ids)
+    if len(delivered_to) >= 2 or (expected_registered and len(delivered_to) == expected_registered):
+        await bot.send_private_or_group(
+            update,
+            context,
+            f"🕯 Вопрос принят.\n\n"
+            f"Заявка #{request_id}. Человек подключится к раскладу в течение 5–10 минут.\n\n"
+            "Можно оставаться здесь — ответ придёт прямо в этот чат от бота.",
+        )
+        return
+
+    if delivered_to:
+        await bot.send_private_or_group(
+            update,
+            context,
+            f"🕯 Вопрос принят.\n\n"
+            f"Заявка #{request_id}. Уведомление ушло одному оператору.\n\n"
+            "Ответ придёт прямо в этот чат от бота.",
+        )
+        return
+
+    await bot.send_private_or_group(
+        update,
+        context,
+        f"🕯 Заявка #{request_id} сохранена.\n\n"
+        "Но операторов пока не удалось уведомить. "
+        "Попроси @MRGRIEF и @RichStewardess один раз написать боту команду /operator, "
+        "или добавь их numeric ID в Render → ADMIN_IDS.",
+    )
 
 
 async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -203,11 +244,26 @@ async def operator_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.effective_message.reply_text("Эта команда доступна только операторам.")
         return
     try:
+        init_support_db(bot.DB_PATH)
         register_operator(bot.DB_PATH, user.id, username)
     except SupportRequestError:
         await update.effective_message.reply_text("Не получилось зарегистрировать оператора.")
         return
-    await update.effective_message.reply_text("Готово. Теперь сюда будут приходить заявки на личный расклад.")
+    await update.effective_message.reply_text(
+        f"Готово. @{username} зарегистрирован как оператор.\n\n"
+        f"Твой numeric ID: {user.id}\n"
+        "Теперь сюда будут приходить заявки на личный расклад."
+    )
+
+
+async def whoami_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    chat = update.effective_chat
+    if not user or not chat:
+        return
+    await update.effective_message.reply_text(
+        f"User ID: {user.id}\nChat ID: {chat.id}\nUsername: @{user.username}" if user.username else f"User ID: {user.id}\nChat ID: {chat.id}"
+    )
 
 
 async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -275,6 +331,7 @@ def final_build_application():
     app.add_handler(CommandHandler("ask", product_runtime.bot.ask_command))
     app.add_handler(CommandHandler("rasklad", product_runtime.bot.rasklad_command))
     app.add_handler(CommandHandler("operator", operator_command))
+    app.add_handler(CommandHandler("whoami", whoami_command))
     app.add_handler(CommandHandler("claim", claim_command))
     app.add_handler(CommandHandler("answer", answer_command))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
