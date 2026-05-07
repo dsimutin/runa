@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
-from telegram.error import Forbidden, TelegramError
+from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from database import (
@@ -69,6 +69,18 @@ logging.basicConfig(format="%(asctime)s | %(name)s | %(levelname)s | %(message)s
 logger = logging.getLogger(__name__)
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup([["🌞 Руна дня", "❓ Вопрос"], ["🔮 Расклад", "ℹ️ Помощь"]], resize_keyboard=True)
+
+
+def strip_html(text: str) -> str:
+    return (
+        text.replace("<b>", "").replace("</b>", "")
+        .replace("<u>", "").replace("</u>", "")
+        .replace("<i>", "").replace("</i>", "")
+    )
+
+
+def wants_html(text: str) -> bool:
+    return any(tag in text for tag in ("<b>", "</b>", "<u>", "</u>", "<i>", "</i>"))
 
 
 def is_private(update: Update) -> bool:
@@ -221,20 +233,41 @@ async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TY
     user = update.effective_user
     if not message or not user:
         return
+    parse_mode = "HTML" if wants_html(text) else None
+    plain_text = strip_html(text)
     try:
         if is_private(update):
             if image_path:
                 with open(image_path, "rb") as image_file:
-                    await message.reply_photo(photo=image_file, caption=text, reply_markup=MAIN_KEYBOARD)
+                    await message.reply_photo(photo=image_file, caption=text, reply_markup=MAIN_KEYBOARD, parse_mode=parse_mode)
             else:
-                await message.reply_text(text, reply_markup=MAIN_KEYBOARD)
+                await message.reply_text(text, reply_markup=MAIN_KEYBOARD, parse_mode=parse_mode)
             return
         if image_path:
             with open(image_path, "rb") as image_file:
-                await context.bot.send_photo(chat_id=user.id, photo=image_file, caption=text)
+                await context.bot.send_photo(chat_id=user.id, photo=image_file, caption=text, parse_mode=parse_mode)
         else:
-            await context.bot.send_message(chat_id=user.id, text=text)
+            await context.bot.send_message(chat_id=user.id, text=text, parse_mode=parse_mode)
         await message.reply_text("Отправил ответ тебе в личку ✨")
+    except BadRequest:
+        logger.exception("HTML send failed; retrying plain text")
+        try:
+            if is_private(update):
+                if image_path:
+                    with open(image_path, "rb") as image_file:
+                        await message.reply_photo(photo=image_file, caption=plain_text, reply_markup=MAIN_KEYBOARD)
+                else:
+                    await message.reply_text(plain_text, reply_markup=MAIN_KEYBOARD)
+                return
+            if image_path:
+                with open(image_path, "rb") as image_file:
+                    await context.bot.send_photo(chat_id=user.id, photo=image_file, caption=plain_text)
+            else:
+                await context.bot.send_message(chat_id=user.id, text=plain_text)
+            await message.reply_text("Отправил ответ тебе в личку ✨")
+        except TelegramError:
+            logger.exception("Plain fallback failed")
+            await message.reply_text("Не получилось отправить ответ. Попробуй ещё раз позже.")
     except Forbidden:
         await message.reply_text("Открой личку с ботом и нажми /start, тогда я смогу отправлять личные ответы.", reply_markup=private_link_markup(context))
     except (OSError, TelegramError):
