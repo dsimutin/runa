@@ -18,7 +18,7 @@ from support_requests import (
     register_operator,
 )
 
-VERSION_MARKER = "RUNA FINAL 2026-05-07-2"
+VERSION_MARKER = "RUNA FINAL 2026-05-07-3"
 ALLOWED_OPERATOR_USERNAMES = {"mrgrief", "richstewardess"}
 PREMIUM_DIR_CANDIDATES = ["premium", "Premium", "Премиум", "премиум"]
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"]
@@ -28,18 +28,15 @@ def robust_get_rune_image_path(rune: dict, palette: str) -> str | None:
     image_file = rune.get("image_file") or ""
     rune_key = (rune.get("key") or "").lower().strip()
     wanted_stem = Path(image_file).stem.lower()
-
     deck_dirs = PREMIUM_DIR_CANDIDATES if palette == "premium" else [bot.DECK_DIRS.get(palette, "light")]
     folders = []
     for deck_dir in deck_dirs:
         folders.append(Path(bot.BASE_DIR) / deck_dir)
         folders.append(Path(bot.BASE_DIR) / "decks" / deck_dir)
-
     for folder in folders:
         exact = folder / image_file
         if exact.exists():
             return str(exact)
-
     for folder in folders:
         if not folder.exists() or not folder.is_dir():
             continue
@@ -82,10 +79,7 @@ async def final_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         bot.logger.exception("Failed to start final onboarding")
         await update.effective_message.reply_text("Не получилось настроить профиль. Попробуй позже.", reply_markup=bot.MAIN_KEYBOARD)
         return
-    await update.effective_message.reply_text(
-        f"🜂 {name}, бот обновлён.\n\nВерсия: {VERSION_MARKER}\n\nВыбери действие ниже.",
-        reply_markup=bot.MAIN_KEYBOARD,
-    )
+    await update.effective_message.reply_text(f"🜂 {name}, бот обновлён.\n\nВерсия: {VERSION_MARKER}\n\nВыбери действие ниже.", reply_markup=bot.MAIN_KEYBOARD)
 
 
 async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -106,7 +100,7 @@ async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAUL
         await context.bot.send_message(
             chat_id=update.effective_user.id,
             text=(
-                f"👇 Что можно сделать:\n\n"
+                "👇 Что можно сделать:\n\n"
                 "🌞 Руна дня — фокус на сегодня\n"
                 "❓ Вопрос — быстрый ответ одной картой\n"
                 "🔮 Расклад — разбор ситуации (3 карты)\n"
@@ -141,12 +135,7 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
         bot.logger.exception("Failed to create human reading request")
         await bot.send_private_or_group(update, context, "Не получилось создать заявку. Попробуй чуть позже.")
         return
-    admin_note = (
-        f"🕯 Новая заявка #{request_id}\n\n"
-        f"Колода: {product_runtime.PALETTE_NAMES.get(palette, palette)}\n\n"
-        f"Вопрос:\n{text}\n\n"
-        f"Команды:\n/claim {request_id} — взять в работу\n/answer {request_id} текст — ответить пользователю"
-    )
+    admin_note = f"🕯 Новая заявка #{request_id}\n\nКолода: {product_runtime.PALETTE_NAMES.get(palette, palette)}\n\nВопрос:\n{text}\n\nКоманды:\n/claim {request_id} — взять в работу\n/answer {request_id} текст — ответить пользователю"
     notified = False
     for operator_id in operator_ids:
         try:
@@ -160,27 +149,48 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
             notified = True
         except TelegramError:
             bot.logger.exception("Failed to notify admin id")
-    await bot.send_private_or_group(
-        update,
-        context,
-        f"🕯 Вопрос принят.\n\n"
-        f"Заявка #{request_id}. Человек подключится к раскладу в течение 5–10 минут.\n\n"
-        "Можно оставаться здесь — ответ придёт прямо в этот чат от бота."
-        + ("" if notified else "\n\nОператору пока не удалось отправить уведомление. Мы сохранили заявку."),
-    )
+    await bot.send_private_or_group(update, context, f"🕯 Вопрос принят.\n\nЗаявка #{request_id}. Человек подключится к раскладу в течение 5–10 минут.\n\nМожно оставаться здесь — ответ придёт прямо в этот чат от бота." + ("" if notified else "\n\nОператору пока не удалось отправить уведомление. Мы сохранили заявку."))
 
 
 async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (update.effective_message.text or "").strip()
+    state = context.user_data.get("state")
+
+    if text == "🌞 Руна дня":
+        await product_runtime.product_runa_command(update, context)
+        return
+    if text in {"❓ Вопрос", "❓ Задать вопрос"}:
+        context.user_data["state"] = bot.STATE_WAITING_ASK
+        await update.effective_message.reply_text("❓ Напиши вопрос следующим сообщением.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else None)
+        return
+    if text == "🔮 Расклад":
+        context.user_data["state"] = bot.STATE_WAITING_RASKLAD
+        await update.effective_message.reply_text("🔮 Напиши вопрос для расклада следующим сообщением.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else None)
+        return
+    if text == product_runtime.SETTINGS_BUTTON:
+        await product_runtime.settings_command(update, context)
+        return
     if text == HUMAN_READING_BUTTON:
         await human_reading_command(update, context)
         return
-    state = context.user_data.get("state")
+    if text == "ℹ️ Помощь":
+        await product_runtime.bot.help_command(update, context)
+        return
+
     if state == product_runtime.STATE_WAITING_HUMAN:
         context.user_data.pop("state", None)
         await handle_human_request(update, context, text)
         return
-    await product_runtime.product_text_router(update, context)
+    if state == bot.STATE_WAITING_ASK:
+        context.user_data.pop("state", None)
+        await product_runtime.product_send_one_rune_answer(update, context, text)
+        return
+    if state == bot.STATE_WAITING_RASKLAD:
+        context.user_data.pop("state", None)
+        await product_runtime.bot.send_rasklad(update, context, text)
+        return
+
+    await update.effective_message.reply_text("Выбери действие кнопкой ниже или напиши /help.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else bot.private_link_markup(context))
 
 
 async def operator_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -195,7 +205,6 @@ async def operator_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         register_operator(bot.DB_PATH, user.id, username)
     except SupportRequestError:
-        bot.logger.exception("Failed to register operator")
         await update.effective_message.reply_text("Не получилось зарегистрировать оператора.")
         return
     await update.effective_message.reply_text("Готово. Теперь сюда будут приходить заявки на личный расклад.")
@@ -279,7 +288,6 @@ bot.get_rune_image_path = robust_get_rune_image_path
 bot.build_application = final_build_application
 product_runtime.human_reading_command = human_reading_command
 product_runtime.handle_human_request = handle_human_request
-product_runtime.product_text_router = final_text_router
 
 if __name__ == "__main__":
     bot.main()
