@@ -16,6 +16,7 @@ STATE_WAITING_HUMAN = "waiting_human"
 bot.MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["🌞 Руна дня", "❓ Вопрос"], ["🔮 Расклад", HUMAN_READING_BUTTON], ["ℹ️ Помощь"]],
     resize_keyboard=True,
+    is_persistent=True,
 )
 
 
@@ -71,6 +72,31 @@ def product_question_text(name: str, question: str, rune: dict, answer: str, pal
         f"Карта\n{rune_title(rune, alt)}\n\n"
         f"Что руна показывает\n{body}\n\n"
         f"Главное сейчас\n{final}"
+    )
+
+
+async def product_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.clear()
+    if not update.effective_user or not update.effective_message:
+        return
+    if not bot.is_private(update):
+        await update.effective_message.reply_text("Открой личку с ботом. Там появится меню.", reply_markup=bot.private_link_markup(context))
+        return
+    name = bot.user_name(update)
+    try:
+        bot.ensure_user(bot.DB_PATH, update.effective_user.id, name)
+        profile = bot.get_user_profile(bot.DB_PATH, update.effective_user.id)
+        if not profile or not profile.get("palette"):
+            bot.start_onboarding(bot.DB_PATH, update.effective_user.id)
+            await update.effective_message.reply_text(bot.build_onboarding_question(1, name), reply_markup=bot.onboarding_keyboard(1))
+            return
+    except bot.DatabaseError:
+        bot.logger.exception("Failed to start onboarding")
+        await update.effective_message.reply_text("Не получилось настроить профиль. Попробуй позже.", reply_markup=bot.MAIN_KEYBOARD)
+        return
+    await update.effective_message.reply_text(
+        f"🜂 {name}, меню снова на месте.\n\nВыбери действие ниже.",
+        reply_markup=bot.MAIN_KEYBOARD,
     )
 
 
@@ -171,6 +197,7 @@ def product_build_template_rasklad(name: str, question: str, runes: list, palett
     return text
 
 
+bot.start_command = product_start_command
 bot.runa_command = product_runa_command
 bot.send_one_rune_answer = product_send_one_rune_answer
 bot.text_router = product_text_router
