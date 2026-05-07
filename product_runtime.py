@@ -16,12 +16,14 @@ from runes_data import RUNES, get_rune_by_name
 
 STATE_WAITING_HUMAN = "waiting_human"
 SETTINGS_BUTTON = "⚙️ Настройки"
+QUESTION_BUTTON = "❓ Вопрос (да/нет)"
+OLD_QUESTION_BUTTONS = {"❓ Вопрос", "❓ Задать вопрос", QUESTION_BUTTON}
 PALETTE_NAMES = {"light": "Светлая", "dark": "Тёмная", "premium": "Премиум"}
 
 bot.DECK_DIRS = {"light": "light", "dark": "dark", "premium": "Премиум"}
 
 bot.MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [["🌞 Руна дня", "❓ Вопрос"], ["🔮 Расклад", HUMAN_READING_BUTTON], [SETTINGS_BUTTON, "ℹ️ Помощь"]],
+    [["🌞 Руна дня", QUESTION_BUTTON], ["🔮 Расклад", HUMAN_READING_BUTTON], [SETTINGS_BUTTON, "ℹ️ Помощь"]],
     resize_keyboard=True,
     is_persistent=True,
 )
@@ -61,14 +63,13 @@ bot.ONBOARDING_QUESTIONS = [
 
 
 async def reading_pause(update: Update, context: ContextTypes.DEFAULT_TYPE, seconds: float | None = None) -> None:
-    """Small human-like pause before a reading response."""
     chat = update.effective_chat
     if chat:
         try:
             await context.bot.send_chat_action(chat_id=chat.id, action=ChatAction.TYPING)
         except TelegramError:
             bot.logger.exception("Failed to send typing action")
-    await asyncio.sleep(seconds if seconds is not None else random.uniform(1.4, 2.6))
+    await asyncio.sleep(seconds if seconds is not None else random.uniform(0.25, 0.65))
 
 
 def stable_alt(user_id: int, day: str, rune_key: str) -> bool:
@@ -82,7 +83,9 @@ def random_alt() -> bool:
 
 
 def rune_title(rune: dict, alt: bool) -> str:
-    return f"{rune['name']} — обратное положение" if alt else rune["name"]
+    if alt:
+        return f"<b>{rune['name']}</b>\n<u>↺ Обратное положение</u>"
+    return f"<b>{rune['name']}</b>\n<u>→ Прямое положение</u>"
 
 
 def get_user_palette(update: Update) -> str:
@@ -117,7 +120,7 @@ bot.onboarding_keyboard = onboarding_keyboard
 def build_onboarding_question(step: int, name: str) -> str:
     q = bot.ONBOARDING_QUESTIONS[step - 1]
     return (
-        f"🜂 {name}, настроим твою колоду\n\n"
+        f"{name}, настроим твою колоду\n\n"
         f"Вопрос {step}/5\n"
         f"{q['text']}\n\n"
         f"A — {q['a']}\n"
@@ -130,80 +133,68 @@ bot.build_onboarding_question = build_onboarding_question
 
 
 def onboarding_result_text(palette: str) -> str:
-    if palette == "premium":
-        return (
-            "🜂 Колода настроена\n\n"
-            "Тебе подошла колода: Премиум.\n\n"
-            "Она будет читать ситуацию глубже: через подтекст, повторяющиеся сигналы и скрытую структуру вопроса.\n\n"
-            "Колоду можно поменять вручную в ⚙️ Настройках."
-        )
-    profile = bot.PSYCHOTYPES[palette]
-    deck = PALETTE_NAMES[palette]
-    return (
-        "🜂 Колода настроена\n\n"
-        f"Тебе подошла колода: {deck}.\n"
-        f"Стиль чтения: {profile['reading_style']}.\n\n"
-        "Колоду можно поменять вручную в ⚙️ Настройках."
-    )
+    titles = {
+        "light": "🌕 Светлая колода настроена",
+        "dark": "🌑 Тёмная колода настроена",
+        "premium": "💠 Премиум-колода настроена",
+    }
+    descriptions = {
+        "light": "Мягкие трактовки, больше поддержки и спокойного ориентира.",
+        "dark": "Более прямое чтение: границы, риски и честная позиция.",
+        "premium": "Более глубокий разбор: подтекст, повторяющиеся сигналы и скрытая структура вопроса.",
+    }
+    return f"{titles.get(palette, 'Колода настроена')}\n\n{descriptions.get(palette, '')}\n\nКолоду можно сменить позже в ⚙️ Настройках."
 
 
 bot.onboarding_result_text = onboarding_result_text
 
 
 def product_daily_text(name: str, main: dict, main_text: dict, aux: dict, aux_text: dict, palette: str, main_alt: bool, aux_alt: bool) -> str:
-    if palette == "premium":
-        opening = f"🜁 {name}, я бы здесь смотрела не только на саму руну, а на повторяющийся мотив."
-        middle = "Что видно"
-        note = "Похоже, ситуация просит не резкого решения, а более точной настройки: где ты уже знаешь ответ, но всё ещё ищешь подтверждение."
-        action = "Сегодня не добавляй новых обязательств. Сначала убери один лишний узел: разговор, обещание или ожидание, которое тянет энергию."
-        signal_label = "Второй знак"
-    elif palette == "dark":
-        opening = f"🌑 {name}, я бы не стала здесь торопиться, но знак довольно прямой."
-        middle = "Что видно"
-        note = "Есть место, где напряжение уже заметно. Не обязательно рубить сразу, но и делать вид, что всё спокойно, тоже не стоит."
-        action = "Выбери один разговор или одно решение, которое давно откладывается. Не дави, просто обозначь позицию."
-        signal_label = "Дополнительный знак"
-    else:
-        opening = f"🌞 {name}, по этой руне я бы начала мягко: день лучше прожить внимательнее, без лишнего нажима."
-        middle = "Что видно"
-        note = "Сейчас важна не скорость. Важнее понять, что действительно твоё, а что просто забирает внимание."
-        action = "Сделай один спокойный шаг. Не пытайся закрыть всё сразу."
-        signal_label = "Дополнительный знак"
-
+    openings = {
+        "premium": f"💠 <b>{name}, руна дня</b>\nСегодня лучше смотреть не на шум вокруг, а на повторяющийся мотив.",
+        "dark": f"🌑 <b>{name}, руна дня</b>\nЗнак достаточно прямой: ситуация просит честной позиции.",
+        "light": f"🌕 <b>{name}, руна дня</b>\nДень лучше пройти спокойно, без лишнего нажима.",
+    }
+    notes = [
+        "Не ускоряй то, что ещё не собрано до конца.",
+        "Выбери один понятный шаг и убери лишнее давление.",
+        "Смотри на факт, а не на тревогу вокруг него.",
+        "Сегодня многое решает не скорость, а качество внимания.",
+        "Не добавляй новых обещаний, пока не закрыт старый узел.",
+    ]
     main_desc = alt_meaning(main, palette) if main_alt else main_text["short_desc"]
     aux_desc = alt_meaning(aux, palette) if aux_alt else aux_text["short_desc"]
+    action = random.choice(notes)
     return (
-        f"{opening}\n\n"
-        f"Выпала руна\n{rune_title(main, main_alt)}\n\n"
+        f"{openings.get(palette, openings['light'])}\n\n"
+        f"<u>Основная руна</u>\n{rune_title(main, main_alt)}\n\n"
         f"{main_desc}\n\n"
-        f"{middle}\n{note}\n\n"
-        f"{signal_label}: {rune_title(aux, aux_alt)}\n"
+        f"<u>Дополнительная руна</u>\n{rune_title(aux, aux_alt)}\n\n"
         f"{aux_desc}\n\n"
-        "Что лучше сделать\n"
-        f"{action}"
+        f"<u>Что сделать сегодня</u>\n{action}"
     )
 
 
 def product_question_text(name: str, question: str, rune: dict, answer: str, palette: str, alt: bool) -> str:
-    if palette == "premium":
-        opening = f"🜁 {name}, здесь ответ не совсем на поверхности. Я бы читала это через подтекст вопроса."
-        final = "Не спеши действовать в тот же день. Сначала посмотри, что повторяется: один и тот же человек, страх, обещание или сценарий."
-        marker = "Что видно по руне"
-    elif palette == "dark":
-        opening = f"🌑 {name}, здесь знак достаточно собранный. Я бы сказала аккуратно, но прямо."
-        final = "Не делай резких движений из эмоции. Но и не откладывай то, что уже требует честной позиции."
-        marker = "Что видно по руне"
-    else:
-        opening = f"🌞 {name}, я бы читала это мягко. Ответ есть, но он не требует спешки."
-        final = "Дай себе небольшую паузу. Если после неё внутри станет спокойнее — направление выбрано верно."
-        marker = "Что видно по руне"
+    openings = [
+        f"❓ <b>{name}, ответ по смыслу «да/нет»</b>",
+        f"❓ <b>{name}, смотрю вопрос через одну карту</b>",
+        f"❓ <b>{name}, короткий ответ по ситуации</b>",
+    ]
+    finals = [
+        "Не делай резкий шаг сразу. Сначала проверь, на чём держится решение.",
+        "Лучше выбрать один маленький шаг, чем пытаться решить всё целиком.",
+        "Смотри не только на желание, но и на последствия ближайших дней.",
+        "Если внутри есть сопротивление, не игнорируй его — там важная деталь.",
+        "Ответ лучше читать как ориентир, а не как приказ к действию.",
+    ]
     body = alt_meaning(rune, palette) if alt else answer
     return (
-        f"{opening}\n\n"
-        f"Твой вопрос\n{question}\n\n"
-        f"Карта\n{rune_title(rune, alt)}\n\n"
-        f"{marker}\n{body}\n\n"
-        f"Совет\n{final}"
+        f"{random.choice(openings)}\n\n"
+        f"<u>Вопрос</u>\n{question}\n\n"
+        f"<u>Карта</u>\n{rune_title(rune, alt)}\n\n"
+        f"<u>Трактовка</u>\n{body}\n\n"
+        f"<u>Вывод</u>\n{random.choice(finals)}"
     )
 
 
@@ -226,7 +217,7 @@ async def product_start_command(update: Update, context: ContextTypes.DEFAULT_TY
         bot.logger.exception("Failed to start onboarding")
         await update.effective_message.reply_text("Не получилось настроить профиль. Попробуй позже.", reply_markup=bot.MAIN_KEYBOARD)
         return
-    await update.effective_message.reply_text(f"🜂 {name}, меню снова на месте.\n\nВыбери действие ниже.", reply_markup=bot.MAIN_KEYBOARD)
+    await update.effective_message.reply_text(f"{name}, меню готово.\n\nВыбери действие ниже.", reply_markup=bot.MAIN_KEYBOARD)
 
 
 async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -235,7 +226,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     if not await bot.ensure_profile_ready(update, context):
         return
-    await reading_pause(update, context)
+    await reading_pause(update, context, 0.15)
     today = date.today().isoformat()
     try:
         main_name, aux_name = bot.get_or_create_daily_runes(bot.DB_PATH, update.effective_user.id, today, RUNES)
@@ -257,7 +248,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
 async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
     if not await bot.ensure_profile_ready(update, context):
         return
-    await reading_pause(update, context)
+    await reading_pause(update, context, 0.25)
     palette = bot.get_user_palette(update)
     text_palette = palette if palette != "premium" else "dark"
     rune = random.choice(RUNES)
@@ -277,9 +268,9 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     palette = bot.get_user_palette(update)
     markup = InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("🌞 Светлая", callback_data="settings:deck:light")],
+            [InlineKeyboardButton("🌕 Светлая", callback_data="settings:deck:light")],
             [InlineKeyboardButton("🌑 Тёмная", callback_data="settings:deck:dark")],
-            [InlineKeyboardButton("🜁 Премиум", callback_data="settings:deck:premium")],
+            [InlineKeyboardButton("💠 Премиум", callback_data="settings:deck:premium")],
         ]
     )
     await bot.send_private_or_group(update, context, f"⚙️ Настройки\n\nТекущая колода: {PALETTE_NAMES.get(palette, 'Светлая')}\n\nМожно сменить её вручную:", image_path=None)
@@ -322,7 +313,7 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_message(chat_id=admin_id, text=admin_note)
         except TelegramError:
             bot.logger.exception("Failed to notify admin about human reading")
-    await bot.send_private_or_group(update, context, "Принял вопрос. Личный расклад стоит 100 ₽. Ответ подготовит человек, поэтому это займёт немного больше времени.")
+    await bot.send_private_or_group(update, context, "🕯 Вопрос принят.\n\nОтвет подготовит человек. Обычно это занимает 5–10 минут.")
 
 
 old_text_router = bot.text_router
@@ -363,7 +354,7 @@ def patched_short_help() -> str:
     return (
         "ℹ️ Помощь\n\n"
         "🌞 /runa — руна дня\n"
-        "❓ /ask <вопрос> — ответ одной картой\n"
+        "❓ /ask <вопрос> — ответ по смыслу да/нет одной картой\n"
         "🔮 /rasklad <вопрос> — расклад на 3 карты\n"
         f"{HUMAN_READING_BUTTON} — живой разбор за 100 ₽\n"
         f"{SETTINGS_BUTTON} — сменить колоду\n"
