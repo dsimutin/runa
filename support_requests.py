@@ -112,6 +112,26 @@ def get_request(db_path: str, request_id: int) -> Dict[str, Any] | None:
         raise SupportRequestError(str(exc)) from exc
 
 
+def get_latest_open_request(db_path: str) -> Dict[str, Any] | None:
+    try:
+        with sqlite3.connect(db_path, timeout=30) as conn:
+            init_support_db(db_path)
+            row = conn.execute(
+                """
+                SELECT id
+                FROM human_requests
+                WHERE status IN ('new', 'claimed', 'open')
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            if not row:
+                return None
+            return get_request(db_path, int(row[0]))
+    except sqlite3.Error as exc:
+        raise SupportRequestError(str(exc)) from exc
+
+
 def claim_request(db_path: str, request_id: int, operator_id: int, operator_username: str) -> Dict[str, Any] | None:
     now = datetime.utcnow().isoformat(timespec="seconds")
     try:
@@ -135,9 +155,6 @@ def close_request(db_path: str, request_id: int) -> None:
     try:
         with sqlite3.connect(db_path, timeout=30) as conn:
             init_support_db(db_path)
-            conn.execute(
-                "UPDATE human_requests SET status = 'answered', updated_at = ? WHERE id = ?",
-                (now, request_id),
-            )
+            conn.execute("UPDATE human_requests SET status = 'answered', updated_at = ? WHERE id = ?", (now, request_id))
     except sqlite3.Error as exc:
         raise SupportRequestError(str(exc)) from exc
