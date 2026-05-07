@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from telegram import Update
@@ -18,10 +19,35 @@ from support_requests import (
     register_operator,
 )
 
-VERSION_MARKER = "RUNA FINAL 2026-05-07-4"
+VERSION_MARKER = "RUNA FINAL 2026-05-07-5"
 ALLOWED_OPERATOR_USERNAMES = {"mrgrief", "richstewardess"}
 PREMIUM_DIR_CANDIDATES = ["premium", "Premium", "Премиум", "премиум"]
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"]
+REQUEST_ID_RE = re.compile(r"заявка\s*#\s*(\d+)", re.IGNORECASE)
+
+
+def is_operator_chat(update: Update) -> bool:
+    chat = update.effective_chat
+    return bool(chat and chat.id in bot.ADMIN_IDS and chat.type != "private")
+
+
+def is_authorized_operator(update: Update) -> bool:
+    user = update.effective_user
+    chat = update.effective_chat
+    if chat and chat.id in bot.ADMIN_IDS:
+        return True
+    return bool(user and user.username and user.username.lower() in ALLOWED_OPERATOR_USERNAMES)
+
+
+def extract_request_id_from_reply(update: Update) -> int | None:
+    message = update.effective_message
+    if not message or not message.reply_to_message:
+        return None
+    source_text = message.reply_to_message.text or message.reply_to_message.caption or ""
+    match = REQUEST_ID_RE.search(source_text)
+    if not match:
+        return None
+    return int(match.group(1))
 
 
 def robust_get_rune_image_path(rune: dict, palette: str) -> str | None:
@@ -102,7 +128,7 @@ async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAUL
             text=(
                 "👇 Что можно сделать:\n\n"
                 "🌞 Руна дня — фокус на сегодня\n"
-                "❓ Вопрос — быстрый ответ одной картой\n"
+                "❓ Вопрос — ответ по смыслу «да/нет» одной картой\n"
                 "🔮 Расклад — разбор ситуации (3 карты)\n"
                 "🕯 Личный расклад — ответ человека\n"
                 "⚙️ Настройки — сменить колоду\n\n"
@@ -137,33 +163,27 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
         await bot.send_private_or_group(update, context, "Не получилось создать заявку. Попробуй чуть позже.")
         return
 
-    # Telegram bots cannot reliably send private messages to users by @username.
-    # Operators must either:
-    # 1) send /operator to the bot once, or
-    # 2) have their numeric IDs added to Render env ADMIN_IDS.
-    target_ids = set(registered_operator_ids) | set(bot.ADMIN_IDS)
+    target_ids = set(bot.ADMIN_IDS) or set(registered_operator_ids)
+    sender = f"@{user.username}" if user.username else (user.first_name or str(user.id))
 
     admin_note = (
         f"🕯 Новая заявка #{request_id}\n\n"
+        f"От: {sender}\n"
         f"Колода: {product_runtime.PALETTE_NAMES.get(palette, palette)}\n\n"
         f"Вопрос:\n{text}\n\n"
-        f"Команды:\n"
-        f"/claim {request_id} — взять в работу\n"
-        f"/answer {request_id} текст — ответить пользователю"
+        "Ответьте реплаем на это сообщение — бот отправит ответ пользователю.\n"
+        f"Запасной вариант: /answer {request_id} текст ответа"
     )
 
     delivered_to = []
-    failed_targets = []
     for chat_id in target_ids:
         try:
             await context.bot.send_message(chat_id=chat_id, text=admin_note)
             delivered_to.append(chat_id)
         except TelegramError:
-            failed_targets.append(chat_id)
             bot.logger.exception("Failed to notify personal reading operator chat_id=%s", chat_id)
 
-    expected_registered = len(registered_operator_ids)
-    if len(delivered_to) >= 2 or (expected_registered and len(delivered_to) == expected_registered):
+    if delivered_to:
         await bot.send_private_or_group(
             update,
             context,
@@ -173,36 +193,68 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
-    if delivered_to:
-        await bot.send_private_or_group(
-            update,
-            context,
-            f"🕯 Вопрос принят.\n\n"
-            f"Заявка #{request_id}. Уведомление ушло одному оператору.\n\n"
-            "Ответ придёт прямо в этот чат от бота.",
-        )
-        return
-
     await bot.send_private_or_group(
         update,
         context,
         f"🕯 Заявка #{request_id} сохранена.\n\n"
-        "Но операторов пока не удалось уведомить. "
-        "Попроси @MRGRIEF и @RichStewardess один раз написать боту команду /operator, "
-        "или добавь их numeric ID в Render → ADMIN_IDS.",
+        "Но операторский чат пока не получил уведомление. Проверь ADMIN_IDS в Render.",
     )
+
+
+async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message or not message.text:
+        return
+
+    request_id = extract_request_id_from_reply(update)
+    if request_id is None:
+        await message.reply_text("Ответьте реплаем на сообщение заявки. Тогда бот поймёт, кому отправить ответ.")
+        return
+
+    answer_text = message.text.strip()
+    try:
+        request = get_request(bot.DB_PATH, request_id)
+    except SupportRequestError:
+        bot.logger.exception("Failed to load request from operator reply")
+        await message.reply_text("Не получилось найти заявку. Попробуй /answer номер текст.")
+        return
+
+    if not request:
+        await message.reply_text("Заявка не найдена.")
+        return
+    if request.get("status") == "answered":
+        await message.reply_text("Эта заявка уже закрыта.")
+        return
+
+    try:
+        await context.bot.send_message(
+            chat_id=request["user_id"],
+            text=f"🕯 Личный расклад #{request_id}\n\n{answer_text}",
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+        close_request(bot.DB_PATH, request_id)
+    except (TelegramError, SupportRequestError):
+        bot.logger.exception("Failed to send operator reply to user")
+        await message.reply_text("Не получилось отправить ответ пользователю.")
+        return
+
+    await message.reply_text(f"Готово. Ответ по заявке #{request_id} отправлен пользователю.")
 
 
 async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (update.effective_message.text or "").strip()
     state = context.user_data.get("state")
 
+    if is_operator_chat(update):
+        await handle_operator_reply(update, context)
+        return
+
     if text == "🌞 Руна дня":
         await product_runtime.product_runa_command(update, context)
         return
     if text in {"❓ Вопрос", "❓ Задать вопрос"}:
         context.user_data["state"] = bot.STATE_WAITING_ASK
-        await update.effective_message.reply_text("❓ Напиши вопрос следующим сообщением.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else None)
+        await update.effective_message.reply_text("❓ Напиши вопрос одним сообщением. Формат — ответ по смыслу «да/нет».", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else None)
         return
     if text == "🔮 Расклад":
         context.user_data["state"] = bot.STATE_WAITING_RASKLAD
@@ -268,15 +320,16 @@ async def whoami_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    if not user or not user.username or user.username.lower() not in ALLOWED_OPERATOR_USERNAMES:
+    if not is_authorized_operator(update):
         await update.effective_message.reply_text("Эта команда доступна только операторам.")
         return
     if not context.args or not context.args[0].isdigit():
         await update.effective_message.reply_text("Формат: /claim 1047")
         return
     request_id = int(context.args[0])
+    username = user.username if user and user.username else "operator"
     try:
-        request = claim_request(bot.DB_PATH, request_id, user.id, user.username)
+        request = claim_request(bot.DB_PATH, request_id, user.id if user else 0, username)
     except SupportRequestError:
         await update.effective_message.reply_text("Не получилось взять заявку.")
         return
@@ -291,8 +344,7 @@ async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not user or not user.username or user.username.lower() not in ALLOWED_OPERATOR_USERNAMES:
+    if not is_authorized_operator(update):
         await update.effective_message.reply_text("Эта команда доступна только операторам.")
         return
     if not context.args or not context.args[0].isdigit() or len(context.args) < 2:
@@ -307,6 +359,9 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if not request:
         await update.effective_message.reply_text("Заявка не найдена.")
+        return
+    if request.get("status") == "answered":
+        await update.effective_message.reply_text("Эта заявка уже закрыта.")
         return
     try:
         await context.bot.send_message(chat_id=request["user_id"], text=f"🕯 Личный расклад #{request_id}\n\n{answer_text}", reply_markup=bot.MAIN_KEYBOARD)
