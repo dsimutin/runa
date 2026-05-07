@@ -22,7 +22,7 @@ RUNE_FILES = [
     ("laguz", "Лагуз", "21-laguz.jpg"),
     ("inguz", "Ингуз", "22-inguz.jpg"),
     ("dagaz", "Дагаз", "23-dagaz.jpg"),
-    ("othala", "Одал", "24-othala.jpg"),
+    ("othala", "Отал", "24-othala.jpg"),
 ]
 
 RUNES = []
@@ -43,8 +43,10 @@ for key, name, image_file in RUNE_FILES:
 
 
 def get_rune_by_name(name: str) -> dict:
+    aliases = {"Одал": "Отал"}
+    normalized = aliases.get(name, name)
     for rune in RUNES:
-        if rune["name"] == name:
+        if rune["name"] == normalized:
             return rune
     raise KeyError(f"Rune not found: {name}")
 
