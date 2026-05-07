@@ -148,7 +148,8 @@ async def reading_pause(update: Update, context: ContextTypes.DEFAULT_TYPE, seco
             await context.bot.send_chat_action(chat_id=chat.id, action=ChatAction.TYPING)
         except TelegramError:
             bot.logger.exception("Failed to send typing action")
-    await asyncio.sleep(seconds if seconds is not None else random.uniform(0.25, 0.65))
+    if seconds and seconds > 0:
+        await asyncio.sleep(min(seconds, 0.05))
 
 
 def stable_alt(user_id: int, day: str, rune_key: str) -> bool:
@@ -163,8 +164,8 @@ def random_alt() -> bool:
 
 def rune_title(rune: dict, alt: bool) -> str:
     if alt:
-        return f"<b>{rune['name']}</b>\n<u>↺ Обратное положение</u>"
-    return f"<b>{rune['name']}</b>\n<u>→ Прямое положение</u>"
+        return f"<b>{rune['name']}</b>\n<u>↺ Перевёрнутое значение</u>"
+    return f"<b>{rune['name']}</b>\n<u>→ Прямое значение</u>"
 
 
 def get_user_palette(update: Update) -> str:
@@ -265,7 +266,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     if not await bot.ensure_profile_ready(update, context):
         return
-    await reading_pause(update, context, 0.15)
+    await reading_pause(update, context, 0.03)
     today = date.today().isoformat()
     try:
         main_name, aux_name = bot.get_or_create_daily_runes(bot.DB_PATH, update.effective_user.id, today, RUNES)
@@ -287,7 +288,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
 async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
     if not await bot.ensure_profile_ready(update, context):
         return
-    await reading_pause(update, context, 0.25)
+    await reading_pause(update, context, 0.03)
     palette = bot.get_user_palette(update)
     text_palette = palette if palette != "premium" else "dark"
     rune = random.choice(RUNES)
