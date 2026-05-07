@@ -3,7 +3,7 @@ from pathlib import Path
 
 import bot
 import product_runtime
-import product_runtime_final  # applies final handlers and support request flow
+import product_runtime_final
 from database import set_user_palette
 from human_reading import HUMAN_READING_BUTTON
 from rune_states import alt_meaning
@@ -27,10 +27,7 @@ async def stable_profile_ready(update, context) -> bool:
             bot.start_onboarding(bot.DB_PATH, user.id)
             step = 1
         if update.effective_message:
-            await update.effective_message.reply_text(
-                product_runtime.build_onboarding_question(step, bot.user_name(update)),
-                reply_markup=product_runtime.onboarding_keyboard(step),
-            )
+            await update.effective_message.reply_text(product_runtime.build_onboarding_question(step, bot.user_name(update)), reply_markup=product_runtime.onboarding_keyboard(step))
         return False
     except Exception:
         bot.logger.exception("Failed to prepare profile/onboarding")
@@ -80,7 +77,7 @@ def safer_get_rune_image_path(rune: dict, palette: str) -> str | None:
                 stem = p.stem.lower()
                 if stem == wanted_number or stem.startswith(wanted_number + "-") or stem.startswith(wanted_number + "_"):
                     return str(p)
-    bot.logger.warning("Rune image not found by safer matcher: palette=%s rune=%s image_file=%s folders=%s", palette, rune_key, image_file, folders)
+    bot.logger.warning("Rune image not found by safer matcher: palette=%s rune=%s image_file=%s", palette, rune_key, image_file)
     return None
 
 
@@ -93,11 +90,11 @@ _original_send_private_or_group = bot.send_private_or_group
 
 
 def _needs_html(text: str) -> bool:
-    return any(tag in text for tag in ("<b>", "</b>", "<u>", "</u>", "<i>", "</i>"))
+    return any(tag in text for tag in ("<b>", "</b>", "<i>", "</i>"))
 
 
 def _strip_html(text: str) -> str:
-    return text.replace("<b>", "").replace("</b>", "").replace("<u>", "").replace("</u>", "").replace("<i>", "").replace("</i>", "")
+    return text.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
 
 
 async def formatted_send_private_or_group(update, context, text: str, *, image_path: str | None = None) -> None:
@@ -143,17 +140,17 @@ def _safe(text: str) -> str:
     return escape((text or "").strip())
 
 
-def _short_desc(text: str, limit: int = 120) -> str:
+def _short(text: str, limit: int = 190) -> str:
     text = " ".join((text or "").split())
     if len(text) <= limit:
         return text
-    cut = text[:limit].rsplit(" ", 1)[0]
-    return cut.rstrip(".,;:") + "."
+    cut = text[:limit].rsplit(" ", 1)[0].rstrip(".,;:")
+    return cut + "."
 
 
 def _title(rune: dict, reversed_state: bool) -> str:
-    name = _rune_name(rune)
-    return f"<b>{name}</b>\nОбратное положение" if reversed_state else f"<b>{name}</b>"
+    suffix = " · обратное" if reversed_state else " · прямое"
+    return f"<b>{_rune_name(rune)}{suffix}</b>"
 
 
 def _interp(rune: dict, palette: str) -> dict:
@@ -161,81 +158,78 @@ def _interp(rune: dict, palette: str) -> dict:
     return bot.rune_text(rune, source_palette)
 
 
-def concise_daily_text(name: str, main: dict, main_text: dict, aux: dict, aux_text: dict, palette: str, main_alt: bool, aux_alt: bool) -> str:
+def _human_daily_lead(palette: str) -> tuple[str, str]:
     if palette == "dark":
-        lead = "<b>Не игнорируй напряжение.</b>"
-        note = "Ситуация уже изменилась.\nЛучше не делать вид, что всё спокойно."
-        action = "<u>Обозначь позицию без давления.</u>"
-    elif palette == "premium":
-        lead = "<b>Смотри на главное.</b>"
-        note = "Не всё требует ответа сразу.\nСейчас важнее точность."
-        action = "<u>Не добавляй новых обязательств.</u>"
-    else:
-        lead = "<b>Не ускоряй события.</b>"
-        note = "День лучше пройти спокойнее.\nНе пытайся закрыть всё сразу."
-        action = "<u>Сделай один простой шаг.</u>"
+        return "Сегодня не стоит сглаживать то, что уже внутри цепляет.", "Один честный шаг будет полезнее длинных объяснений."
+    if palette == "premium":
+        return "Здесь важнее не первый смысл, а то, что повторяется вокруг ситуации.", "Не добавляй новых решений, пока не понял главный узел."
+    return "Сегодня лучше идти через спокойный выбор, а не через усилие.", "Достаточно одного небольшого шага, который возвращает тебе опору."
+
+
+def concise_daily_text(name: str, main: dict, main_text: dict, aux: dict, aux_text: dict, palette: str, main_alt: bool, aux_alt: bool) -> str:
+    lead, finish = _human_daily_lead(palette)
     main_desc = alt_meaning(main, palette) if main_alt else main_text.get("short_desc", "")
     aux_desc = alt_meaning(aux, palette) if aux_alt else aux_text.get("short_desc", "")
     return (
-        "🜂 Сегодня\n\n"
+        f"🌞 <b>Руна дня</b>\n\n"
         f"{lead}\n\n"
         f"{_title(main, main_alt)}\n"
-        f"{_safe(_short_desc(main_desc, 110))}\n\n"
-        f"{note}\n\n"
-        f"Дополнительно: <b>{_rune_name(aux)}</b>\n"
-        f"{_safe(_short_desc(aux_desc, 95))}\n\n"
-        f"{action}"
+        f"{_safe(_short(main_desc, 180))}\n\n"
+        f"<b>Дополнительно: {_rune_name(aux)}</b>\n"
+        f"{_safe(_short(aux_desc, 155))}\n\n"
+        f"{finish}"
     )
 
 
 def concise_question_text(name: str, question: str, rune: dict, answer: str, palette: str, alt: bool) -> str:
     if palette == "dark":
-        lead = "<b>Здесь лучше не тянуть.</b>"
-        advice = "<u>Не отвечай из эмоции. Но позицию обозначь.</u>"
+        lead = "Смотрю как вопрос да/нет. Здесь ответ скорее через факт, чем через надежду."
+        finish = "Проверь, не уступаешь ли ты больше, чем готов."
     elif palette == "premium":
-        lead = "<b>Сначала проверь детали.</b>"
-        advice = "<u>Потом действуй.</u>"
+        lead = "Смотрю как вопрос да/нет. Тут важна деталь, которую легко пропустить."
+        finish = "Сначала уточни для себя, что именно ты хочешь получить этим ответом."
     else:
-        lead = "<b>Ответ есть, но спешка мешает.</b>"
-        advice = "<u>Возьми паузу и смотри на состояние.</u>"
+        lead = "Смотрю как вопрос да/нет. Ответ мягкий, но направление видно."
+        finish = "Выбирай тот шаг, после которого внутри станет спокойнее."
     body = alt_meaning(rune, palette) if alt else answer
     return (
-        "🜁 Ответ\n\n"
+        f"❓ <b>Ответ одной картой</b>\n\n"
         f"{lead}\n\n"
-        f"Вопрос:\n<i>{_safe(_short_desc(question, 150))}</i>\n\n"
+        f"<i>{_safe(_short(question, 120))}</i>\n\n"
         f"{_title(rune, alt)}\n"
-        f"{_safe(_short_desc(body, 115))}\n\n"
-        f"{advice}"
+        f"{_safe(_short(body, 185))}\n\n"
+        f"{finish}"
     )
 
 
 def concise_spread_text(name: str, question: str, runes: list, palette: str) -> str:
     first, second, third = runes[0], runes[1], runes[2]
-    close = "<u>Сначала точность. Потом действие.</u>" if palette == "premium" else "<u>Не форсируй. Двигайся спокойно.</u>"
-
-    def line(rune: dict, label: str, key: str) -> str:
-        data = _interp(rune, palette)
-        raw = data.get(key) or data.get("short_desc") or "Здесь лучше не спешить с выводом."
-        return f"{label}\n<b>{_rune_name(rune)}</b>\n{_safe(_short_desc(raw, 125))}"
-
+    d1 = _interp(first, palette).get("situation") or _interp(first, palette).get("short_desc") or "Это показывает основу вопроса."
+    d2 = _interp(second, palette).get("obstacle") or _interp(second, palette).get("short_desc") or "Здесь главное напряжение."
+    d3 = _interp(third, palette).get("advice") or _interp(third, palette).get("short_desc") or "Это ближайший вектор."
+    if any(word in question.lower() for word in ["вместе", "отнош", "люб", "он", "она", "чувств"]):
+        bridge = "Если коротко: смотри не на обещание, а на реальное движение друг к другу."
+    else:
+        bridge = "Если коротко: расклад показывает, где есть опора, где теряется ясность и какой шаг будет самым трезвым."
     return (
-        "🔮 Расклад\n\n"
-        f"<i>{_safe(_short_desc(question, 140))}</i>\n\n"
-        f"{line(first, '🜂 Основа', 'situation')}\n\n"
-        f"{line(second, '🜁 Что мешает', 'obstacle')}\n\n"
-        f"{line(third, '🜂 К чему идёт', 'advice')}\n\n"
-        f"{close}"
+        f"🔮 <b>Расклад</b>\n\n"
+        f"<i>{_safe(_short(question, 120))}</i>\n\n"
+        f"<b>1. {_rune_name(first)}</b>\n{_safe(_short(d1, 170))}\n\n"
+        f"<b>2. {_rune_name(second)}</b>\n{_safe(_short(d2, 170))}\n\n"
+        f"<b>3. {_rune_name(third)}</b>\n{_safe(_short(d3, 170))}\n\n"
+        f"{bridge}\n\n"
+        f"Хочешь — задай уточняющий вопрос одной картой."
     )
 
 
 def concise_help() -> str:
     return (
-        "🜂 Что можно сделать\n\n"
-        "🌞 <b>Руна дня</b>\nФокус на сегодня.\n\n"
-        "❓ <b>Вопрос</b>\nОтвет одной картой.\n\n"
-        "🔮 <b>Расклад</b>\nРазбор ситуации.\n\n"
-        f"{HUMAN_READING_BUTTON} <b>Личный расклад</b>\nОтвет подготовит человек.\n\n"
-        "⚙️ <b>Настройки</b>\nСменить колоду."
+        "Что можно сделать:\n\n"
+        "🌞 <b>Руна дня</b> — фокус на сегодня.\n"
+        "❓ <b>Вопрос (да/нет)</b> — одна карта.\n"
+        "🔮 <b>Расклад</b> — три карты по ситуации.\n"
+        "🕯 <b>Личный расклад</b> — ответ человека.\n"
+        "⚙️ <b>Настройки</b> — сменить колоду."
     )
 
 
@@ -247,17 +241,16 @@ async def concise_settings_command(update, context) -> None:
     markup = product_runtime.InlineKeyboardMarkup([
         [product_runtime.InlineKeyboardButton("🌞 Светлая", callback_data="settings:deck:light")],
         [product_runtime.InlineKeyboardButton("🌑 Тёмная", callback_data="settings:deck:dark")],
-        [product_runtime.InlineKeyboardButton("🜁 Премиум", callback_data="settings:deck:premium")],
+        [product_runtime.InlineKeyboardButton("💠 Премиум", callback_data="settings:deck:premium")],
     ])
-    await bot.send_private_or_group(update, context, f"⚙️ Колода\n\nСейчас используется:\n<b>{escape(current)}</b>\n\nМожно сменить вручную.")
+    await bot.send_private_or_group(update, context, f"⚙️ Колода\n\nСейчас используется: <b>{escape(current)}</b>")
     await update.effective_message.reply_text("Выбери колоду:", reply_markup=markup)
 
 
 HUMAN_READING_TEXT_FINAL = (
     "🕯 Личный расклад\n\n"
     "Напиши вопрос одним сообщением.\n\n"
-    "Ответ подготовит человек.\n"
-    "Обычно это занимает <b>5–10 минут</b>.\n\n"
+    "Ответ подготовит человек. Обычно это занимает <b>5–10 минут</b>.\n"
     "Стоимость — <b>100 ₽</b>."
 )
 
@@ -273,9 +266,19 @@ product_runtime.HUMAN_READING_TEXT = HUMAN_READING_TEXT_FINAL
 product_runtime_final.HUMAN_READING_TEXT = HUMAN_READING_TEXT_FINAL
 
 
+async def _typing(update, context) -> None:
+    chat = update.effective_chat
+    if chat:
+        try:
+            await context.bot.send_chat_action(chat_id=chat.id, action=product_runtime.ChatAction.TYPING)
+        except Exception:
+            bot.logger.exception("Failed typing action")
+
+
 async def stable_send_rasklad(update, context, question: str) -> None:
     if not await stable_profile_ready(update, context):
         return
+    await _typing(update, context)
     palette = bot.get_user_palette(update)
     runes = bot.choose_distinct_runes(3)
     image_path = bot.get_rune_image_path(runes[2], palette)
@@ -291,7 +294,47 @@ product_runtime.bot.send_rasklad = stable_send_rasklad
 product_runtime_final.bot.send_rasklad = stable_send_rasklad
 
 
+async def operator_free_text_or_reply(update, context) -> bool:
+    if not product_runtime_final.is_operator_chat(update):
+        return False
+    message = update.effective_message
+    text = (message.text or "").strip() if message else ""
+    if not text:
+        return True
+    request_id = product_runtime_final.extract_request_id_from_reply(update)
+    if request_id is None:
+        try:
+            from support_requests import get_request, close_request
+            import sqlite3
+            with sqlite3.connect(bot.DB_PATH, timeout=30) as conn:
+                row = conn.execute("SELECT id FROM support_requests WHERE status != 'answered' ORDER BY id DESC LIMIT 1").fetchone()
+            request_id = row[0] if row else None
+        except Exception:
+            bot.logger.exception("Failed to find latest support request")
+    if request_id is None:
+        await message.reply_text("Нет открытой заявки. Ответьте на сообщение заявки или дождитесь нового вопроса.")
+        return True
+    try:
+        from support_requests import get_request, close_request
+        request = get_request(bot.DB_PATH, request_id)
+        if not request:
+            await message.reply_text("Заявка не найдена.")
+            return True
+        if request.get("status") == "answered":
+            await message.reply_text("Эта заявка уже закрыта.")
+            return True
+        await context.bot.send_message(chat_id=request["user_id"], text=text, reply_markup=bot.MAIN_KEYBOARD)
+        close_request(bot.DB_PATH, request_id)
+        await message.reply_text("Готово. Ответ отправлен пользователю.")
+    except Exception:
+        bot.logger.exception("Failed to send operator free-text answer")
+        await message.reply_text("Не получилось отправить ответ пользователю.")
+    return True
+
+
 async def stable_text_router(update, context):
+    if await operator_free_text_or_reply(update, context):
+        return
     text = (update.effective_message.text or "").strip()
     state = context.user_data.get("state")
     if text == "🌞 Руна дня":
@@ -359,56 +402,27 @@ async def robust_onboarding_callback(update, context) -> None:
         except Exception:
             pass
         return
-
     if result.get("completed") or current_step >= len(bot.ONBOARDING_QUESTIONS):
         palette = result.get("palette") or DEFAULT_PALETTE
         try:
             await query.edit_message_text(product_runtime.onboarding_result_text(palette))
         except Exception:
             bot.logger.exception("Failed to edit onboarding completion message")
-        await context.bot.send_message(
-            chat_id=user.id,
-            text=(
-                "👇 Что можно сделать:\n\n"
-                "🌞 Руна дня — фокус на сегодня\n"
-                "❓ Вопрос (да/нет) — ответ одной картой\n"
-                "🔮 Расклад — разбор ситуации\n"
-                "🕯 Личный расклад — ответ человека\n"
-                "⚙️ Настройки — сменить колоду\n\n"
-                "Выбери действие ниже"
-            ),
-            reply_markup=bot.MAIN_KEYBOARD,
-        )
+        await context.bot.send_message(chat_id=user.id, text="👇 Меню готово. Выбери действие ниже.", reply_markup=bot.MAIN_KEYBOARD)
         return
-
     next_step = result.get("next_step", current_step + 1)
     try:
-        await query.edit_message_text(
-            product_runtime.build_onboarding_question(next_step, bot.user_name(update)),
-            reply_markup=product_runtime.onboarding_keyboard(next_step),
-        )
+        await query.edit_message_text(product_runtime.build_onboarding_question(next_step, bot.user_name(update)), reply_markup=product_runtime.onboarding_keyboard(next_step))
     except Exception:
         bot.logger.exception("Failed to show next onboarding question")
-        await context.bot.send_message(
-            chat_id=user.id,
-            text=product_runtime.build_onboarding_question(next_step, bot.user_name(update)),
-            reply_markup=product_runtime.onboarding_keyboard(next_step),
-        )
+        await context.bot.send_message(chat_id=user.id, text=product_runtime.build_onboarding_question(next_step, bot.user_name(update)), reply_markup=product_runtime.onboarding_keyboard(next_step))
 
 
 product_runtime_final.final_onboarding_callback = robust_onboarding_callback
 
 
 async def shorter_reading_pause(update, context, seconds: float | None = None) -> None:
-    chat = update.effective_chat
-    if chat:
-        try:
-            await context.bot.send_chat_action(chat_id=chat.id, action=product_runtime.ChatAction.TYPING)
-        except Exception:
-            bot.logger.exception("Failed to send typing action")
-    import asyncio
-    import random
-    await asyncio.sleep(seconds if seconds is not None else random.uniform(0.5, 1.0))
+    await _typing(update, context)
 
 
 product_runtime.reading_pause = shorter_reading_pause
