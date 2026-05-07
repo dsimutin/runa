@@ -20,11 +20,20 @@ async def stable_profile_ready(update, context) -> bool:
     try:
         bot.ensure_user(bot.DB_PATH, user.id, bot.user_name(update))
         profile = bot.get_user_profile(bot.DB_PATH, user.id)
-        if not profile or profile.get("palette") not in {"light", "dark", "premium"}:
-            set_user_palette(bot.DB_PATH, user.id, DEFAULT_PALETTE)
-        return True
+        if profile and profile.get("palette") in {"light", "dark", "premium"}:
+            return True
+        step = (profile or {}).get("onboarding_step", 0) or 0
+        if step <= 0:
+            bot.start_onboarding(bot.DB_PATH, user.id)
+            step = 1
+        if update.effective_message:
+            await update.effective_message.reply_text(
+                product_runtime.build_onboarding_question(step, bot.user_name(update)),
+                reply_markup=product_runtime.onboarding_keyboard(step),
+            )
+        return False
     except Exception:
-        bot.logger.exception("Failed to repair profile")
+        bot.logger.exception("Failed to prepare profile/onboarding")
         if update.effective_message:
             await update.effective_message.reply_text("Не получилось открыть профиль. Попробуй ещё раз чуть позже.", reply_markup=bot.MAIN_KEYBOARD)
         return False
@@ -148,7 +157,6 @@ def _title(rune: dict, reversed_state: bool) -> str:
 
 
 def _interp(rune: dict, palette: str) -> dict:
-    # Premium uses the darker interpretation data, but the final text rhythm stays premium.
     source_palette = palette if palette != "premium" else "dark"
     return bot.rune_text(rune, source_palette)
 
@@ -290,7 +298,7 @@ async def stable_text_router(update, context):
         context.user_data.clear()
         await product_runtime.product_runa_command(update, context)
         return
-    if text in {"❓ Вопрос", "❓ Задать вопрос"}:
+    if text in {"❓ Вопрос", "❓ Задать вопрос", "❓ Вопрос (да/нет)"}:
         context.user_data.clear()
         context.user_data["state"] = bot.STATE_WAITING_ASK
         await update.effective_message.reply_text("❓ Напиши вопрос одним сообщением.", reply_markup=bot.MAIN_KEYBOARD)
@@ -331,6 +339,64 @@ async def stable_text_router(update, context):
 product_runtime_final.final_text_router = stable_text_router
 product_runtime.product_text_router = stable_text_router
 bot.text_router = stable_text_router
+
+
+async def robust_onboarding_callback(update, context) -> None:
+    query = update.callback_query
+    user = update.effective_user
+    if not query or not user:
+        return
+    await query.answer()
+    try:
+        _, step_raw, answer = query.data.split(":", 2)
+        current_step = int(step_raw)
+        total = len(bot.ONBOARDING_QUESTIONS)
+        result = bot.save_onboarding_answer(bot.DB_PATH, user.id, answer, total)
+    except Exception:
+        bot.logger.exception("Onboarding callback failed")
+        try:
+            await query.edit_message_text("Не получилось сохранить ответ. Нажми /start и попробуй снова.")
+        except Exception:
+            pass
+        return
+
+    if result.get("completed") or current_step >= len(bot.ONBOARDING_QUESTIONS):
+        palette = result.get("palette") or DEFAULT_PALETTE
+        try:
+            await query.edit_message_text(product_runtime.onboarding_result_text(palette))
+        except Exception:
+            bot.logger.exception("Failed to edit onboarding completion message")
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=(
+                "👇 Что можно сделать:\n\n"
+                "🌞 Руна дня — фокус на сегодня\n"
+                "❓ Вопрос (да/нет) — ответ одной картой\n"
+                "🔮 Расклад — разбор ситуации\n"
+                "🕯 Личный расклад — ответ человека\n"
+                "⚙️ Настройки — сменить колоду\n\n"
+                "Выбери действие ниже"
+            ),
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+        return
+
+    next_step = result.get("next_step", current_step + 1)
+    try:
+        await query.edit_message_text(
+            product_runtime.build_onboarding_question(next_step, bot.user_name(update)),
+            reply_markup=product_runtime.onboarding_keyboard(next_step),
+        )
+    except Exception:
+        bot.logger.exception("Failed to show next onboarding question")
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=product_runtime.build_onboarding_question(next_step, bot.user_name(update)),
+            reply_markup=product_runtime.onboarding_keyboard(next_step),
+        )
+
+
+product_runtime_final.final_onboarding_callback = robust_onboarding_callback
 
 
 async def shorter_reading_pause(update, context, seconds: float | None = None) -> None:
