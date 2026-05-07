@@ -7,6 +7,9 @@ class DatabaseError(Exception):
     """Custom database error for user-facing handling."""
 
 
+VALID_PALETTES = {"light", "dark", "premium"}
+
+
 def get_connection(db_path: str) -> sqlite3.Connection:
     """Create SQLite connection with safer defaults."""
     conn = sqlite3.connect(db_path, timeout=30)
@@ -45,6 +48,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "onboarding_step": "ALTER TABLE users ADD COLUMN onboarding_step INTEGER NOT NULL DEFAULT 0",
         "onboarding_score_light": "ALTER TABLE users ADD COLUMN onboarding_score_light INTEGER NOT NULL DEFAULT 0",
         "onboarding_score_dark": "ALTER TABLE users ADD COLUMN onboarding_score_dark INTEGER NOT NULL DEFAULT 0",
+        "onboarding_score_premium": "ALTER TABLE users ADD COLUMN onboarding_score_premium INTEGER NOT NULL DEFAULT 0",
     }
     for column, sql in migrations.items():
         if column not in columns:
@@ -52,7 +56,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def init_db(db_path: str) -> None:
-    """Create required tables if they do not exist."""
     try:
         with get_connection(db_path) as conn:
             ensure_schema(conn)
@@ -61,7 +64,6 @@ def init_db(db_path: str) -> None:
 
 
 def ensure_user(db_path: str, user_id: int, preferred_name: str) -> None:
-    """Create user row if it does not exist. Existing preferences are preserved."""
     try:
         with get_connection(db_path) as conn:
             ensure_schema(conn)
@@ -78,14 +80,13 @@ def ensure_user(db_path: str, user_id: int, preferred_name: str) -> None:
 
 
 def get_user_profile(db_path: str, user_id: int) -> Dict[str, Any] | None:
-    """Return user profile with palette/onboarding data."""
     try:
         with get_connection(db_path) as conn:
             ensure_schema(conn)
             row = conn.execute(
                 """
                 SELECT preferred_name, palette, psychotype, onboarding_step,
-                       onboarding_score_light, onboarding_score_dark
+                       onboarding_score_light, onboarding_score_dark, onboarding_score_premium
                 FROM users
                 WHERE user_id = ?
                 """,
@@ -100,13 +101,13 @@ def get_user_profile(db_path: str, user_id: int) -> Dict[str, Any] | None:
                 "onboarding_step": row[3] or 0,
                 "onboarding_score_light": row[4] or 0,
                 "onboarding_score_dark": row[5] or 0,
+                "onboarding_score_premium": row[6] or 0,
             }
     except sqlite3.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
 
 def start_onboarding(db_path: str, user_id: int) -> None:
-    """Reset onboarding progress without removing daily runes."""
     try:
         with get_connection(db_path) as conn:
             ensure_schema(conn)
@@ -117,7 +118,8 @@ def start_onboarding(db_path: str, user_id: int) -> None:
                     psychotype = NULL,
                     onboarding_step = 1,
                     onboarding_score_light = 0,
-                    onboarding_score_dark = 0
+                    onboarding_score_dark = 0,
+                    onboarding_score_premium = 0
                 WHERE user_id = ?
                 """,
                 (user_id,),
@@ -126,9 +128,27 @@ def start_onboarding(db_path: str, user_id: int) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
+def _psychotype_for_palette(palette: str) -> str:
+    if palette == "dark":
+        return "will_strategist"
+    if palette == "premium":
+        return "premium_seeker"
+    return "intuitive_integrator"
+
+
+def _winning_palette(light_score: int, dark_score: int, premium_score: int) -> str:
+    scores = {"light": light_score, "dark": dark_score, "premium": premium_score}
+    top = max(scores.values())
+    winners = [palette for palette, score in scores.items() if score == top]
+    if "premium" in winners:
+        return "premium"
+    if "light" in winners:
+        return "light"
+    return "dark"
+
+
 def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questions: int) -> Dict[str, Any]:
-    """Save one onboarding answer. answer must be 'light' or 'dark'."""
-    if answer not in {"light", "dark"}:
+    if answer not in VALID_PALETTES:
         raise DatabaseError("Invalid onboarding answer")
 
     try:
@@ -136,7 +156,7 @@ def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questi
             ensure_schema(conn)
             row = conn.execute(
                 """
-                SELECT onboarding_step, onboarding_score_light, onboarding_score_dark
+                SELECT onboarding_step, onboarding_score_light, onboarding_score_dark, onboarding_score_premium
                 FROM users
                 WHERE user_id = ?
                 """,
@@ -150,20 +170,23 @@ def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questi
                     """,
                     (user_id,),
                 )
-                row = (1, 0, 0)
+                row = (1, 0, 0, 0)
 
             step = row[0] or 1
             light_score = row[1] or 0
             dark_score = row[2] or 0
+            premium_score = row[3] or 0
 
             if answer == "light":
                 light_score += 1
-            else:
+            elif answer == "dark":
                 dark_score += 1
+            else:
+                premium_score += 1
 
             if step >= total_questions:
-                palette = "light" if light_score >= dark_score else "dark"
-                psychotype = "intuitive_integrator" if palette == "light" else "will_strategist"
+                palette = _winning_palette(light_score, dark_score, premium_score)
+                psychotype = _psychotype_for_palette(palette)
                 conn.execute(
                     """
                     UPDATE users
@@ -171,10 +194,11 @@ def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questi
                         psychotype = ?,
                         onboarding_step = 0,
                         onboarding_score_light = ?,
-                        onboarding_score_dark = ?
+                        onboarding_score_dark = ?,
+                        onboarding_score_premium = ?
                     WHERE user_id = ?
                     """,
-                    (palette, psychotype, light_score, dark_score, user_id),
+                    (palette, psychotype, light_score, dark_score, premium_score, user_id),
                 )
                 return {
                     "completed": True,
@@ -182,6 +206,7 @@ def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questi
                     "psychotype": psychotype,
                     "light_score": light_score,
                     "dark_score": dark_score,
+                    "premium_score": premium_score,
                 }
 
             conn.execute(
@@ -189,23 +214,42 @@ def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questi
                 UPDATE users
                 SET onboarding_step = ?,
                     onboarding_score_light = ?,
-                    onboarding_score_dark = ?
+                    onboarding_score_dark = ?,
+                    onboarding_score_premium = ?
                 WHERE user_id = ?
                 """,
-                (step + 1, light_score, dark_score, user_id),
+                (step + 1, light_score, dark_score, premium_score, user_id),
             )
             return {
                 "completed": False,
                 "next_step": step + 1,
                 "light_score": light_score,
                 "dark_score": dark_score,
+                "premium_score": premium_score,
             }
     except sqlite3.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
 
+def set_user_palette(db_path: str, user_id: int, palette: str) -> None:
+    if palette not in VALID_PALETTES:
+        raise DatabaseError("Invalid palette")
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            conn.execute(
+                """
+                UPDATE users
+                SET palette = ?, psychotype = ?
+                WHERE user_id = ?
+                """,
+                (palette, _psychotype_for_palette(palette), user_id),
+            )
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
 def get_or_create_daily_runes(db_path: str, user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
-    """Return user's daily runes. Create two different runes on first request of the day."""
     try:
         with get_connection(db_path) as conn:
             ensure_schema(conn)
@@ -235,7 +279,6 @@ def get_or_create_daily_runes(db_path: str, user_id: int, day: str, runes: List[
 
 
 def get_preferred_name(db_path: str, user_id: int) -> str | None:
-    """Get saved preferred name."""
     try:
         with get_connection(db_path) as conn:
             ensure_schema(conn)
@@ -246,5 +289,4 @@ def get_preferred_name(db_path: str, user_id: int) -> str | None:
 
 
 def set_preferred_name(db_path: str, user_id: int, preferred_name: str) -> None:
-    """Save or update preferred name."""
     ensure_user(db_path, user_id, preferred_name)
