@@ -37,11 +37,22 @@ DB_PATH = os.getenv("DB_PATH", "rune_bot.db")
 PORT = int(os.getenv("PORT", "10000"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "webhook").strip().strip("/") or "webhook"
-ADMIN_IDS = {
-    int(raw_id.strip())
-    for raw_id in os.getenv("ADMIN_IDS", "").split(",")
-    if raw_id.strip().isdigit()
-}
+
+
+def parse_admin_ids(raw_value: str) -> set[int]:
+    ids: set[int] = set()
+    for raw_id in raw_value.split(","):
+        value = raw_id.strip()
+        if not value:
+            continue
+        try:
+            ids.add(int(value))
+        except ValueError:
+            logging.getLogger(__name__).warning("Invalid ADMIN_IDS value ignored: %r", value)
+    return ids
+
+
+ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DECK_DIRS = {"light": "light", "dark": "dark"}
 
