@@ -35,7 +35,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo").strip()
 DB_PATH = os.getenv("DB_PATH", "rune_bot.db")
 PORT = int(os.getenv("PORT", "10000"))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
+WEBHOOK_URL = (os.getenv("WEBHOOK_URL") or os.getenv("RENDER_EXTERNAL_URL", "")).strip().rstrip("/")
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "webhook").strip().strip("/") or "webhook"
 
 
@@ -560,6 +560,10 @@ def build_application() -> Application:
 
 
 def main() -> None:
+    logger.info("BOT_TOKEN set: %s", bool(BOT_TOKEN))
+    logger.info("WEBHOOK_URL: %r", WEBHOOK_URL)
+    logger.info("PORT: %s", PORT)
+    logger.info("DB_PATH: %s", DB_PATH)
     app = build_application()
     if WEBHOOK_URL:
         logger.info("Starting bot in webhook mode on port %s path /%s", PORT, WEBHOOK_PATH)
@@ -573,7 +577,7 @@ def main() -> None:
         )
         return
     logger.info("Starting bot in polling mode")
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True, close_loop=False)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
