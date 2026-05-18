@@ -397,10 +397,10 @@ def product_build_template_rasklad(name: str, question: str, runes: list, palett
     hidden = []
     for rune in runes:
         if random_alt():
-            hidden.append(f"— {rune['name']}: {alt_meaning(rune, palette)}")
+            hidden.append(f"— <b>{rune['name']}:</b> {alt_meaning(rune, palette)}")
     if hidden:
         title = "Скрытый слой" if palette != "premium" else "Глубинный слой"
-        text += f"\n\n{title}\n" + "\n".join(hidden)
+        text += f"\n\n✧ <b>{title}</b>\n" + "\n".join(hidden)
     return text
 
 

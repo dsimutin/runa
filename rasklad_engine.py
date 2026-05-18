@@ -162,18 +162,18 @@ def generate_rasklad(runes: List[Dict[str, Any]], question: str, palette: str, n
     a_cat = category_for(advice)
     summary_parts = build_dynamic_summary(s_cat, o_cat, a_cat, palette, question)
 
-    intro = f"🔮 {name}, твой расклад" if name else "🔮 Твой расклад"
+    intro = f"🔮 <b>{name}, твой расклад</b>" if name else "🔮 <b>Твой расклад</b>"
     summary_text = "\n\n".join(summary_parts)
 
     return (
         f"{intro}\n"
-        f"Вопрос: {question}\n\n"
-        f"1️⃣ Ситуация — {situation['name']}\n"
+        f"<i>{question}</i>\n\n"
+        f"1️⃣ <b>Ситуация — {situation['name']}</b>\n"
         f"{i1['situation']}\n\n"
-        f"2️⃣ Препятствие — {obstacle['name']}\n"
+        f"2️⃣ <b>Препятствие — {obstacle['name']}</b>\n"
         f"{i2['obstacle']}\n\n"
-        f"3️⃣ Вектор — {advice['name']}\n"
+        f"3️⃣ <b>Вектор — {advice['name']}</b>\n"
         f"{i3['advice']}\n\n"
-        f"Почему это похоже на твой вопрос\n"
+        f"✦ <b>Как это складывается в твоём вопросе</b>\n"
         f"{summary_text}"
     )

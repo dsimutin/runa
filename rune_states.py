@@ -27,24 +27,31 @@ BASE_REVERSED = {
     "othala": "старые опоры начинают ограничивать",
 }
 
-REVERSED_BY_DECK = {
-    "light": {
-        "prefix": "",
-        "suffix": ". Сейчас лучше не торопиться.",
-    },
-    "dark": {
-        "prefix": "",
-        "suffix": ". Не игнорируй это.",
-    },
-    "premium": {
-        "prefix": "",
-        "suffix": ". Здесь важна точность, а не скорость.",
-    },
+REVERSED_SUFFIXES = {
+    "light": [
+        ". Сейчас лучше не торопиться.",
+        ". Это просит мягкого внимания.",
+        ". Дай этому немного времени.",
+        ". Не делай резких шагов.",
+    ],
+    "dark": [
+        ". Не игнорируй это.",
+        ". Это уже требует честного взгляда.",
+        ". Закрывать глаза дальше не получится.",
+        ". Здесь нужна прямая реакция.",
+    ],
+    "premium": [
+        ". Здесь важна точность, а не скорость.",
+        ". Слой глубже, чем кажется на поверхности.",
+        ". Прежде чем решать, посмотри на причину.",
+        ". Это та точка, где ты возвращаешься к теме снова.",
+    ],
 }
 
 
 def alt_meaning(rune: dict, palette: str = "light") -> str:
     key = rune.get("key", "")
     base = BASE_REVERSED.get(key, "сейчас не всё видно ясно")
-    tone = REVERSED_BY_DECK.get(palette, REVERSED_BY_DECK["light"])
-    return f"{tone['prefix']}{base}{tone['suffix']}"
+    suffixes = REVERSED_SUFFIXES.get(palette, REVERSED_SUFFIXES["light"])
+    suffix = suffixes[sum(ord(c) for c in key) % len(suffixes)]
+    return f"{base}{suffix}"
