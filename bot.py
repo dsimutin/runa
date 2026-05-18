@@ -157,6 +157,15 @@ def rune_text(rune: Dict[str, Any], palette: str) -> Dict[str, str]:
 
 
 def get_rune_image_path(rune: Dict[str, Any], palette: str) -> str | None:
+    palette_images = rune.get("palette_image_files")
+    if palette_images:
+        image_file = palette_images.get(palette) or palette_images.get("light")
+        deck_dir = DECK_DIRS.get(palette, "light")
+        candidates = [os.path.join(BASE_DIR, deck_dir, image_file), os.path.join(BASE_DIR, "decks", deck_dir, image_file)]
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return None
     image_file = rune.get("image_file")
     if not image_file:
         return None

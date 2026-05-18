@@ -26,6 +26,7 @@
     { "number": 21, "key": "laguz", "ru": "Лагуз", "light": "light/21-laguz.jpg", "dark": "dark/21-laguz.jpg" },
     { "number": 22, "key": "inguz", "ru": "Ингуз", "light": "light/22-inguz.jpg", "dark": "dark/22-inguz.jpg" },
     { "number": 23, "key": "dagaz", "ru": "Дагаз", "light": "light/23-dagaz.jpg", "dark": "dark/23-dagaz.jpg" },
-    { "number": 24, "key": "othala", "ru": "Отал", "light": "light/24-othala.jpg", "dark": "dark/24-othala.jpg" }
+    { "number": 24, "key": "othala", "ru": "Отал", "light": "light/24-othala.jpg", "dark": "dark/24-othala.jpg" },
+    { "number": 0, "key": "blank", "ru": "Пустая руна", "light": "light/00_light.jpg", "dark": "dark/00_dark.jpg", "premium": "premium/00_premium.jpg" }
   ]
 }

@@ -13,6 +13,7 @@ from database import set_user_palette
 from human_reading import HUMAN_READING_BUTTON, HUMAN_READING_TEXT
 from rune_states import ALT_RATE, alt_meaning
 from runes_data import RUNES, get_rune_by_name
+from runes_interpretations import get_rune_day_text
 
 STATE_WAITING_HUMAN = "waiting_human"
 SETTINGS_BUTTON = "⚙️ Настройки"
@@ -20,7 +21,7 @@ QUESTION_BUTTON = "❓ Вопрос (да/нет)"
 OLD_QUESTION_BUTTONS = {"❓ Вопрос", "❓ Задать вопрос", QUESTION_BUTTON}
 PALETTE_NAMES = {"light": "Светлая", "dark": "Тёмная", "premium": "Премиум"}
 
-bot.DECK_DIRS = {"light": "light", "dark": "dark", "premium": "Премиум"}
+bot.DECK_DIRS = {"light": "light", "dark": "dark", "premium": "premium"}
 
 bot.MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["🌞 Руна дня", QUESTION_BUTTON], ["🔮 Расклад", HUMAN_READING_BUTTON], [SETTINGS_BUTTON, "ℹ️ Помощь"]],
@@ -208,6 +209,21 @@ def onboarding_result_text(palette: str) -> str:
 bot.onboarding_result_text = onboarding_result_text
 
 
+def product_rune_day_full_text(name: str, main: dict, palette: str) -> str:
+    day = get_rune_day_text(main["key"])
+    palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
+    parts = [f"{palette_icon} <b>{name}, руна дня — {main['name']}</b>"]
+    if day.get("background"):
+        parts.append(f"<b>Общий фон дня</b>\n{day['background']}")
+    if day.get("events"):
+        parts.append(f"<b>Возможные события</b>\n{day['events']}")
+    if day.get("mood"):
+        parts.append(f"<b>Настроение и чувства</b>\n{day['mood']}")
+    if day.get("advice"):
+        parts.append(f"<b>Совет на день</b>\n{day['advice']}")
+    return "\n\n".join(parts)
+
+
 def product_daily_text(name: str, main: dict, main_text: dict, aux: dict, aux_text: dict, palette: str, main_alt: bool, aux_alt: bool) -> str:
     key = palette if palette in HUMAN_DAILY_OPENINGS else "light"
     opening = stable_pick(HUMAN_DAILY_OPENINGS[key], name, main["key"], aux["key"], date.today().isoformat()).format(name=name)
@@ -281,7 +297,11 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
     if not image_path:
         await bot.send_missing_image_error(update, context, main, palette)
         return
-    text = product_daily_text(bot.user_name(update), main, bot.rune_text(main, palette if palette != "premium" else "dark"), aux, bot.rune_text(aux, palette if palette != "premium" else "dark"), palette, stable_alt(update.effective_user.id, today, main["key"]), stable_alt(update.effective_user.id, today, aux["key"]))
+    rune_day_data = get_rune_day_text(main["key"])
+    if rune_day_data.get("background"):
+        text = product_rune_day_full_text(bot.user_name(update), main, palette)
+    else:
+        text = product_daily_text(bot.user_name(update), main, bot.rune_text(main, palette if palette != "premium" else "dark"), aux, bot.rune_text(aux, palette if palette != "premium" else "dark"), palette, stable_alt(update.effective_user.id, today, main["key"]), stable_alt(update.effective_user.id, today, aux["key"]))
     await bot.send_private_or_group(update, context, text, image_path=image_path)
 
 

@@ -25,6 +25,19 @@ RUNE_FILES = [
     ("othala", "Отал", "24-othala.jpg"),
 ]
 
+BLANK_RUNE = {
+    "key": "blank",
+    "name": "Пустая руна",
+    "image_file": None,
+    "palette_image_files": {"light": "00_light.jpg", "dark": "00_dark.jpg", "premium": "00_premium.jpg"},
+    "short_desc": "",
+    "answer_no": "",
+    "answer_yes": "",
+    "meaning_situation": "",
+    "meaning_obstacle": "",
+    "meaning_advice": "",
+}
+
 RUNES = []
 for key, name, image_file in RUNE_FILES:
     RUNES.append(
@@ -40,6 +53,8 @@ for key, name, image_file in RUNE_FILES:
             "meaning_advice": "",
         }
     )
+
+RUNES.append(BLANK_RUNE)
 
 
 def get_rune_by_name(name: str) -> dict:
