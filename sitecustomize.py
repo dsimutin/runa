@@ -17,11 +17,9 @@ try:
     except Exception:
         pass
 
-    try:
-        import product_runtime_final
-        product_runtime_final.bot.send_rasklad = send_approved_rasklad
-    except Exception:
-        pass
+    # product_runtime_final is not imported here: it's the __main__ entry point
+    # and importing it from sitecustomize would cause its module-level code to
+    # run twice (once as a module, once as __main__), which is unnecessary.
 except Exception:
     # Never break app startup from a patch module.
     pass

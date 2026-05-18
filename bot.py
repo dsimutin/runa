@@ -569,11 +569,11 @@ def main() -> None:
             url_path=WEBHOOK_PATH,
             webhook_url=f"{WEBHOOK_URL}/{WEBHOOK_PATH}",
             allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=False,
+            drop_pending_updates=True,
         )
         return
     logger.info("Starting bot in polling mode")
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False, close_loop=False)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True, close_loop=False)
 
 
 if __name__ == "__main__":
