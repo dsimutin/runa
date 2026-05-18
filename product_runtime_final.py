@@ -1,13 +1,22 @@
 import re
 from pathlib import Path
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 import bot
 import product_runtime
-from human_reading import HUMAN_READING_BUTTON, HUMAN_READING_TEXT
+from human_reading import (
+    HUMAN_READING_BUTTON,
+    HUMAN_READING_CANCEL_TEXT,
+    HUMAN_READING_PAID_PROMPT,
+    HUMAN_READING_TEXT,
+    PAYMENT_AMOUNT,
+    PAYMENT_CANCEL_CALLBACK,
+    PAYMENT_CONFIRM_CALLBACK,
+)
 from support_requests import (
     SupportRequestError,
     claim_request,
@@ -51,7 +60,11 @@ def extract_request_id_from_reply(update: Update) -> int | None:
 
 
 def robust_get_rune_image_path(rune: dict, palette: str) -> str | None:
-    image_file = rune.get("image_file") or ""
+    palette_images = rune.get("palette_image_files")
+    if palette_images:
+        image_file = palette_images.get(palette) or palette_images.get("light", "")
+    else:
+        image_file = rune.get("image_file") or ""
     rune_key = (rune.get("key") or "").lower().strip()
     wanted_stem = Path(image_file).stem.lower()
     deck_dirs = PREMIUM_DIR_CANDIDATES if palette == "premium" else [bot.DECK_DIRS.get(palette, "light")]
@@ -141,11 +154,66 @@ async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAUL
     await query.edit_message_text(product_runtime.build_onboarding_question(next_step, bot.user_name(update)), reply_markup=product_runtime.onboarding_keyboard(next_step))
 
 
+def _payment_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Я оплатил", callback_data=PAYMENT_CONFIRM_CALLBACK)],
+        [InlineKeyboardButton("✖ Отмена", callback_data=PAYMENT_CANCEL_CALLBACK)],
+    ])
+
+
 async def human_reading_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await bot.ensure_profile_ready(update, context):
         return
-    context.user_data["state"] = product_runtime.STATE_WAITING_HUMAN
-    await bot.send_private_or_group(update, context, HUMAN_READING_TEXT)
+    context.user_data.pop("state", None)
+    context.user_data["human_reading_payment_pending"] = True
+    message = update.effective_message
+    if not message:
+        return
+    await message.reply_text(
+        HUMAN_READING_TEXT,
+        parse_mode=ParseMode.HTML,
+        reply_markup=_payment_keyboard(),
+        disable_web_page_preview=True,
+    )
+
+
+async def human_reading_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+    if query.data == PAYMENT_CANCEL_CALLBACK:
+        context.user_data.pop("human_reading_payment_pending", None)
+        context.user_data.pop("state", None)
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except TelegramError:
+            pass
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=HUMAN_READING_CANCEL_TEXT,
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+        return
+    if query.data == PAYMENT_CONFIRM_CALLBACK:
+        if not context.user_data.get("human_reading_payment_pending"):
+            await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text="Нажми «🕯 Личный расклад» в меню, чтобы оформить новую заявку.",
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+            return
+        context.user_data["human_reading_payment_claimed"] = True
+        context.user_data["state"] = product_runtime.STATE_WAITING_HUMAN
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except TelegramError:
+            pass
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=HUMAN_READING_PAID_PROMPT,
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
 
 
 async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
@@ -164,10 +232,19 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
 
     target_ids = set(bot.ADMIN_IDS) or set(registered_operator_ids)
     sender = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+    payment_claimed = context.user_data.pop("human_reading_payment_claimed", False)
+    context.user_data.pop("human_reading_payment_pending", None)
+    payment_line = (
+        f"💳 Оплата: пользователь подтвердил перевод {PAYMENT_AMOUNT} ₽. ПРОВЕРЬ ПОСТУПЛЕНИЕ перед ответом."
+        if payment_claimed
+        else "💳 Оплата: НЕ подтверждена пользователем."
+    )
     admin_note = (
         f"🕯 Новая заявка #{request_id}\n\n"
         f"От: {sender}\n"
-        f"Колода: {product_runtime.PALETTE_NAMES.get(palette, palette)}\n\n"
+        f"User ID: {user.id}\n"
+        f"Колода: {product_runtime.PALETTE_NAMES.get(palette, palette)}\n"
+        f"{payment_line}\n\n"
         f"Вопрос:\n{text}\n\n"
         "Нажми «Ответить» на это сообщение и напиши текст ответа.\n"
         "Бот отправит пользователю именно то, что ты напишешь."
@@ -336,6 +413,7 @@ def final_build_application():
     app.add_handler(CommandHandler("answer", answer_command))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
+    app.add_handler(CallbackQueryHandler(human_reading_payment_callback, pattern=r"^human_reading:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, final_text_router))
     app.add_error_handler(bot.error_handler)
     return app
