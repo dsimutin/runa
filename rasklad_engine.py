@@ -125,27 +125,10 @@ def pick(mapping: Dict[str, Dict[str, List[str]]], category: str, palette: str) 
 
 def build_dynamic_summary(s_cat: str, o_cat: str, a_cat: str, palette: str, question: str) -> List[str]:
     topic = detect_question_topic(question)
-    parts: List[str] = [TOPIC_FRAMES.get(topic, TOPIC_FRAMES["general"])[palette]]
-    parts.append(QUESTION_RESONANCE.get(topic, QUESTION_RESONANCE["general"])[palette])
-
-    obstacle_text = pick(OBSTACLE_MECHANISMS, o_cat, palette)
-    if obstacle_text:
-        parts.append(obstacle_text)
-
-    advice_text = pick(ADVICE_DIRECTIONS, a_cat, palette)
-    if advice_text:
-        parts.append(advice_text)
-
-    if s_cat in {"movement", "flow", "transition"} and o_cat in {"pause", "constraint"}:
-        parts.append(random.choice(CONTRADICTION_PATTERNS[palette]))
-    elif s_cat in {"energy", "force"} and o_cat in {"unknown", "self", "boundary"}:
-        parts.append(random.choice(CONTRADICTION_PATTERNS[palette]))
-
-    if random.random() > 0.35:
-        parts.append(random.choice(HIDDEN_PATTERNS[palette]))
-
-    parts.append(random.choice(FINAL_ENDINGS[palette]))
-    return parts
+    return [
+        TOPIC_FRAMES.get(topic, TOPIC_FRAMES["general"])[palette],
+        random.choice(FINAL_ENDINGS[palette]),
+    ]
 
 
 def generate_rasklad(runes: List[Dict[str, Any]], question: str, palette: str, name: str = "") -> str:
@@ -163,17 +146,17 @@ def generate_rasklad(runes: List[Dict[str, Any]], question: str, palette: str, n
     summary_parts = build_dynamic_summary(s_cat, o_cat, a_cat, palette, question)
 
     intro = f"🔮 <b>{name}, твой расклад</b>" if name else "🔮 <b>Твой расклад</b>"
-    summary_text = "\n\n".join(summary_parts)
+    frame, closing = summary_parts[0], summary_parts[1]
 
     return (
         f"{intro}\n"
         f"<i>{question}</i>\n\n"
+        f"{frame}\n\n"
         f"1️⃣ <b>Ситуация — {situation['name']}</b>\n"
         f"{i1['situation']}\n\n"
         f"2️⃣ <b>Препятствие — {obstacle['name']}</b>\n"
         f"{i2['obstacle']}\n\n"
-        f"3️⃣ <b>Вектор — {advice['name']}</b>\n"
+        f"3️⃣ <b>Что делать — {advice['name']}</b>\n"
         f"{i3['advice']}\n\n"
-        f"✦ <b>Как это складывается в твоём вопросе</b>\n"
-        f"{summary_text}"
+        f"<i>{closing}</i>"
     )
