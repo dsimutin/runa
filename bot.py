@@ -233,7 +233,7 @@ async def ensure_profile_ready(update: Update, context: ContextTypes.DEFAULT_TYP
         return False
     except DatabaseError:
         logger.exception("Failed to prepare user profile")
-        await message.reply_text("Не получилось настроить профиль. Попробуй позже.")
+        await message.reply_text("Что-то пошло не так. Попробуй ещё раз через минуту.")
         return False
 
 
@@ -276,21 +276,22 @@ async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TY
             await message.reply_text("Отправил ответ тебе в личку ✨")
         except TelegramError:
             logger.exception("Plain fallback failed")
-            await message.reply_text("Не получилось отправить ответ. Попробуй ещё раз позже.")
+            await message.reply_text("Сообщение не ушло. Давай попробуем ещё раз через минуту.")
     except Forbidden:
-        await message.reply_text("Открой личку с ботом и нажми /start, тогда я смогу отправлять личные ответы.", reply_markup=private_link_markup(context))
+        await message.reply_text("Чтобы я мог писать тебе лично, открой со мной личный чат и нажми /start.", reply_markup=private_link_markup(context))
     except (OSError, TelegramError):
         logger.exception("Failed to send response")
-        await message.reply_text("Не получилось отправить ответ. Попробуй ещё раз позже.")
+        await message.reply_text("Сообщение не ушло. Давай попробуем ещё раз через минуту.")
 
 
 def short_help() -> str:
     return (
-        "ℹ️ Помощь\n\n"
-        "🌞 /runa — руна дня\n"
-        "❓ /ask <вопрос> — ответ одной картой\n"
-        "🔮 /rasklad <вопрос> — расклад на 3 карты\n"
-        "🜂 /profile — твоя колода"
+        "ℹ️ <b>Что я умею</b>\n\n"
+        "🌞 /runa — вытяну тебе руну дня\n"
+        "❓ /ask <i>вопрос</i> — отвечу одной картой\n"
+        "🔮 /rasklad <i>вопрос</i> — раскину три карты на ситуацию\n"
+        "🜂 /profile — покажу твою колоду\n\n"
+        "Если просто нажать кнопку в меню — спрошу вопрос отдельным сообщением."
     )
 
 
@@ -299,7 +300,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     context.user_data.clear()
     name = user_name(update)
     if not is_private(update):
-        await update.effective_message.reply_text("Открой личку с ботом. В группе я отправляю личные ответы только после /start.", reply_markup=private_link_markup(context))
+        await update.effective_message.reply_text("Раскладам нужна личка. Открой со мной личный чат и нажми /start — там и продолжим.", reply_markup=private_link_markup(context))
         return
     try:
         ensure_user(DB_PATH, update.effective_user.id, name)
@@ -310,9 +311,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
     except DatabaseError:
         logger.exception("Failed to start onboarding")
-        await update.effective_message.reply_text("Не получилось настроить профиль. Попробуй позже.")
+        await update.effective_message.reply_text("Что-то пошло не так. Попробуй ещё раз через минуту.")
         return
-    await update.effective_message.reply_text(f"🜂 {name}, колода уже закреплена\n\nВыбери действие ниже.", reply_markup=MAIN_KEYBOARD)
+    await update.effective_message.reply_text(f"🜂 {name}, твоя колода уже выбрана.\n\nС чего начнём?", reply_markup=MAIN_KEYBOARD)
 
 
 async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -408,7 +409,7 @@ async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         main_name, aux_name = get_or_create_daily_runes(DB_PATH, update.effective_user.id, today, RUNES)
     except DatabaseError:
         logger.exception("Failed to get daily runes")
-        await send_private_or_group(update, context, "Не получилось достать руну дня. Попробуй позже.")
+        await send_private_or_group(update, context, "Сейчас не получается достать руну дня. Попробуй чуть позже.")
         return
     palette = get_user_palette(update)
     main_rune = get_rune_by_name(main_name)
@@ -428,7 +429,7 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     question = " ".join(context.args).strip()
     if not question:
         context.user_data["state"] = STATE_WAITING_ASK
-        await update.effective_message.reply_text("❓ Напиши вопрос следующим сообщением.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
+        await update.effective_message.reply_text("❓ Напиши свой вопрос — отвечу одной картой.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
         return
     await send_one_rune_answer(update, context, question)
 
@@ -486,7 +487,7 @@ async def rasklad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     question = " ".join(context.args).strip()
     if not question:
         context.user_data["state"] = STATE_WAITING_RASKLAD
-        await update.effective_message.reply_text("🔮 Напиши вопрос для расклада следующим сообщением.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
+        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
         return
     await send_rasklad(update, context, question)
 
@@ -517,11 +518,11 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     if text in {"❓ Вопрос", "❓ Задать вопрос"}:
         context.user_data["state"] = STATE_WAITING_ASK
-        await update.effective_message.reply_text("❓ Напиши вопрос следующим сообщением.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
+        await update.effective_message.reply_text("❓ Напиши свой вопрос — отвечу одной картой.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
         return
     if text == "🔮 Расклад":
         context.user_data["state"] = STATE_WAITING_RASKLAD
-        await update.effective_message.reply_text("🔮 Напиши вопрос для расклада следующим сообщением.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
+        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
         return
     if text == "ℹ️ Помощь":
         await help_command(update, context)
@@ -534,7 +535,7 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if state == STATE_WAITING_RASKLAD:
         await send_rasklad(update, context, text)
         return
-    await update.effective_message.reply_text("Выбери действие кнопкой ниже или напиши /help.", reply_markup=MAIN_KEYBOARD if is_private(update) else private_link_markup(context))
+    await update.effective_message.reply_text("Выбери действие на клавиатуре. Или напиши /help, если потерялся.", reply_markup=MAIN_KEYBOARD if is_private(update) else private_link_markup(context))
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

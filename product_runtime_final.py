@@ -104,7 +104,7 @@ async def final_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not update.effective_user or not update.effective_message:
         return
     if not bot.is_private(update):
-        await update.effective_message.reply_text("Открой личку с ботом. Там появится меню.", reply_markup=bot.private_link_markup(context))
+        await update.effective_message.reply_text("Чтобы открыть меню, напиши мне в личку.", reply_markup=bot.private_link_markup(context))
         return
     name = bot.user_name(update)
     try:
@@ -116,9 +116,9 @@ async def final_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
     except bot.DatabaseError:
         bot.logger.exception("Failed to start final onboarding")
-        await update.effective_message.reply_text("Не получилось настроить профиль. Попробуй позже.", reply_markup=bot.MAIN_KEYBOARD)
+        await update.effective_message.reply_text("Что-то пошло не так. Попробуй ещё раз через минуту.", reply_markup=bot.MAIN_KEYBOARD)
         return
-    await update.effective_message.reply_text(f"{name}, меню готово.\n\nВерсия: {VERSION_MARKER}\n\nВыбери действие ниже.", reply_markup=bot.MAIN_KEYBOARD)
+    await update.effective_message.reply_text(f"{name}, всё готово. С чего начнём?", reply_markup=bot.MAIN_KEYBOARD)
 
 
 async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -132,20 +132,20 @@ async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAUL
         result = bot.save_onboarding_answer(bot.DB_PATH, update.effective_user.id, answer, len(bot.ONBOARDING_QUESTIONS))
     except Exception:
         bot.logger.exception("Final onboarding failed")
-        await query.edit_message_text("Не получилось сохранить ответ. Нажми /start и попробуй снова.")
+        await query.edit_message_text("Ответ не сохранился. Нажми /start и попробуем заново.")
         return
     if result.get("completed"):
         await query.edit_message_text(product_runtime.onboarding_result_text(result["palette"]))
         await context.bot.send_message(
             chat_id=update.effective_user.id,
             text=(
-                "👇 Что можно сделать:\n\n"
-                "🌞 Руна дня — фокус на сегодня\n"
-                "❓ Вопрос (да/нет) — ответ одной картой\n"
-                "🔮 Расклад — разбор ситуации (3 карты)\n"
-                "🕯 Личный расклад — ответ человека\n"
-                "⚙️ Настройки — сменить колоду\n\n"
-                "Выбери действие ниже"
+                "👇 С чего начнём:\n\n"
+                "🌞 <b>Руна дня</b> — фокус на сегодня\n"
+                "❓ <b>Вопрос (да/нет)</b> — короткий ответ одной картой\n"
+                "🔮 <b>Расклад</b> — разбор ситуации на три карты\n"
+                "🕯 <b>Личный расклад</b> — живой ответ человека\n"
+                "⚙️ <b>Настройки</b> — сменить колоду\n\n"
+                "Можно нажать кнопку ниже."
             ),
             reply_markup=bot.MAIN_KEYBOARD,
         )
@@ -258,7 +258,7 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
             bot.logger.exception("Failed to notify personal reading operator chat_id=%s", chat_id)
 
     if delivered_to:
-        await bot.send_private_or_group(update, context, f"🕯 Вопрос принят.\n\nЗаявка #{request_id}. Человек подключится к раскладу в течение 5–10 минут.\n\nМожно оставаться здесь — ответ придёт прямо в этот чат от бота.")
+        await bot.send_private_or_group(update, context, f"🕯 Вопрос получили.\n\nЗаявка #{request_id} — человек подключится в течение 5–10 минут. Можешь не уходить из чата: ответ придёт прямо сюда.")
         return
     await bot.send_private_or_group(update, context, f"🕯 Заявка #{request_id} сохранена.\n\nНо операторский чат пока не получил уведомление. Проверь ADMIN_IDS в Render.")
 
@@ -305,11 +305,11 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if text in {"❓ Вопрос", "❓ Задать вопрос", "❓ Вопрос (да/нет)"}:
         context.user_data["state"] = bot.STATE_WAITING_ASK
-        await update.effective_message.reply_text("❓ Напиши вопрос одним сообщением. Формат — ответ по смыслу «да/нет».", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else None)
+        await update.effective_message.reply_text("❓ Напиши свой вопрос — отвечу одной картой в формате «да / нет / зависит».", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else None)
         return
     if text == "🔮 Расклад":
         context.user_data["state"] = bot.STATE_WAITING_RASKLAD
-        await update.effective_message.reply_text("🔮 Напиши вопрос для расклада одним сообщением.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else None)
+        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты на ситуацию.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else None)
         return
     if text == product_runtime.SETTINGS_BUTTON:
         await product_runtime.settings_command(update, context)
@@ -332,7 +332,7 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data.pop("state", None)
         await product_runtime.bot.send_rasklad(update, context, text)
         return
-    await update.effective_message.reply_text("Выбери действие кнопкой ниже или напиши /help.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else bot.private_link_markup(context))
+    await update.effective_message.reply_text("Выбери действие на клавиатуре. Или напиши /help, если потерялся.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else bot.private_link_markup(context))
 
 
 async def operator_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
