@@ -220,13 +220,11 @@ def product_rune_day_full_text(name: str, main: dict, palette: str) -> str:
             header = f"{palette_icon} <b>{name}, руна дня — {main['name']} · {archetype}</b>"
     parts = [header]
     if day.get("background"):
-        parts.append(f"<b>Общий фон дня</b>\n{day['background']}")
+        parts.append(f"<b>На что обратить внимание сегодня</b>\n{day['background']}")
     if day.get("events"):
-        parts.append(f"<b>Возможные события</b>\n{day['events']}")
-    if day.get("mood"):
-        parts.append(f"<b>Настроение и чувства</b>\n{day['mood']}")
+        parts.append(f"<b>Что может произойти</b>\n{day['events']}")
     if day.get("advice"):
-        parts.append(f"<b>Совет на день</b>\n{day['advice']}")
+        parts.append(f"<b>Что сделать сегодня</b>\n{day['advice']}")
     if palette == "premium":
         premium_data = bot.rune_text(main, "premium")
         distortion = premium_data.get("distortion", "")
