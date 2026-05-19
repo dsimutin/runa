@@ -148,6 +148,7 @@ async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAUL
                 "Можно нажать кнопку ниже."
             ),
             reply_markup=bot.MAIN_KEYBOARD,
+            parse_mode="HTML",
         )
         return
     next_step = result["next_step"]
