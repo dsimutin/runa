@@ -265,13 +265,12 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
-    if not message or not message.text:
+    if not message:
         return
     request_id = extract_request_id_from_reply(update)
     if request_id is None:
-        await message.reply_text("Чтобы ответ ушёл пользователю, нажми «Ответить» именно на сообщение заявки и напиши текст ответа.")
+        await message.reply_text("Чтобы ответ ушёл пользователю, нажми «Ответить» на сообщение заявки и пришли текст или фото.")
         return
-    answer_text = message.text.strip()
     try:
         request = get_request(bot.DB_PATH, request_id)
     except SupportRequestError:
@@ -284,14 +283,46 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
     if request.get("status") == "answered":
         await message.reply_text("Эта заявка уже закрыта.")
         return
+    user_id = request["user_id"]
     try:
-        await context.bot.send_message(chat_id=request["user_id"], text=answer_text, reply_markup=bot.MAIN_KEYBOARD)
+        if message.photo:
+            photo_file_id = message.photo[-1].file_id
+            caption = (message.caption or "").strip() or None
+            await context.bot.send_photo(
+                chat_id=user_id,
+                photo=photo_file_id,
+                caption=caption,
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+        elif message.document:
+            caption = (message.caption or "").strip() or None
+            await context.bot.send_document(
+                chat_id=user_id,
+                document=message.document.file_id,
+                caption=caption,
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+        elif message.text:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=message.text.strip(),
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+        else:
+            await message.reply_text("Поддерживаются текст, фото и документ. Пришли реплаем на заявку.")
+            return
         close_request(bot.DB_PATH, request_id)
     except (TelegramError, SupportRequestError):
         bot.logger.exception("Failed to send operator reply to user")
         await message.reply_text("Не получилось отправить ответ пользователю.")
         return
     await message.reply_text(f"Готово. Ответ по заявке #{request_id} отправлен пользователю.")
+
+
+async def operator_media_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_operator_chat(update):
+        return
+    await handle_operator_reply(update, context)
 
 
 async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -414,6 +445,7 @@ def final_build_application():
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
     app.add_handler(CallbackQueryHandler(human_reading_payment_callback, pattern=r"^human_reading:"))
+    app.add_handler(MessageHandler((filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, operator_media_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, final_text_router))
     app.add_error_handler(bot.error_handler)
     return app
