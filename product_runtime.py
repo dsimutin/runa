@@ -212,7 +212,13 @@ bot.onboarding_result_text = onboarding_result_text
 def product_rune_day_full_text(name: str, main: dict, palette: str) -> str:
     day = get_rune_day_text(main["key"])
     palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
-    parts = [f"{palette_icon} <b>{name}, руна дня — {main['name']}</b>"]
+    header = f"{palette_icon} <b>{name}, руна дня — {main['name']}</b>"
+    if palette == "premium":
+        premium_data = bot.rune_text(main, "premium")
+        archetype = (premium_data.get("archetype") or "").rstrip(".")
+        if archetype:
+            header = f"{palette_icon} <b>{name}, руна дня — {main['name']} · {archetype}</b>"
+    parts = [header]
     if day.get("background"):
         parts.append(f"<b>Общий фон дня</b>\n{day['background']}")
     if day.get("events"):
@@ -221,6 +227,17 @@ def product_rune_day_full_text(name: str, main: dict, palette: str) -> str:
         parts.append(f"<b>Настроение и чувства</b>\n{day['mood']}")
     if day.get("advice"):
         parts.append(f"<b>Совет на день</b>\n{day['advice']}")
+    if palette == "premium":
+        premium_data = bot.rune_text(main, "premium")
+        distortion = premium_data.get("distortion", "")
+        key_action = premium_data.get("key_action", "")
+        if distortion or key_action:
+            deep = []
+            if distortion:
+                deep.append(f"<i>Искажение:</i> {distortion}")
+            if key_action:
+                deep.append(f"<i>Ключевое действие:</i> {key_action}")
+            parts.append("✧ <b>Глубинный слой</b>\n" + "\n".join(deep))
     return "\n\n".join(parts)
 
 
@@ -301,7 +318,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
     if rune_day_data.get("background"):
         text = product_rune_day_full_text(bot.user_name(update), main, palette)
     else:
-        text = product_daily_text(bot.user_name(update), main, bot.rune_text(main, palette if palette != "premium" else "dark"), aux, bot.rune_text(aux, palette if palette != "premium" else "dark"), palette, stable_alt(update.effective_user.id, today, main["key"]), stable_alt(update.effective_user.id, today, aux["key"]))
+        text = product_daily_text(bot.user_name(update), main, bot.rune_text(main, palette), aux, bot.rune_text(aux, palette), palette, stable_alt(update.effective_user.id, today, main["key"]), stable_alt(update.effective_user.id, today, aux["key"]))
     await bot.send_private_or_group(update, context, text, image_path=image_path)
 
 
@@ -310,13 +327,12 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
         return
     await reading_pause(update, context, 0.03)
     palette = bot.get_user_palette(update)
-    text_palette = palette if palette != "premium" else "dark"
     rune = random.choice(RUNES)
     image_path = bot.get_rune_image_path(rune, palette)
     if not image_path:
         await bot.send_missing_image_error(update, context, rune, palette)
         return
-    text_data = bot.rune_text(rune, text_palette)
+    text_data = bot.rune_text(rune, palette)
     answer = random.choice([text_data["answer_yes"], text_data["answer_no"]])
     text = product_question_text(bot.user_name(update), question, rune, answer, palette, random_alt())
     await bot.send_private_or_group(update, context, text, image_path=image_path)
@@ -392,8 +408,7 @@ async def product_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def product_build_template_rasklad(name: str, question: str, runes: list, palette: str) -> str:
-    text_palette = palette if palette != "premium" else "dark"
-    text = old_build_template_rasklad(name, question, runes, text_palette)
+    text = old_build_template_rasklad(name, question, runes, palette)
     hidden = []
     for rune in runes:
         if random_alt():

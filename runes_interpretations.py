@@ -960,6 +960,11 @@ def get_interpretation(rune_key: str, palette: str, fallback: dict) -> dict:
         "situation": custom.get("situation", fallback.get("meaning_situation", "")),
         "obstacle": custom.get("obstacle", fallback.get("meaning_obstacle", "")),
         "advice": custom.get("advice", fallback.get("meaning_advice", "")),
+        "archetype": custom.get("archetype", ""),
+        "distortion": custom.get("distortion", ""),
+        "key_action": custom.get("key_action", ""),
+        "light_side": custom.get("light_side", ""),
+        "dark_side": custom.get("dark_side", ""),
     }
 
 
