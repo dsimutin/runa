@@ -603,10 +603,10 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 chat_id=user.id,
                 text=(
                     f"💳 <b>Оплата премиума — {PREMIUM_PRICE_RUB} ₽</b>\n\n"
-                    f"Карта: <code>{PAYMENT_CARD}</code>\n"
-                    f"СБП по номеру: <code>{PAYMENT_PHONE}</code>\n\n"
-                    f"Сумма ровно {PREMIUM_PRICE_RUB} ₽.\n\n"
-                    "После оплаты нажмите «Я оплатил» — оператор проверит поступление и активирует подписку."
+                    f"Карта (нажми чтобы скопировать):\n<pre>{PAYMENT_CARD}</pre>\n"
+                    f"СБП по номеру:\n<pre>{PAYMENT_PHONE}</pre>\n"
+                    f"Сумма точно: <b>{PREMIUM_PRICE_RUB} ₽</b>\n\n"
+                    "После оплаты нажми «Я оплатил» — оператор проверит и активирует подписку."
                 ),
                 parse_mode=ParseMode.HTML,
                 reply_markup=manual_kb,
