@@ -12,6 +12,8 @@ from daily_broadcast import (
     BROADCAST_TIME,
     send_daily_rune,
     send_weekly_question,
+    send_premium_expiry_warnings,
+    send_monthly_rune,
     subscribe_command,
     unsubscribe_command,
 )
@@ -452,7 +454,7 @@ async def activatepremium_command(update: Update, context: ContextTypes.DEFAULT_
             text=(
                 "💠 <b>Премиум активирован!</b>\n\n"
                 f"Подписка действует до {status['expires_at']}.\n"
-                "Доступна премиум-колода и 2 бесплатных личных расклада в месяц.\n\n"
+                "Доступна премиум-колода и 3 бесплатных личных расклада в месяц.\n\n"
                 "Напиши /premium чтобы проверить статус."
             ),
             parse_mode=ParseMode.HTML,
@@ -558,7 +560,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await context.bot.send_invoice(
                 chat_id=user.id,
                 title="Премиум-подписка на месяц",
-                description="Премиум-колода, 2 личных расклада, глубокий расклад на 5 карт",
+                description="Премиум-колода и 3 бесплатных личных расклада в месяц",
                 payload="premium_stars_1month",
                 currency="XTR",
                 prices=[LabeledPrice("Премиум 1 месяц", PREMIUM_PRICE_STARS)],
@@ -578,7 +580,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 await context.bot.send_invoice(
                     chat_id=user.id,
                     title="Премиум-подписка на месяц",
-                    description="Премиум-колода, 2 личных расклада, глубокий расклад на 5 карт",
+                    description="Премиум-колода и 3 бесплатных личных расклада в месяц",
                     payload="premium_card_1month",
                     provider_token=PAYMENT_PROVIDER_TOKEN,
                     currency="RUB",
@@ -643,8 +645,7 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         activate_premium(bot.DB_PATH, update.effective_user.id)
         await update.message.reply_text(
             "💠 Премиум активирован на 30 дней!\n\n"
-            "Теперь доступна премиум-колода, 2 личных расклада в месяц "
-            "и глубокий расклад на 5 карт.",
+            "Теперь доступна премиум-колода и 3 бесплатных личных расклада в месяц.",
             reply_markup=bot.MAIN_KEYBOARD,
         )
 
@@ -687,6 +688,12 @@ def final_build_application():
     from datetime import time as dtime, timezone
     weekly_time = dtime(7, 0, tzinfo=timezone.utc)
     app.job_queue.run_daily(send_weekly_question, time=weekly_time, days=(6,), name="weekly_question")
+    # Premium expiry warnings — check daily at 08:00 Moscow (05:00 UTC)
+    expiry_time = dtime(5, 0, tzinfo=timezone.utc)
+    app.job_queue.run_daily(send_premium_expiry_warnings, time=expiry_time, name="premium_expiry_warnings")
+    # Monthly rune — runs daily at 07:00 UTC, acts only on day==1
+    monthly_time = dtime(7, 0, tzinfo=timezone.utc)
+    app.job_queue.run_daily(send_monthly_rune, time=monthly_time, name="monthly_rune")
     return app
 
 

@@ -29,7 +29,7 @@ async def history_command(update, context):
         lines.append(f"{display_date} — {entry['rune_name']} {arrow}")
 
     history_block = "\n".join(lines)
-    streak_line = f"🔥 Стрик: {streak} {'день' if streak == 1 else 'дня' if 2 <= streak <= 4 else 'дней'} подряд" if streak > 0 else "Стрик пока не набран — открывай руну каждый день."
+    streak_line = f"🔥 {streak} {'день' if streak == 1 else 'дня' if 2 <= streak <= 4 else 'дней'} подряд" if streak > 0 else "Серия пока не набрана — открывай руну каждый день."
 
     text = (
         f"📅 <b>Твои руны за 7 дней</b>\n"

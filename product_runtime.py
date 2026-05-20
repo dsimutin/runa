@@ -333,7 +333,17 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         moon_line = f"\n\n{moon['emoji']} {moon['phase_name']} — {moon['description']}"
     except Exception:
         moon_line = ""
-    text = f"{opening}\n\n{day_text}\n\n{closing}{moon_line}"
+    try:
+        from database import get_streak
+        streak = get_streak(bot.DB_PATH, update.effective_user.id)
+        if streak >= 2:
+            streak_word = "день" if streak == 1 else "дня" if 2 <= streak <= 4 else "дней"
+            streak_line = f"\n\n🔥 {streak} {streak_word} подряд"
+        else:
+            streak_line = ""
+    except Exception:
+        streak_line = ""
+    text = f"{opening}\n\n{day_text}\n\n{closing}{moon_line}{streak_line}"
     await bot.send_private_or_group(update, context, text, image_path=image_path)
 
 
@@ -372,8 +382,12 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not await bot.ensure_profile_ready(update, context):
         return
     palette = bot.get_user_palette(update)
-    markup = InlineKeyboardMarkup([[InlineKeyboardButton("🌕 Светлая", callback_data="settings:deck:light")], [InlineKeyboardButton("🌑 Тёмная", callback_data="settings:deck:dark")], [InlineKeyboardButton("💠 Премиум", callback_data="settings:deck:premium")]])
-    await bot.send_private_or_group(update, context, f"⚙️ Настройки\n\nТекущая колода: {PALETTE_NAMES.get(palette, 'Светлая')}\n\nМожно сменить её вручную:", image_path=None)
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🌕 Светлая", callback_data="settings:deck:light")],
+        [InlineKeyboardButton("🌑 Тёмная", callback_data="settings:deck:dark")],
+        [InlineKeyboardButton("💠 Премиум — только по подписке", callback_data="settings:deck:premium")],
+    ])
+    await bot.send_private_or_group(update, context, f"⚙️ Настройки\n\nТекущая колода: {PALETTE_NAMES.get(palette, 'Светлая')}\n\nСветлая и тёмная доступны всем. Премиум — только с активной подпиской.", image_path=None)
     await update.effective_message.reply_text("Выбери колоду:", reply_markup=markup)
 
 

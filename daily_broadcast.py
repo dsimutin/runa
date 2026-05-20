@@ -17,6 +17,7 @@ from database import (
     DatabaseError,
     get_broadcast_users,
     get_or_create_daily_card,
+    get_connection,
     set_broadcast_enabled,
 )
 from lunar_calendar import moon_phase_today
@@ -147,6 +148,98 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
         "Weekly question done: sent=%d blocked=%d errors=%d",
         sent, blocked, errors,
     )
+
+
+async def send_premium_expiry_warnings(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Job callback: warn users whose premium expires in 1-3 days."""
+    today = date.today()
+    warn_dates = [(today + timedelta(days=d)).isoformat() for d in (1, 2, 3)]
+    try:
+        with get_connection(_bot.DB_PATH) as conn:
+            rows = conn.execute(
+                "SELECT user_id, preferred_name, premium_expires_at FROM users "
+                "WHERE premium_expires_at IN (?, ?, ?)",
+                warn_dates,
+            ).fetchall()
+    except Exception:
+        logger.exception("Failed to query expiring premium users")
+        return
+
+    for row in rows:
+        user_id, name, expires_at = row
+        name = name or "друг"
+        try:
+            exp_date = date.fromisoformat(expires_at)
+            days_left = (exp_date - today).days
+            day_word = "день" if days_left == 1 else "дня"
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    f"💠 <b>{name}, твой премиум заканчивается через {days_left} {day_word}</b>\n\n"
+                    "Чтобы продлить подписку — нажми 💠 Премиум в меню или напиши /premium."
+                ),
+                parse_mode="HTML",
+                reply_markup=_bot.MAIN_KEYBOARD,
+            )
+        except Exception:
+            logger.exception("Failed to send expiry warning to user_id=%s", user_id)
+
+
+async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Job callback: send rune of the month on the 1st day of each month."""
+    today = date.today()
+    if today.day != 1:
+        return  # Job runs daily, only acts on 1st
+    try:
+        users = get_broadcast_users(_bot.DB_PATH)
+    except DatabaseError:
+        logger.exception("Failed to load users for monthly rune")
+        return
+
+    import random as _random
+    from runes_data import RUNES as _RUNES
+    # Pick one rune for everyone — same rune of the month
+    monthly_rune = _random.choice(_RUNES)
+    month_names = [
+        "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+        "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+    ]
+    month_label = month_names[today.month]
+
+    logger.info("Monthly rune broadcast: %s, %d users", monthly_rune["name"], len(users))
+    sent = errors = 0
+
+    for user in users:
+        user_id = user["user_id"]
+        name = user["preferred_name"] or "друг"
+        palette = user["palette"] or "light"
+        palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
+        try:
+            image_path = _bot.get_rune_image_path(monthly_rune, palette)
+            from rune_text_repository import get_daily_text
+            rune_text = get_daily_text(monthly_rune["key"], palette, "up")
+            text = (
+                f"{palette_icon} <b>{name}, руна {month_label}а</b>\n\n"
+                f"<b>{monthly_rune['name']}</b>\n\n"
+                f"{rune_text}\n\n"
+                f"<i>Эта руна задаёт тон месяца. Держи её в уме при важных решениях.</i>"
+            )
+            if image_path:
+                await context.bot.send_photo(
+                    chat_id=user_id, photo=open(image_path, "rb"),
+                    caption=text, parse_mode="HTML", reply_markup=_bot.MAIN_KEYBOARD,
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=user_id, text=text, parse_mode="HTML",
+                    reply_markup=_bot.MAIN_KEYBOARD,
+                )
+            sent += 1
+        except Exception:
+            logger.exception("Failed to send monthly rune to user_id=%s", user_id)
+            errors += 1
+
+    logger.info("Monthly rune done: sent=%d errors=%d", sent, errors)
 
 
 async def subscribe_command(update, context: ContextTypes.DEFAULT_TYPE) -> None:

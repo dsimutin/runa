@@ -145,9 +145,9 @@ def get_daily_text(rune_key: str, palette: str, orientation: str) -> str:
     field = f"{palette}_{orientation}"
     text = rune_data.get(field)
     if text:
-        return text
+        return _normalize_rune_names_in_text(text)
     if key == "wyrd":
-        return rune_data[f"{palette}_up"]
+        return _normalize_rune_names_in_text(rune_data[f"{palette}_up"])
     raise KeyError(f"Daily text not found for rune={rune_key}, palette={palette}, orientation={orientation}")
 
 
@@ -173,9 +173,9 @@ def get_rasklad_text(rune_key: str, palette: str, orientation: str, position: st
         raise KeyError(f"Spread position not found for rune={data_key}, palette={palette}, position={position}")
 
     return {
-        "name": rune_data.get("name", ""),
-        "text": text,
-        "extra": palette_data.get("extra", ""),
+        "name": _normalize_rune_names_in_text(rune_data.get("name", "")),
+        "text": _normalize_rune_names_in_text(text),
+        "extra": _normalize_rune_names_in_text(palette_data.get("extra", "")),
     }
 
 
