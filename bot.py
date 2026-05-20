@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import random
@@ -739,18 +740,47 @@ def main() -> None:
     app = build_application()
     if WEBHOOK_URL:
         logger.info("Starting bot in webhook mode on port %s path /%s", PORT, WEBHOOK_PATH)
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=WEBHOOK_PATH,
-            webhook_url=f"{WEBHOOK_URL}/{WEBHOOK_PATH}",
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
-        )
+        asyncio.run(_run_webhook_with_health(app))
         return
 
     logger.info("Starting bot in polling mode")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+
+
+async def _run_webhook_with_health(app: Application) -> None:
+    """Run PTB webhook + a /health endpoint on the same port via starlette+uvicorn."""
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.requests import Request as StarletteRequest
+    from starlette.responses import PlainTextResponse, Response
+    from starlette.routing import Route
+
+    async def telegram_webhook(request: StarletteRequest) -> Response:
+        data = await request.json()
+        await app.update_queue.put(Update.de_json(data=data, bot=app.bot))
+        return Response()
+
+    async def health(_: StarletteRequest) -> PlainTextResponse:
+        return PlainTextResponse("OK")
+
+    starlette_app = Starlette(routes=[
+        Route(f"/{WEBHOOK_PATH}", telegram_webhook, methods=["POST"]),
+        Route("/health", health, methods=["GET"]),
+    ])
+
+    config = uvicorn.Config(app=starlette_app, host="0.0.0.0", port=PORT, log_level="warning")
+    server = uvicorn.Server(config)
+
+    async with app:
+        await app.start()
+        await app.bot.set_webhook(
+            url=f"{WEBHOOK_URL}/{WEBHOOK_PATH}",
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+        )
+        logger.info("Webhook set. Starting uvicorn with /health on :%s", PORT)
+        await server.serve()
+        await app.stop()
 
 
 if __name__ == "__main__":
