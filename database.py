@@ -50,6 +50,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "onboarding_score_light": "ALTER TABLE users ADD COLUMN onboarding_score_light INTEGER NOT NULL DEFAULT 0",
         "onboarding_score_dark": "ALTER TABLE users ADD COLUMN onboarding_score_dark INTEGER NOT NULL DEFAULT 0",
         "onboarding_score_premium": "ALTER TABLE users ADD COLUMN onboarding_score_premium INTEGER NOT NULL DEFAULT 0",
+        "broadcast_enabled": "ALTER TABLE users ADD COLUMN broadcast_enabled INTEGER NOT NULL DEFAULT 1",
     }
     for column, sql in migrations.items():
         if column not in columns:
@@ -332,3 +333,34 @@ def get_preferred_name(db_path: str, user_id: int) -> str | None:
 
 def set_preferred_name(db_path: str, user_id: int, preferred_name: str) -> None:
     ensure_user(db_path, user_id, preferred_name)
+
+
+def get_broadcast_users(db_path: str) -> List[Dict[str, Any]]:
+    """Return all users with a chosen palette who have broadcast enabled."""
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT user_id, preferred_name, palette
+                FROM users
+                WHERE palette IS NOT NULL
+                  AND broadcast_enabled = 1
+                """
+            ).fetchall()
+            return [{"user_id": row[0], "preferred_name": row[1], "palette": row[2]} for row in rows]
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def set_broadcast_enabled(db_path: str, user_id: int, enabled: bool) -> None:
+    """Enable or disable daily broadcast for a user."""
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            conn.execute(
+                "UPDATE users SET broadcast_enabled = ? WHERE user_id = ?",
+                (1 if enabled else 0, user_id),
+            )
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
