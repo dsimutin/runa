@@ -51,6 +51,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "onboarding_score_dark": "ALTER TABLE users ADD COLUMN onboarding_score_dark INTEGER NOT NULL DEFAULT 0",
         "onboarding_score_premium": "ALTER TABLE users ADD COLUMN onboarding_score_premium INTEGER NOT NULL DEFAULT 0",
         "broadcast_enabled": "ALTER TABLE users ADD COLUMN broadcast_enabled INTEGER NOT NULL DEFAULT 1",
+        "premium_expires_at": "ALTER TABLE users ADD COLUMN premium_expires_at TEXT",
+        "premium_readings_used": "ALTER TABLE users ADD COLUMN premium_readings_used INTEGER NOT NULL DEFAULT 0",
     }
     for column, sql in migrations.items():
         if column not in columns:
@@ -424,6 +426,58 @@ def get_streak(db_path: str, user_id: int) -> int:
             streak += 1
             current -= timedelta(days=1)
         return streak
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def get_premium_status(db_path: str, user_id: int) -> dict:
+    """Return {"expires_at": str|None, "readings_used": int}."""
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            row = conn.execute(
+                "SELECT premium_expires_at, premium_readings_used FROM users WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            if not row:
+                return {"expires_at": None, "readings_used": 0}
+            return {"expires_at": row[0], "readings_used": row[1] or 0}
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def set_premium_expires(db_path: str, user_id: int, expires_at: str) -> None:
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            conn.execute(
+                "UPDATE users SET premium_expires_at = ? WHERE user_id = ?",
+                (expires_at, user_id),
+            )
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def increment_premium_readings(db_path: str, user_id: int) -> None:
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            conn.execute(
+                "UPDATE users SET premium_readings_used = COALESCE(premium_readings_used, 0) + 1 WHERE user_id = ?",
+                (user_id,),
+            )
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def reset_premium_readings(db_path: str, user_id: int) -> None:
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            conn.execute(
+                "UPDATE users SET premium_readings_used = 0 WHERE user_id = ?",
+                (user_id,),
+            )
     except sqlite3.Error as exc:
         raise DatabaseError(str(exc)) from exc
 

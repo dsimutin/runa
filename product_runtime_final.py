@@ -1,10 +1,10 @@
 import re
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Update
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
-from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, PreCheckoutQueryHandler, filters
 
 import bot
 import product_runtime
@@ -25,6 +25,17 @@ from human_reading import (
     PAYMENT_AMOUNT,
     PAYMENT_CANCEL_CALLBACK,
     PAYMENT_CONFIRM_CALLBACK,
+)
+from premium_subscription import (
+    get_premium_info_text,
+    get_premium_keyboard,
+    is_premium_active,
+    activate_premium,
+    get_free_readings_left,
+    use_free_reading,
+    PREMIUM_PRICE_STARS,
+    PREMIUM_PRICE_RUB,
+    PAYMENT_PROVIDER_TOKEN,
 )
 from support_requests import (
     SupportRequestError,
@@ -175,10 +186,26 @@ async def human_reading_command(update: Update, context: ContextTypes.DEFAULT_TY
     if not await bot.ensure_profile_ready(update, context):
         return
     context.user_data.pop("state", None)
-    context.user_data["human_reading_payment_pending"] = True
     message = update.effective_message
-    if not message:
+    if not message or not update.effective_user:
         return
+
+    # Premium users with free readings go straight to question input
+    if is_premium_active(bot.DB_PATH, update.effective_user.id):
+        free_left = get_free_readings_left(bot.DB_PATH, update.effective_user.id)
+        if free_left > 0:
+            context.user_data["state"] = product_runtime.STATE_WAITING_HUMAN
+            context.user_data["human_reading_is_free"] = True
+            await message.reply_text(
+                f"🕯 <b>Личный расклад</b>\n\n"
+                f"У тебя {free_left} бесплатных {'расклад' if free_left == 1 else 'расклада'} по премиуму.\n\n"
+                "Напиши вопрос одним сообщением — он уйдёт человеку для разбора.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+            return
+
+    context.user_data["human_reading_payment_pending"] = True
     await message.reply_text(
         HUMAN_READING_TEXT,
         parse_mode=ParseMode.HTML,
@@ -243,12 +270,16 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
     target_ids = set(bot.ADMIN_IDS) or set(registered_operator_ids)
     sender = f"@{user.username}" if user.username else (user.first_name or str(user.id))
     payment_claimed = context.user_data.pop("human_reading_payment_claimed", False)
+    is_free = context.user_data.pop("human_reading_is_free", False)
     context.user_data.pop("human_reading_payment_pending", None)
-    payment_line = (
-        f"💳 Оплата: пользователь подтвердил перевод {PAYMENT_AMOUNT} ₽. ПРОВЕРЬ ПОСТУПЛЕНИЕ перед ответом."
-        if payment_claimed
-        else "💳 Оплата: НЕ подтверждена пользователем."
-    )
+    if is_free:
+        use_free_reading(bot.DB_PATH, user.id)
+        free_left = get_free_readings_left(bot.DB_PATH, user.id)
+        payment_line = f"💠 Премиум — бесплатный расклад (осталось после этого: {free_left})"
+    elif payment_claimed:
+        payment_line = f"💳 Оплата: пользователь подтвердил перевод {PAYMENT_AMOUNT} ₽. ПРОВЕРЬ ПОСТУПЛЕНИЕ перед ответом."
+    else:
+        payment_line = "💳 Оплата: НЕ подтверждена пользователем."
     admin_note = (
         f"🕯 Новая заявка #{request_id}\n\n"
         f"От: {sender}\n"
@@ -358,6 +389,9 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if text == HUMAN_READING_BUTTON:
         await human_reading_command(update, context)
         return
+    if text == "💠 Премиум":
+        await premium_command(update, context)
+        return
     if text == "ℹ️ Помощь":
         await product_runtime.bot.help_command(update, context)
         return
@@ -392,6 +426,40 @@ async def operator_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.effective_message.reply_text("Не получилось зарегистрировать оператора.")
         return
     await update.effective_message.reply_text(f"Готово. @{username} зарегистрирован как оператор.\n\nТвой numeric ID: {user.id}\nТеперь сюда будут приходить заявки на личный расклад.")
+
+
+async def activatepremium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Operator command: /activatepremium <user_id> — manually activate premium."""
+    if not is_authorized_operator(update):
+        await update.effective_message.reply_text("Эта команда доступна только операторам.")
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.effective_message.reply_text("Формат: /activatepremium 123456789")
+        return
+    target_id = int(context.args[0])
+    try:
+        activate_premium(bot.DB_PATH, target_id)
+    except Exception:
+        bot.logger.exception("Failed to activate premium for user_id=%s", target_id)
+        await update.effective_message.reply_text("Не удалось активировать. Проверь user_id.")
+        return
+    await update.effective_message.reply_text(f"✅ Премиум активирован для user_id={target_id} на 31 день.")
+    try:
+        from database import get_premium_status
+        status = get_premium_status(bot.DB_PATH, target_id)
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=(
+                "💠 <b>Премиум активирован!</b>\n\n"
+                f"Подписка действует до {status['expires_at']}.\n"
+                "Доступна премиум-колода и 2 бесплатных личных расклада в месяц.\n\n"
+                "Напиши /premium чтобы проверить статус."
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+    except Exception:
+        pass
 
 
 async def whoami_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -435,6 +503,152 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.effective_message.reply_text(f"Ответ по заявке #{request_id} отправлен.")
 
 
+async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await bot.ensure_profile_ready(update, context):
+        return
+    user = update.effective_user
+    if not user:
+        return
+    message = update.effective_message
+    if not message:
+        return
+    name = bot.user_name(update)
+    if is_premium_active(bot.DB_PATH, user.id):
+        from database import get_premium_status
+        status = get_premium_status(bot.DB_PATH, user.id)
+        expires_str = status.get("expires_at", "")
+        try:
+            from datetime import date as _date
+            exp_date = _date.fromisoformat(expires_str)
+            exp_formatted = exp_date.strftime("%d.%m.%Y")
+        except (ValueError, TypeError):
+            exp_formatted = expires_str or "неизвестно"
+        free_left = get_free_readings_left(bot.DB_PATH, user.id)
+        await message.reply_text(
+            f"💠 <b>Премиум активен до {exp_formatted}</b>\n\n"
+            f"Осталось бесплатных личных раскладов: <b>{free_left}</b>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+        return
+    await message.reply_text(
+        get_premium_info_text(name),
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_premium_keyboard(),
+    )
+
+
+async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+    user = update.effective_user
+    data = query.data or ""
+
+    if data == "premium:close":
+        try:
+            await query.delete_message()
+        except TelegramError:
+            pass
+        return
+
+    if data == "premium:buy:stars":
+        try:
+            await context.bot.send_invoice(
+                chat_id=user.id,
+                title="Премиум-подписка на месяц",
+                description="Премиум-колода, 2 личных расклада, глубокий расклад на 5 карт",
+                payload="premium_stars_1month",
+                currency="XTR",
+                prices=[LabeledPrice("Премиум 1 месяц", PREMIUM_PRICE_STARS)],
+            )
+        except TelegramError:
+            bot.logger.exception("Failed to send Stars invoice")
+            await context.bot.send_message(
+                chat_id=user.id,
+                text="Не удалось создать счёт. Попробуй чуть позже.",
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+        return
+
+    if data == "premium:buy:card":
+        if PAYMENT_PROVIDER_TOKEN:
+            try:
+                await context.bot.send_invoice(
+                    chat_id=user.id,
+                    title="Премиум-подписка на месяц",
+                    description="Премиум-колода, 2 личных расклада, глубокий расклад на 5 карт",
+                    payload="premium_card_1month",
+                    provider_token=PAYMENT_PROVIDER_TOKEN,
+                    currency="RUB",
+                    prices=[LabeledPrice("Премиум 1 месяц", PREMIUM_PRICE_RUB * 100)],
+                )
+            except TelegramError:
+                bot.logger.exception("Failed to send card invoice")
+                await context.bot.send_message(
+                    chat_id=user.id,
+                    text="Не удалось создать счёт. Попробуй чуть позже.",
+                    reply_markup=bot.MAIN_KEYBOARD,
+                )
+        else:
+            from human_reading import PAYMENT_CARD, PAYMENT_PHONE
+            manual_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Я оплатил", callback_data="premium:paid:card")],
+                [InlineKeyboardButton("✖ Отмена", callback_data="premium:close")],
+            ])
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=(
+                    f"💳 <b>Оплата премиума — {PREMIUM_PRICE_RUB} ₽</b>\n\n"
+                    f"Карта: <code>{PAYMENT_CARD}</code>\n"
+                    f"СБП по номеру: <code>{PAYMENT_PHONE}</code>\n\n"
+                    f"Сумма ровно {PREMIUM_PRICE_RUB} ₽.\n\n"
+                    "После оплаты нажмите «Я оплатил» — оператор проверит поступление и активирует подписку."
+                ),
+                parse_mode=ParseMode.HTML,
+                reply_markup=manual_kb,
+            )
+        return
+
+    if data == "premium:paid:card":
+        # Manual payment claimed — notify operators
+        sender = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+        note = (
+            f"💠 Заявка на премиум (карта)\n\n"
+            f"От: {sender}\nUser ID: {user.id}\n"
+            f"Сумма: {PREMIUM_PRICE_RUB} ₽\n\n"
+            "ПРОВЕРЬ ПОСТУПЛЕНИЕ. Чтобы активировать, используй /activatepremium <user_id>"
+        )
+        for admin_id in bot.ADMIN_IDS:
+            try:
+                await context.bot.send_message(chat_id=admin_id, text=note)
+            except TelegramError:
+                bot.logger.exception("Failed to notify admin about premium payment chat_id=%s", admin_id)
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="✅ Заявка на премиум получена. После проверки оплаты подписка будет активирована.",
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+        return
+
+
+async def precheckout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.pre_checkout_query.answer(ok=True)
+
+
+async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    payment = update.message.successful_payment
+    if payment.invoice_payload.startswith("premium_"):
+        activate_premium(bot.DB_PATH, update.effective_user.id)
+        await update.message.reply_text(
+            "💠 Премиум активирован на 30 дней!\n\n"
+            "Теперь доступна премиум-колода, 2 личных расклада в месяц "
+            "и глубокий расклад на 5 карт.",
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+
+
 def final_build_application():
     if not bot.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Add it in environment variables.")
@@ -450,15 +664,20 @@ def final_build_application():
     app.add_handler(CommandHandler("rasklad", product_runtime.bot.rasklad_command))
     app.add_handler(CommandHandler("operator", operator_command))
     app.add_handler(CommandHandler("whoami", whoami_command))
+    app.add_handler(CommandHandler("activatepremium", activatepremium_command))
     app.add_handler(CommandHandler("claim", claim_command))
     app.add_handler(CommandHandler("answer", answer_command))
     app.add_handler(CommandHandler("subscribe", subscribe_command))
     app.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     app.add_handler(CommandHandler("pair", pair_rasklad_command))
     app.add_handler(CommandHandler("history", history_command))
+    app.add_handler(CommandHandler("premium", premium_command))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
     app.add_handler(CallbackQueryHandler(human_reading_payment_callback, pattern=r"^human_reading:"))
+    app.add_handler(CallbackQueryHandler(premium_callback, pattern=r"^premium:"))
+    app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
     app.add_handler(MessageHandler((filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, operator_media_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, final_text_router))
     app.add_error_handler(bot.error_handler)
