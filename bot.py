@@ -13,6 +13,7 @@ from database import (
     DatabaseError,
     ensure_user,
     get_or_create_daily_card,
+    get_or_create_daily_runes,
     get_user_profile,
     init_db,
     save_onboarding_answer,
@@ -30,9 +31,10 @@ from rune_text_repository import (
 from runes_data import RUNES, get_rune_by_name
 
 try:
-    from runes_interpretations import PSYCHOTYPES
+    from runes_interpretations import PSYCHOTYPES, get_interpretation
 except Exception:
     PSYCHOTYPES = {}
+    get_interpretation = None
 
 load_dotenv()
 
@@ -225,6 +227,20 @@ def get_user_palette(update: Update) -> str:
     except DatabaseError:
         logger.exception("Failed to get user palette")
     return "light"
+
+
+def rune_text(rune: Dict[str, Any], palette: str) -> Dict[str, Any]:
+    """Compatibility shim used by product_runtime.py."""
+    if get_interpretation:
+        return get_interpretation(rune.get("key", ""), palette, rune)
+    return {}
+
+
+def build_template_rasklad(name: str, question: str, runes: List[Dict[str, Any]], palette: str) -> str:
+    """Compatibility shim used by product_runtime.py."""
+    from rasklad_engine import generate_rasklad as _gen
+    rune_draws = [(r, "up") for r in runes]
+    return _gen(rune_draws, question, palette, name)
 
 
 def get_rune_image_path(rune: Dict[str, Any], palette: str) -> str | None:
