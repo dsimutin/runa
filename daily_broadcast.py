@@ -107,24 +107,38 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Job callback: send weekly reflection question to all subscribed users."""
+    """Job callback: send weekly reflection question to premium subscribers only."""
+    from database import get_premium_status
+    from datetime import date as _date
     try:
         users = get_broadcast_users(_bot.DB_PATH)
     except DatabaseError:
         logger.exception("Failed to load broadcast users for weekly question")
         return
 
+    # Filter to premium-only
+    today_str = _date.today().isoformat()
+    premium_users = []
+    for user in users:
+        try:
+            status = get_premium_status(_bot.DB_PATH, user["user_id"])
+            expires_at = status.get("expires_at") or ""
+            if expires_at and expires_at > today_str:
+                premium_users.append(user)
+        except Exception:
+            pass
+
     question = question_of_week()
-    logger.info("Weekly question broadcast: sending to %d users", len(users))
+    logger.info("Weekly question: sending to %d premium users", len(premium_users))
     sent = blocked = errors = 0
 
-    for user in users:
+    for user in premium_users:
         user_id = user["user_id"]
         name = user["preferred_name"] or "друг"
         text = (
-            f"🪬 <b>{name}, вопрос недели</b>\n\n"
+            f"🪬 <b>Вопрос недели</b>\n\n"
             f"{question}\n\n"
-            f"<i>Можно записать ответ в заметки, а можно спросить руны — 🔮 Расклад в меню.</i>"
+            f"<i>Запиши ответ в заметки или спроси руны — 🔮 Расклад в меню.</i>"
         )
         try:
             await context.bot.send_message(
@@ -144,10 +158,7 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.exception("Failed to send weekly question to user_id=%s", user_id)
             errors += 1
 
-    logger.info(
-        "Weekly question done: sent=%d blocked=%d errors=%d",
-        sent, blocked, errors,
-    )
+    logger.info("Weekly question done: sent=%d blocked=%d errors=%d", sent, blocked, errors)
 
 
 async def send_premium_expiry_warnings(context: ContextTypes.DEFAULT_TYPE) -> None:
