@@ -1325,13 +1325,89 @@ QDOXPWMEAA==
 """
 
 
+import os as _os
+import re as _re
+
 @lru_cache(maxsize=None)
 def _decode_json(blob: str) -> Dict[str, Any]:
     raw = gzip.decompress(base64.b64decode(blob.encode("ascii"))).decode("utf-8")
     return json.loads(raw)
 
 
+_KEY_MAP = {
+    "FEHU": "fehu", "URUZ": "uruz", "THURISAZ": "thurisaz",
+    "ANSUZ": "ansuz", "RAIDO": "raido", "KENAZ": "kenaz",
+    "GEBO": "gebo", "WUNJO": "wunjo", "HAGALAZ": "hagalaz",
+    "NAUTHIZ": "nauthiz", "ISA": "isa", "JERA": "jera",
+    "EIHWAZ": "eihwaz", "PERTHRO": "perthro", "ALGIZ": "algiz",
+    "SOWILO": "sowilo", "TIWAZ": "tiwaz", "BERKANO": "berkano",
+    "EHWAZ": "ehwaz", "MANNAZ": "mannaz", "LAGUZ": "laguz",
+    "INGWAZ": "ingwaz", "DAGAZ": "dagaz", "OTHALA": "othala",
+    "WYRD": "wyrd",
+}
+
+_PREFIX_MAP = {
+    "🌕 П:": "light_up",
+    "🌕 ПЕР:": "light_rev",
+    "🌑 П:": "dark_up",
+    "🌑 ПЕР:": "dark_rev",
+    "💎 П:": "premium_up",
+    "💎 ПЕР:": "premium_rev",
+}
+
+
+def _parse_card_of_day_txt(path: str) -> Dict[str, Any]:
+    """Parse card_of_day_short.txt into the rune_day_texts dict format."""
+    txt = open(path, encoding="utf-8").read()
+    section_re = _re.compile(r"={30,}\n([A-Z]+)\s*—.*?\n={30,}", _re.MULTILINE)
+    sections = section_re.split(txt)
+    result: Dict[str, Any] = {}
+    for i in range(1, len(sections), 2):
+        raw_name = sections[i].strip()
+        content = sections[i + 1] if i + 1 < len(sections) else ""
+        key = _KEY_MAP.get(raw_name)
+        if not key:
+            continue
+        positions = []
+        for prefix, field in _PREFIX_MAP.items():
+            pos = content.find(prefix)
+            if pos != -1:
+                positions.append((pos, prefix, field))
+        positions.sort()
+        rune_data: Dict[str, str] = {}
+        for idx, (pos, prefix, field) in enumerate(positions):
+            start = pos + len(prefix)
+            end = positions[idx + 1][0] if idx + 1 < len(positions) else len(content)
+            block = content[start:end].strip()
+            block = _re.sub(r"\n+", " ", block)
+            block = _re.sub(r"\s+", " ", block).strip()
+            block = block.replace("Вопрос дня:", "\n\nВопрос дня:")
+            block = block.replace("Совет на день:", "\n\nСовет на день:")
+            rune_data[field] = block
+        if rune_data:
+            result[key] = rune_data
+    return result
+
+
+@lru_cache(maxsize=None)
+def _load_card_of_day_from_file() -> Dict[str, Any]:
+    candidates = [
+        _os.path.join(_os.path.dirname(__file__), "data", "card_of_day_short.txt"),
+        _os.path.join(_os.path.dirname(__file__), "card_of_day_short.txt"),
+    ]
+    for path in candidates:
+        if _os.path.exists(path):
+            try:
+                return _parse_card_of_day_txt(path)
+            except Exception:
+                pass
+    return {}
+
+
 def rune_day_texts() -> Dict[str, Any]:
+    from_file = _load_card_of_day_from_file()
+    if from_file:
+        return from_file
     return _decode_json(RUNE_DAY_TEXTS_JSON_GZ_B64)
 
 
