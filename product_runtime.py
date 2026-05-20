@@ -300,23 +300,28 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
     await reading_pause(update, context, 0.03)
     today = date.today().isoformat()
     try:
-        main_name, aux_name = bot.get_or_create_daily_runes(bot.DB_PATH, update.effective_user.id, today, RUNES)
+        # database now returns (rune_name, orientation) — not two rune names
+        rune_name, orientation = bot.get_or_create_daily_card(bot.DB_PATH, update.effective_user.id, today, RUNES)
     except bot.DatabaseError:
-        bot.logger.exception("Failed to get daily runes")
+        bot.logger.exception("Failed to get daily rune")
         await bot.send_private_or_group(update, context, "Не получилось достать руну дня. Попробуй позже.")
         return
     palette = bot.get_user_palette(update)
-    main = get_rune_by_name(main_name)
-    aux = get_rune_by_name(aux_name)
+    main = get_rune_by_name(rune_name)
     image_path = bot.get_rune_image_path(main, palette)
     if not image_path:
         await bot.send_missing_image_error(update, context, main, palette)
         return
-    rune_day_data = get_rune_day_text(main["key"])
-    if rune_day_data.get("background"):
-        text = product_rune_day_full_text(bot.user_name(update), main, palette)
-    else:
-        text = product_daily_text(bot.user_name(update), main, bot.rune_text(main, palette), aux, bot.rune_text(aux, palette), palette, stable_alt(update.effective_user.id, today, main["key"]), stable_alt(update.effective_user.id, today, aux["key"]))
+    # Use the new card-of-day texts (card_of_day_short.txt via rune_text_repository)
+    from rune_text_repository import get_daily_text
+    try:
+        day_text = get_daily_text(main["key"], palette, orientation)
+    except KeyError:
+        day_text = bot.rune_text(main, palette).get("short_desc", "")
+    key = palette if palette in HUMAN_DAILY_OPENINGS else "light"
+    opening = stable_pick(HUMAN_DAILY_OPENINGS[key], bot.user_name(update), main["key"], orientation, today).format(name=bot.user_name(update))
+    closing = stable_pick(HUMAN_DAILY_CLOSINGS[key], bot.user_name(update), main["key"], orientation, "closing", today)
+    text = f"{opening}\n\n{day_text}\n\n{closing}"
     await bot.send_private_or_group(update, context, text, image_path=image_path)
 
 
@@ -330,8 +335,16 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
     if not image_path:
         await bot.send_missing_image_error(update, context, rune, palette)
         return
-    text_data = bot.rune_text(rune, palette)
-    answer = random.choice([text_data["answer_yes"], text_data["answer_no"]])
+    # Use new sphere-based да/нет texts (runes_spheres_all.txt via rune_text_repository)
+    from rune_text_repository import detect_question_sphere, get_sphere_answer
+    sphere = detect_question_sphere(question)
+    answer_kind = "yes" if random.random() < 0.5 else "no"
+    try:
+        sphere_data = get_sphere_answer(rune["key"], palette, sphere, answer_kind)
+        answer = sphere_data["answer"]
+    except KeyError:
+        text_data = bot.rune_text(rune, palette)
+        answer = text_data.get("answer_yes" if answer_kind == "yes" else "answer_no", "")
     text = product_question_text(bot.user_name(update), question, rune, answer, palette, random_alt())
     await bot.send_private_or_group(update, context, text, image_path=image_path)
 
