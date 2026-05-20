@@ -196,7 +196,7 @@ def onboarding_keyboard(step: int) -> InlineKeyboardMarkup:
 def build_onboarding_question(step: int, name: str) -> str:
     question = ONBOARDING_QUESTIONS[step - 1]
     return (
-        f"🜂 {name}, выбери вариант\n\n"
+        f"✦ {name}, выбери вариант\n\n"
         f"Вопрос {step}/3\n{question['text']}\n\n"
         f"A — {question['a']}\n"
         f"B — {question['b']}\n"
@@ -211,7 +211,7 @@ def psychotype_for(palette: str) -> Dict[str, str]:
 def onboarding_result_text(palette: str) -> str:
     profile = psychotype_for(palette)
     return (
-        "🜂 Колода закреплена\n\n"
+        "✦ Колода закреплена\n\n"
         f"Твоя палитра: {profile['description']}.\n\n"
         f"Стиль чтения: {profile['reading_style']}.\n\n"
         "Теперь можно выбрать действие ниже."
@@ -302,13 +302,12 @@ def format_one_rune_answer(
     rune: Dict[str, Any],
     text_data: Dict[str, str],
 ) -> str:
+    answer_icon = "✅" if text_data['answer_label'] == "Да" else "🚫"
     return (
-        f"❓ <b>{name}, ответ Да / Нет</b>\n\n"
-        f"<b>Вопрос:</b> <i>{question}</i>\n\n"
-        f"<b>Карта:</b> {rune['name']}\n"
-        f"<b>Ответ:</b> {text_data['answer_label']}\n\n"
+        f"❓ <b>Вопрос:</b> <i>{question}</i>\n\n"
+        f"{rune['name']}\n\n"
         f"{text_data['short_desc']}\n\n"
-        f"{text_data['answer']}"
+        f"{answer_icon} {text_data['answer']}"
     )
 
 
@@ -449,7 +448,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.effective_message.reply_text("Что-то пошло не так. Попробуй ещё раз через минуту.")
         return
 
-    await update.effective_message.reply_text(f"🜂 {name}, твоя колода уже выбрана.\n\nС чего начнём?", reply_markup=MAIN_KEYBOARD)
+    await update.effective_message.reply_text(f"✦ {name}, твоя колода уже выбрана.\n\nС чего начнём?", reply_markup=MAIN_KEYBOARD)
 
 
 async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -507,11 +506,12 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     palette = get_user_palette(update)
     profile = psychotype_for(palette)
     text = (
-        "🜂 Твой профиль\n\n"
+        "👤 Профиль\n\n"
         f"Колода: {PALETTE_LABELS.get(palette, palette)}\n"
         f"Стиль: {profile['name']}\n\n"
         f"Как читается:\n{profile['reading_style']}.\n\n"
-        "Сброс: удалить чат с ботом и начать заново."
+        "Сменить колоду: ⚙️ Настройки в меню.\n"
+        "Сброс профиля: удали чат с ботом и начни заново."
     )
     await send_private_or_group(update, context, text)
 

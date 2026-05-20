@@ -16,7 +16,7 @@ def generate_rasklad(
     palette: str,
     name: str = "",
 ) -> str:
-    intro = f"🔮 <b>{name}, твой расклад</b>" if name else "🔮 <b>Твой расклад</b>"
+    intro = "🔮 <b>Расклад</b>"
     lines = [
         intro,
         f"<i>{question}</i>",
@@ -27,9 +27,10 @@ def generate_rasklad(
         rune, orientation = draw
         data = get_rasklad_text(rune["key"], palette, orientation, position)
         position_label = POSITION_LABELS[position]
+        arrow = "↑" if orientation == "up" else "↓"
         lines.extend(
             [
-                f"{index}️⃣ <b>{position_label} — {rune['name']} ({orientation_label(orientation)})</b>",
+                f"{index}️⃣ <b>{position_label} — {rune['name']} {arrow}</b>",
                 data["text"],
             ]
         )

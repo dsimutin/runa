@@ -24,7 +24,7 @@ PREMIUM_BENEFITS = (
 
 
 def get_premium_info_text(name: str) -> str:
-    return f"🜂 {name}, вот что даёт премиум:\n\n" + PREMIUM_BENEFITS.split("\n\n", 1)[1]
+    return f"✦ {name}, вот что даёт премиум:\n\n" + PREMIUM_BENEFITS.split("\n\n", 1)[1]
 
 
 def get_premium_keyboard() -> InlineKeyboardMarkup:

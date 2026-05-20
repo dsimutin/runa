@@ -400,6 +400,16 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if len(parts) != 3 or parts[0] != "settings" or parts[1] != "deck":
         return
     palette = parts[2]
+    if palette == "premium":
+        from premium_subscription import is_premium_active
+        if not is_premium_active(bot.DB_PATH, update.effective_user.id):
+            await query.answer("Премиум-колода доступна только по подписке 💠", show_alert=True)
+            await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text="💠 Премиум-колода доступна только с активной подпиской.\n\nНажми 💠 Премиум в меню, чтобы оформить.",
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+            return
     try:
         set_user_palette(bot.DB_PATH, update.effective_user.id, palette)
     except bot.DatabaseError:
@@ -471,7 +481,7 @@ def patched_short_help() -> str:
         "🔮 /rasklad <i>вопрос</i> — раскину три карты на ситуацию\n"
         f"{HUMAN_READING_BUTTON} — живой разбор от человека, 100 ₽\n"
         f"{SETTINGS_BUTTON} — сменить колоду\n"
-        "🜂 /profile — покажу твою колоду\n\n"
+        "✦ /profile — покажу твою колоду\n\n"
         "Если просто нажмёшь кнопку в меню — попрошу написать вопрос отдельным сообщением."
     )
 
