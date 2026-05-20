@@ -10,6 +10,24 @@ from rune_text_data import (
 PALETTES = {"light", "dark", "premium"}
 ORIENTATIONS = {"up", "rev"}
 
+# Maps alternative rune names used inside texts → canonical name from runes_data.py
+# Used to normalize text output so the name in the text matches the displayed card name.
+RUNE_TEXT_NAME_FIXES: Dict[str, str] = {
+    "Совило": "Соулу",
+    "Совелу": "Соулу",
+    "Беркана": "Беркано",
+    "Ингуз": "Ингваз",
+    "Тейваз": "Тивац",
+}
+
+
+def _normalize_rune_names_in_text(text: str) -> str:
+    """Replace alternative rune names in body text with canonical names."""
+    for alt, canonical in RUNE_TEXT_NAME_FIXES.items():
+        text = text.replace(alt, canonical)
+    return text
+
+
 RUNE_KEY_ALIASES = {
     "teiwaz": "tiwaz",
     "tiwaz": "tiwaz",
@@ -193,8 +211,8 @@ def get_sphere_answer(rune_key: str, palette: str, sphere: str, answer_kind: str
         raise KeyError(f"Palette text not found for rune={rune_key}, sphere={sphere}, palette={palette}")
 
     return {
-        "short_desc": palette_data.get("short_desc", ""),
-        "answer": palette_data.get(answer_kind, ""),
+        "short_desc": _normalize_rune_names_in_text(palette_data.get("short_desc", "")),
+        "answer": _normalize_rune_names_in_text(palette_data.get(answer_kind, "")),
         "sphere": sphere,
         "sphere_label": SPHERE_LABELS.get(sphere, "Принятие решений"),
         "answer_label": "Да" if answer_kind == "answer_yes" else "Нет",

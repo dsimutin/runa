@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram.constants import ChatAction
 from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -585,6 +586,12 @@ async def send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYP
     if not await ensure_profile_ready(update, context):
         return
 
+    if update.effective_chat:
+        try:
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+        except TelegramError:
+            pass
+
     palette = get_user_palette(update)
     rune = draw_yes_no_rune(RUNES)
     image_path = get_rune_image_path(rune, palette)
@@ -622,6 +629,12 @@ async def rasklad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
     if not await ensure_profile_ready(update, context):
         return
+
+    if update.effective_chat:
+        try:
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+        except TelegramError:
+            pass
 
     name = user_name(update)
     palette = get_user_palette(update)
@@ -685,6 +698,17 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.exception("Unhandled bot error", exc_info=context.error)
+    if not isinstance(update, Update):
+        return
+    message = getattr(update, "effective_message", None)
+    if message:
+        try:
+            await message.reply_text(
+                "Что-то пошло не так. Попробуй ещё раз — обычно помогает 🙏",
+                reply_markup=MAIN_KEYBOARD,
+            )
+        except Exception:
+            pass
 
 
 def build_application() -> Application:
