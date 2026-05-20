@@ -35,29 +35,12 @@ bot.ONBOARDING_QUESTIONS = [
     {"text": "Какого ответа ты ждёшь от рун?", "a": "Бережного ориентира и поддержки", "b": "Честного предупреждения без прикрас"},
 ]
 
-HUMAN_DAILY_OPENINGS = {
-    "light": [
-        "🌕 <b>{name}, руна дня</b>\nЯ бы сегодня не шла через усилие. Тут больше про спокойный поворот в нужную сторону.",
-        "🌕 <b>{name}, руна дня</b>\nПо этой карте день лучше прожить мягче. Не всё нужно решать через напряжение.",
-        "🌕 <b>{name}, руна дня</b>\nЗдесь ощущение такое: тебе важно не потерять себя в чужой срочности.",
-        "🌕 <b>{name}, руна дня</b>\nСегодня карта говорит не про большой рывок, а про аккуратный выбор.",
-        "🌕 <b>{name}, руна дня</b>\nЯ бы начала с простого: где стало тяжело — там и нужно вернуть себе место.",
-    ],
-    "dark": [
-        "🌑 <b>{name}, руна дня</b>\nЗдесь карта довольно трезвая. Она не пугает, но показывает место, где лучше не закрывать глаза.",
-        "🌑 <b>{name}, руна дня</b>\nЯ бы читала это прямо: что-то уже требует более честной позиции.",
-        "🌑 <b>{name}, руна дня</b>\nСегодня не стоит сглаживать то, что внутри давно царапает.",
-        "🌑 <b>{name}, руна дня</b>\nКарта будто ставит вопрос ребром: где ты слишком долго уступаешь?",
-        "🌑 <b>{name}, руна дня</b>\nТут не про конфликт. Скорее про ясную границу без лишнего шума.",
-    ],
-    "premium": [
-        "💠 <b>{name}, руна дня</b>\nЯ бы здесь смотрела не на само событие, а на то, почему оно повторяется именно сейчас.",
-        "💠 <b>{name}, руна дня</b>\nУ этой карты есть второй слой. Снаружи всё может выглядеть просто, но мотив глубже.",
-        "💠 <b>{name}, руна дня</b>\nЗдесь важно не торопиться с выводом. Сначала посмотри, что связывает детали между собой.",
-        "💠 <b>{name}, руна дня</b>\nКарта как будто показывает невидимую нить: кто или что снова возвращает тебя к этой теме.",
-        "💠 <b>{name}, руна дня</b>\nЯ бы читала это через подтекст. Не все ответы лежат на поверхности.",
-    ],
-}
+DAILY_PALETTE_ICON = {"light": "🌕", "dark": "🌑", "premium": "💠"}
+
+
+def _daily_opening(palette: str, name: str) -> str:
+    icon = DAILY_PALETTE_ICON.get(palette, "🌕")
+    return f"{icon} <b>{name}, руна дня</b>"
 
 HUMAN_DAILY_CLOSINGS = {
     "light": [
@@ -326,9 +309,8 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         day_text = get_daily_text(main["key"], palette, orientation)
     except KeyError:
         day_text = bot.rune_text(main, palette).get("short_desc", "")
-    key = palette if palette in HUMAN_DAILY_OPENINGS else "light"
-    opening = stable_pick(HUMAN_DAILY_OPENINGS[key], bot.user_name(update), main["key"], orientation, today).format(name=bot.user_name(update))
-    closing = stable_pick(HUMAN_DAILY_CLOSINGS[key], bot.user_name(update), main["key"], orientation, "closing", today)
+    opening = _daily_opening(palette, bot.user_name(update))
+    closing = stable_pick(HUMAN_DAILY_CLOSINGS.get(palette, HUMAN_DAILY_CLOSINGS["light"]), bot.user_name(update), main["key"], orientation, "closing", today)
     try:
         from lunar_calendar import moon_phase_today
         moon = moon_phase_today()
