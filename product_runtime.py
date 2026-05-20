@@ -24,7 +24,7 @@ PALETTE_NAMES = {"light": "Светлая", "dark": "Тёмная", "premium": "
 bot.DECK_DIRS = {"light": "light", "dark": "dark", "premium": "premium"}
 
 bot.MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [["🌞 Руна дня", QUESTION_BUTTON], ["🔮 Расклад", HUMAN_READING_BUTTON], [SETTINGS_BUTTON, "ℹ️ Помощь"]],
+    [["🌞 Руна дня", QUESTION_BUTTON], ["🔮 Расклад", HUMAN_READING_BUTTON], [SETTINGS_BUTTON, "💠 Премиум"], ["ℹ️ Помощь"]],
     resize_keyboard=True,
     is_persistent=True,
 )
