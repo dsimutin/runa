@@ -11,9 +11,12 @@ import product_runtime
 from daily_broadcast import (
     BROADCAST_TIME,
     send_daily_rune,
+    send_weekly_question,
     subscribe_command,
     unsubscribe_command,
 )
+from history_command import history_command
+from pair_rasklad import pair_rasklad_command
 from human_reading import (
     HUMAN_READING_BUTTON,
     HUMAN_READING_CANCEL_TEXT,
@@ -451,6 +454,8 @@ def final_build_application():
     app.add_handler(CommandHandler("answer", answer_command))
     app.add_handler(CommandHandler("subscribe", subscribe_command))
     app.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+    app.add_handler(CommandHandler("pair", pair_rasklad_command))
+    app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
     app.add_handler(CallbackQueryHandler(human_reading_payment_callback, pattern=r"^human_reading:"))
@@ -459,6 +464,10 @@ def final_build_application():
     app.add_error_handler(bot.error_handler)
     # Daily broadcast job — 09:00 Moscow time every day
     app.job_queue.run_daily(send_daily_rune, time=BROADCAST_TIME, name="daily_rune_broadcast")
+    # Weekly reflection question — Sunday 10:00 Moscow time (07:00 UTC)
+    from datetime import time as dtime, timezone
+    weekly_time = dtime(7, 0, tzinfo=timezone.utc)
+    app.job_queue.run_daily(send_weekly_question, time=weekly_time, days=(6,), name="weekly_question")
     return app
 
 

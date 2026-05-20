@@ -364,3 +364,108 @@ def set_broadcast_enabled(db_path: str, user_id: int, enabled: bool) -> None:
             )
     except sqlite3.Error as exc:
         raise DatabaseError(str(exc)) from exc
+
+
+def get_rune_history(db_path: str, user_id: int, days: int = 7) -> List[Dict[str, Any]]:
+    """Return rune history for the last N days, newest first.
+
+    Each entry: {"date": "2026-05-20", "rune_name": "Феху", "orientation": "up"}
+    """
+    from datetime import date, timedelta
+
+    cutoff = (date.today() - timedelta(days=days - 1)).isoformat()
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT date, main_rune, aux_rune
+                FROM daily_runes
+                WHERE user_id = ? AND date >= ?
+                ORDER BY date DESC
+                """,
+                (user_id, cutoff),
+            ).fetchall()
+            return [
+                {
+                    "date": row[0],
+                    "rune_name": row[1],
+                    "orientation": row[2] if row[2] in DAILY_ORIENTATIONS else "up",
+                }
+                for row in rows
+            ]
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def get_streak(db_path: str, user_id: int) -> int:
+    """Count how many consecutive days the user has opened the rune of the day.
+
+    Counts backward from today; if today has an entry, streak starts at 1.
+    """
+    from datetime import date, timedelta
+
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT date FROM daily_runes
+                WHERE user_id = ?
+                ORDER BY date DESC
+                """,
+                (user_id,),
+            ).fetchall()
+
+        dates = {row[0] for row in rows}
+        streak = 0
+        current = date.today()
+        while current.isoformat() in dates:
+            streak += 1
+            current -= timedelta(days=1)
+        return streak
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def get_pair_rasklad_runes(
+    db_path: str,
+    user_id: int,
+    partner_name: str,
+    day: str,
+    runes: List[Dict[str, Any]],
+) -> Tuple[str, str, str]:
+    """Return a deterministic triple of rune names for a pair reading.
+
+    Returns (rune1_name, rune2_name, rune3_name):
+      rune1 — for the user, rune2 — for the partner, rune3 — the bond between them.
+    The selection is reproducible for the same (user_id, partner_name, day) triple.
+    """
+    import hashlib
+
+    seed = hashlib.md5(f"{user_id}:{partner_name.lower()}:{day}".encode()).hexdigest()
+
+    # Use the 32-char hex digest as a base-16 number to derive three distinct indices
+    seed_int = int(seed, 16)
+    total = len(runes)
+
+    indices: List[int] = []
+    used: set = set()
+    i = 0
+    while len(indices) < 3:
+        idx = (seed_int >> (i * 8)) % total
+        if idx not in used:
+            indices.append(idx)
+            used.add(idx)
+        i += 1
+        if i > 256:
+            # Fallback: just pick first available
+            for j in range(total):
+                if j not in used:
+                    indices.append(j)
+                    used.add(j)
+                    if len(indices) == 3:
+                        break
+            break
+
+    return runes[indices[0]]["name"], runes[indices[1]]["name"], runes[indices[2]]["name"]

@@ -19,8 +19,10 @@ from database import (
     get_or_create_daily_card,
     set_broadcast_enabled,
 )
+from lunar_calendar import moon_phase_today
 from rune_text_repository import get_daily_text
 from runes_data import RUNES, get_rune_by_name
+from weekly_questions import question_of_week
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +62,12 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
         orientation_label = "перевёрнутое" if orientation == "rev" else "прямое"
+        moon = moon_phase_today()
         text = (
             f"{palette_icon} <b>{name}, руна дня</b>\n\n"
             f"<b>{rune['name']}</b> · {orientation_label}\n\n"
-            f"{day_text}"
+            f"{day_text}\n\n"
+            f"{moon['emoji']} {moon['phase_name']} — {moon['description']}"
         )
 
         try:
@@ -97,6 +101,50 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     logger.info(
         "Daily broadcast done: sent=%d blocked=%d errors=%d",
+        sent, blocked, errors,
+    )
+
+
+async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Job callback: send weekly reflection question to all subscribed users."""
+    try:
+        users = get_broadcast_users(_bot.DB_PATH)
+    except DatabaseError:
+        logger.exception("Failed to load broadcast users for weekly question")
+        return
+
+    question = question_of_week()
+    logger.info("Weekly question broadcast: sending to %d users", len(users))
+    sent = blocked = errors = 0
+
+    for user in users:
+        user_id = user["user_id"]
+        name = user["preferred_name"] or "друг"
+        text = (
+            f"🪬 <b>{name}, вопрос недели</b>\n\n"
+            f"{question}\n\n"
+            f"<i>Можно записать ответ в заметки, а можно спросить руны — 🔮 Расклад в меню.</i>"
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=_bot.MAIN_KEYBOARD,
+            )
+            sent += 1
+        except Forbidden:
+            try:
+                set_broadcast_enabled(_bot.DB_PATH, user_id, False)
+            except DatabaseError:
+                pass
+            blocked += 1
+        except TelegramError:
+            logger.exception("Failed to send weekly question to user_id=%s", user_id)
+            errors += 1
+
+    logger.info(
+        "Weekly question done: sent=%d blocked=%d errors=%d",
         sent, blocked, errors,
     )
 
