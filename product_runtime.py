@@ -337,15 +337,22 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
         return
     # Use new sphere-based да/нет texts (runes_spheres_all.txt via rune_text_repository)
     from rune_text_repository import detect_question_sphere, get_sphere_answer
+    from bot import format_one_rune_answer
     sphere = detect_question_sphere(question)
     answer_kind = "yes" if random.random() < 0.5 else "no"
     try:
         sphere_data = get_sphere_answer(rune["key"], palette, sphere, answer_kind)
-        answer = sphere_data["answer"]
     except KeyError:
+        bot.logger.exception("Sphere answer not found, falling back")
         text_data = bot.rune_text(rune, palette)
         answer = text_data.get("answer_yes" if answer_kind == "yes" else "answer_no", "")
-    text = product_question_text(bot.user_name(update), question, rune, answer, palette, random_alt())
+        sphere_data = {
+            "short_desc": text_data.get("short_desc", ""),
+            "answer": answer,
+            "sphere_label": "Принятие решений",
+            "answer_label": "Да" if answer_kind == "yes" else "Нет",
+        }
+    text = format_one_rune_answer(bot.user_name(update), question, rune, sphere_data)
     await bot.send_private_or_group(update, context, text, image_path=image_path)
 
 
@@ -434,7 +441,7 @@ def patched_short_help() -> str:
     return (
         "ℹ️ <b>Что я умею</b>\n\n"
         "🌞 /runa — вытяну тебе руну дня\n"
-        "❓ /ask <i>вопрос</i> — отвечу одной картой («да / нет / зависит»)\n"
+        "❓ /ask <i>вопрос</i> — отвечу одной картой (да / нет)\n"
         "🔮 /rasklad <i>вопрос</i> — раскину три карты на ситуацию\n"
         f"{HUMAN_READING_BUTTON} — живой разбор от человека, 100 ₽\n"
         f"{SETTINGS_BUTTON} — сменить колоду\n"
