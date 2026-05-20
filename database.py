@@ -53,6 +53,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "broadcast_enabled": "ALTER TABLE users ADD COLUMN broadcast_enabled INTEGER NOT NULL DEFAULT 1",
         "premium_expires_at": "ALTER TABLE users ADD COLUMN premium_expires_at TEXT",
         "premium_readings_used": "ALTER TABLE users ADD COLUMN premium_readings_used INTEGER NOT NULL DEFAULT 0",
+        "weekly_question_day": "ALTER TABLE users ADD COLUMN weekly_question_day INTEGER NOT NULL DEFAULT 6",
     }
     for column, sql in migrations.items():
         if column not in columns:
@@ -364,6 +365,19 @@ def set_broadcast_enabled(db_path: str, user_id: int, enabled: bool) -> None:
             conn.execute(
                 "UPDATE users SET broadcast_enabled = ? WHERE user_id = ?",
                 (1 if enabled else 0, user_id),
+            )
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def set_weekly_question_day(db_path: str, user_id: int, day: int) -> None:
+    """Set preferred weekday for weekly reflection question (0=Mon … 6=Sun)."""
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            conn.execute(
+                "UPDATE users SET weekly_question_day = ? WHERE user_id = ?",
+                (day, user_id),
             )
     except sqlite3.Error as exc:
         raise DatabaseError(str(exc)) from exc

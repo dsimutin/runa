@@ -650,6 +650,76 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         )
 
 
+_WEEKDAY_NAMES = {0: "Понедельник", 1: "Вторник", 2: "Среда",
+                  3: "Четверг", 4: "Пятница", 5: "Суббота", 6: "Воскресенье"}
+
+
+async def weekly_day_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Let user choose which day to receive weekly rune+question."""
+    if not await bot.ensure_profile_ready(update, context):
+        return
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Понедельник", callback_data="weekly_day:0"),
+         InlineKeyboardButton("Среда", callback_data="weekly_day:2")],
+        [InlineKeyboardButton("Пятница", callback_data="weekly_day:4"),
+         InlineKeyboardButton("Воскресенье", callback_data="weekly_day:6")],
+    ])
+    await update.effective_message.reply_text(
+        "🪬 <b>Когда присылать руну недели и вопрос для рефлексии?</b>\n\n"
+        "Выбери удобный день:",
+        parse_mode=ParseMode.HTML,
+        reply_markup=kb,
+    )
+
+
+async def weekly_day_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+    try:
+        day = int(query.data.split(":")[1])
+        from database import set_weekly_question_day
+        set_weekly_question_day(bot.DB_PATH, update.effective_user.id, day)
+    except Exception:
+        bot.logger.exception("Failed to set weekly_question_day")
+        await query.edit_message_text("Не получилось сохранить. Попробуй ещё раз.")
+        return
+    day_name = _WEEKDAY_NAMES.get(day, "выбранный день")
+    await query.edit_message_text(
+        f"✅ Буду присылать руну недели каждый <b>{day_name.lower()}</b>.",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def weekly_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """User tapped 'Спросить руны об этом' under weekly question."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+    try:
+        week = int(query.data.split(":")[1])
+        from runes_data import RUNES
+        from weekly_questions import rune_of_week, question_for_rune
+        weekly_rune = rune_of_week(RUNES, week)
+        question = question_for_rune(weekly_rune["key"], week)
+    except Exception:
+        bot.logger.exception("Failed to get weekly rune for rasklad")
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text="Не получилось запустить расклад. Попробуй через меню 🔮 Расклад.",
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+        return
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except TelegramError:
+        pass
+    await product_runtime.bot.send_rasklad(update, context, question)
+
+
 def final_build_application():
     if not bot.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Add it in environment variables.")
@@ -673,8 +743,11 @@ def final_build_application():
     app.add_handler(CommandHandler("pair", pair_rasklad_command))
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("premium", premium_command))
+    app.add_handler(CommandHandler("weekday", weekly_day_command))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
+    app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))
+    app.add_handler(CallbackQueryHandler(weekly_rasklad_callback, pattern=r"^weekly_rasklad:"))
     app.add_handler(CallbackQueryHandler(human_reading_payment_callback, pattern=r"^human_reading:"))
     app.add_handler(CallbackQueryHandler(premium_callback, pattern=r"^premium:"))
     app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
@@ -684,10 +757,10 @@ def final_build_application():
     app.add_error_handler(bot.error_handler)
     # Daily broadcast job — 09:00 Moscow time every day
     app.job_queue.run_daily(send_daily_rune, time=BROADCAST_TIME, name="daily_rune_broadcast")
-    # Weekly reflection question — Sunday 10:00 Moscow time (07:00 UTC)
+    # Weekly reflection question — runs daily at 07:00 UTC, filters by user's preferred day
     from datetime import time as dtime, timezone
     weekly_time = dtime(7, 0, tzinfo=timezone.utc)
-    app.job_queue.run_daily(send_weekly_question, time=weekly_time, days=(6,), name="weekly_question")
+    app.job_queue.run_daily(send_weekly_question, time=weekly_time, name="weekly_question")
     # Premium expiry warnings — check daily at 08:00 Moscow (05:00 UTC)
     expiry_time = dtime(5, 0, tzinfo=timezone.utc)
     app.job_queue.run_daily(send_premium_expiry_warnings, time=expiry_time, name="premium_expiry_warnings")

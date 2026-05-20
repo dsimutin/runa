@@ -23,7 +23,7 @@ from database import (
 from lunar_calendar import moon_phase_today
 from rune_text_repository import get_daily_text
 from runes_data import RUNES, get_rune_by_name
-from weekly_questions import question_of_week
+from weekly_questions import question_for_rune, rune_of_week
 
 logger = logging.getLogger(__name__)
 
@@ -107,46 +107,85 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Job callback: send weekly reflection question to premium subscribers only."""
-    from database import get_premium_status
+    """Job callback: send weekly rune + reflection question to premium subscribers.
+
+    Runs daily; each user has a preferred weekday (weekly_question_day, 0=Mon…6=Sun).
+    Only sends to users whose preferred day matches today.
+    """
+    from database import get_premium_status, get_connection
     from datetime import date as _date
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from runes_data import RUNES
+
+    today = _date.today()
+    today_str = today.isoformat()
+    today_weekday = today.weekday()  # 0=Mon … 6=Sun
+    week = today.isocalendar()[1]
+
     try:
         users = get_broadcast_users(_bot.DB_PATH)
     except DatabaseError:
         logger.exception("Failed to load broadcast users for weekly question")
         return
 
-    # Filter to premium-only
-    today_str = _date.today().isoformat()
-    premium_users = []
+    # Pick rune of the week (same for everyone)
+    weekly_rune = rune_of_week(RUNES, week)
+    question = question_for_rune(weekly_rune["key"], week)
+
+    # Filter: premium + preferred day matches today
+    eligible = []
     for user in users:
         try:
             status = get_premium_status(_bot.DB_PATH, user["user_id"])
             expires_at = status.get("expires_at") or ""
-            if expires_at and expires_at > today_str:
-                premium_users.append(user)
+            if not (expires_at and expires_at > today_str):
+                continue
+            # Check preferred day (default 6 = Sunday)
+            with get_connection(_bot.DB_PATH) as conn:
+                row = conn.execute(
+                    "SELECT weekly_question_day FROM users WHERE user_id = ?",
+                    (user["user_id"],)
+                ).fetchone()
+            preferred_day = row[0] if row and row[0] is not None else 6
+            if preferred_day == today_weekday:
+                eligible.append(user)
         except Exception:
             pass
 
-    question = question_of_week()
-    logger.info("Weekly question: sending to %d premium users", len(premium_users))
+    logger.info("Weekly question: week=%d rune=%s, sending to %d users", week, weekly_rune["name"], len(eligible))
     sent = blocked = errors = 0
 
-    for user in premium_users:
+    for user in eligible:
         user_id = user["user_id"]
-        name = user["preferred_name"] or "друг"
+        palette = user.get("palette") or "light"
+        palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
+
+        image_path = _bot.get_rune_image_path(weekly_rune, palette)
         text = (
-            f"🪬 <b>Вопрос недели</b>\n\n"
-            f"{question}\n\n"
-            f"<i>Запиши ответ в заметки или спроси руны — 🔮 Расклад в меню.</i>"
+            f"🪬 <b>Руна недели — {weekly_rune['name']}</b>\n\n"
+            f"<b>Вопрос для рефлексии:</b>\n{question}\n\n"
+            f"<i>Можно просто подержать вопрос в голове. "
+            f"Или сразу спросить руны — кнопка ниже.</i>"
         )
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔮 Спросить руны об этом", callback_data=f"weekly_rasklad:{week}")
+        ]])
         try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=text,
-                parse_mode="HTML",
-                reply_markup=_bot.MAIN_KEYBOARD,
-            )
+            if image_path:
+                await context.bot.send_photo(
+                    chat_id=user_id,
+                    photo=open(image_path, "rb"),
+                    caption=text,
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
             sent += 1
         except Forbidden:
             try:

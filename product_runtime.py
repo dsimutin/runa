@@ -303,10 +303,12 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     if not await bot.ensure_profile_ready(update, context):
         return
-    await reading_pause(update, context, 0.03)
+    # Send typing indicator immediately without waiting
+    chat = update.effective_chat
+    if chat:
+        asyncio.create_task(context.bot.send_chat_action(chat_id=chat.id, action=ChatAction.TYPING))
     today = date.today().isoformat()
     try:
-        # database now returns (rune_name, orientation) — not two rune names
         rune_name, orientation = bot.get_or_create_daily_card(bot.DB_PATH, update.effective_user.id, today, RUNES)
     except bot.DatabaseError:
         bot.logger.exception("Failed to get daily rune")
