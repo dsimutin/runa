@@ -59,6 +59,7 @@ def parse_admin_ids(raw_value: str) -> set[int]:
 ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DECK_DIRS = {"light": "light", "dark": "dark", "premium": "premium"}
+MAX_PHOTO_CAPTION_LENGTH = 1000
 
 STATE_WAITING_ASK = "waiting_ask"
 STATE_WAITING_RASKLAD = "waiting_rasklad"
@@ -95,16 +96,19 @@ ONBOARDING_QUESTIONS = [
         "text": "Ты заходишь в незнакомое место. Что замечаешь первым?",
         "a": "Атмосферу: свет, воздух, настроение, людей",
         "b": "Структуру: входы, выходы, правила, кто контролирует пространство",
+        "c": "Скрытый смысл: зачем это место появилось на твоём пути",
     },
     {
         "text": "Когда внутри тревожно, что помогает быстрее?",
         "a": "Побыть в тишине, собрать ощущения, мягко вернуть себя в баланс",
         "b": "Назвать проблему прямо, принять решение и начать действовать",
+        "c": "Посмотреть глубже: какой повторяющийся сценарий сейчас включился",
     },
     {
         "text": "Какой символ тебе ближе прямо сейчас?",
         "a": "Тёплый луч на закрытой двери",
         "b": "Золотой ключ в тёмной комнате",
+        "c": "Пустое пространство, где рождается новый смысл",
     },
 ]
 
@@ -180,6 +184,7 @@ def onboarding_keyboard(step: int) -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("A", callback_data=f"onboarding:{step}:light")],
             [InlineKeyboardButton("B", callback_data=f"onboarding:{step}:dark")],
+            [InlineKeyboardButton("C", callback_data=f"onboarding:{step}:premium")],
         ]
     )
 
@@ -190,7 +195,8 @@ def build_onboarding_question(step: int, name: str) -> str:
         f"🜂 {name}, выбери вариант\n\n"
         f"Вопрос {step}/3\n{question['text']}\n\n"
         f"A — {question['a']}\n"
-        f"B — {question['b']}"
+        f"B — {question['b']}\n"
+        f"C — {question['c']}"
     )
 
 
@@ -313,6 +319,14 @@ async def ensure_profile_ready(update: Update, context: ContextTypes.DEFAULT_TYP
         return False
 
 
+async def _send_text_message(message, text: str, reply_markup=None, parse_mode: str | None = None) -> None:
+    await message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+
+
+async def _send_bot_text(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str, parse_mode: str | None = None) -> None:
+    await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+
+
 async def send_private_or_group(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -328,38 +342,41 @@ async def send_private_or_group(
     parse_mode = "HTML" if wants_html(text) else None
     plain_text = strip_html(text)
 
-    try:
-        if is_private(update):
-            if image_path:
-                with open(image_path, "rb") as image_file:
-                    await message.reply_photo(photo=image_file, caption=text, reply_markup=MAIN_KEYBOARD, parse_mode=parse_mode)
-            else:
-                await message.reply_text(text, reply_markup=MAIN_KEYBOARD, parse_mode=parse_mode)
-            return
-
+    async def send_to_private(target_text: str, mode: str | None) -> None:
         if image_path:
             with open(image_path, "rb") as image_file:
-                await context.bot.send_photo(chat_id=user.id, photo=image_file, caption=text, parse_mode=parse_mode)
+                if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
+                    await message.reply_photo(photo=image_file, caption=target_text, reply_markup=MAIN_KEYBOARD, parse_mode=mode)
+                else:
+                    await message.reply_photo(photo=image_file, reply_markup=MAIN_KEYBOARD)
+                    await _send_text_message(message, target_text, reply_markup=MAIN_KEYBOARD, parse_mode=mode)
         else:
-            await context.bot.send_message(chat_id=user.id, text=text, parse_mode=parse_mode)
+            await _send_text_message(message, target_text, reply_markup=MAIN_KEYBOARD, parse_mode=mode)
+
+    async def send_to_group_private(target_text: str, mode: str | None) -> None:
+        if image_path:
+            with open(image_path, "rb") as image_file:
+                if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
+                    await context.bot.send_photo(chat_id=user.id, photo=image_file, caption=target_text, parse_mode=mode)
+                else:
+                    await context.bot.send_photo(chat_id=user.id, photo=image_file)
+                    await _send_bot_text(context, user.id, target_text, parse_mode=mode)
+        else:
+            await _send_bot_text(context, user.id, target_text, parse_mode=mode)
         await message.reply_text("Отправил ответ тебе в личку ✨")
+
+    try:
+        if is_private(update):
+            await send_to_private(text, parse_mode)
+        else:
+            await send_to_group_private(text, parse_mode)
     except BadRequest:
         logger.exception("HTML send failed; retrying plain text")
         try:
             if is_private(update):
-                if image_path:
-                    with open(image_path, "rb") as image_file:
-                        await message.reply_photo(photo=image_file, caption=plain_text, reply_markup=MAIN_KEYBOARD)
-                else:
-                    await message.reply_text(plain_text, reply_markup=MAIN_KEYBOARD)
-                return
-
-            if image_path:
-                with open(image_path, "rb") as image_file:
-                    await context.bot.send_photo(chat_id=user.id, photo=image_file, caption=plain_text)
+                await send_to_private(plain_text, None)
             else:
-                await context.bot.send_message(chat_id=user.id, text=plain_text)
-            await message.reply_text("Отправил ответ тебе в личку ✨")
+                await send_to_group_private(plain_text, None)
         except TelegramError:
             logger.exception("Plain fallback failed")
             await message.reply_text("Сообщение не ушло. Давай попробуем ещё раз через минуту.")
