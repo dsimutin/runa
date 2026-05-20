@@ -12,27 +12,31 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from database import (
     DatabaseError,
     ensure_user,
-    get_or_create_daily_runes,
+    get_or_create_daily_card,
     get_user_profile,
     init_db,
     save_onboarding_answer,
     start_onboarding,
 )
 from rasklad_engine import generate_rasklad
+from rune_text_repository import (
+    detect_question_sphere,
+    draw_distinct_runes_with_orientations,
+    draw_yes_no_rune,
+    get_daily_text,
+    get_sphere_answer,
+    orientation_label,
+)
 from runes_data import RUNES, get_rune_by_name
-from runes_interpretations import PSYCHOTYPES, get_interpretation
 
 try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
+    from runes_interpretations import PSYCHOTYPES
+except Exception:
+    PSYCHOTYPES = {}
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-USE_GPT = os.getenv("USE_GPT", "false").strip().lower() in {"1", "true", "yes", "on"}
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo").strip()
 DB_PATH = os.getenv("DB_PATH", "rune_bot.db")
 PORT = int(os.getenv("PORT", "10000"))
 WEBHOOK_URL = (os.getenv("WEBHOOK_URL") or os.getenv("RENDER_EXTERNAL_URL", "")).strip().rstrip("/")
@@ -54,21 +58,63 @@ def parse_admin_ids(raw_value: str) -> set[int]:
 
 ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DECK_DIRS = {"light": "light", "dark": "dark"}
+DECK_DIRS = {"light": "light", "dark": "dark", "premium": "premium"}
 
 STATE_WAITING_ASK = "waiting_ask"
 STATE_WAITING_RASKLAD = "waiting_rasklad"
 
+PALETTE_LABELS = {
+    "light": "светлая",
+    "dark": "тёмная",
+    "premium": "премиум",
+}
+
+DEFAULT_PSYCHOTYPES = {
+    "light": {
+        "key": "intuitive_integrator",
+        "name": "Интуитивный интегратор",
+        "description": "светлая палитра — мягкая, тёплая, интуитивная",
+        "reading_style": "восстановление, смысл и внутреннюю ясность",
+    },
+    "dark": {
+        "key": "will_strategist",
+        "name": "Волевой стратег",
+        "description": "тёмная палитра — глубокая, контрастная, собранная",
+        "reading_style": "структуру, силу и прямой знак",
+    },
+    "premium": {
+        "key": "premium_seeker",
+        "name": "Премиум-проводник",
+        "description": "премиум палитра — глубинная, архетипичная, личная",
+        "reading_style": "скрытый мотив, внутреннюю трансформацию и точное действие",
+    },
+}
+
 ONBOARDING_QUESTIONS = [
-    {"text": "Ты заходишь в незнакомое место. Что замечаешь первым?", "a": "Атмосферу: свет, воздух, настроение, людей", "b": "Структуру: входы, выходы, правила, кто контролирует пространство"},
-    {"text": "Когда внутри тревожно, что помогает быстрее?", "a": "Побыть в тишине, собрать ощущения, мягко вернуть себя в баланс", "b": "Назвать проблему прямо, принять решение и начать действовать"},
-    {"text": "Какой символ тебе ближе прямо сейчас?", "a": "Тёплый луч на закрытой двери", "b": "Золотой ключ в тёмной комнате"},
+    {
+        "text": "Ты заходишь в незнакомое место. Что замечаешь первым?",
+        "a": "Атмосферу: свет, воздух, настроение, людей",
+        "b": "Структуру: входы, выходы, правила, кто контролирует пространство",
+    },
+    {
+        "text": "Когда внутри тревожно, что помогает быстрее?",
+        "a": "Побыть в тишине, собрать ощущения, мягко вернуть себя в баланс",
+        "b": "Назвать проблему прямо, принять решение и начать действовать",
+    },
+    {
+        "text": "Какой символ тебе ближе прямо сейчас?",
+        "a": "Тёплый луч на закрытой двери",
+        "b": "Золотой ключ в тёмной комнате",
+    },
 ]
 
 logging.basicConfig(format="%(asctime)s | %(name)s | %(levelname)s | %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MAIN_KEYBOARD = ReplyKeyboardMarkup([["🌞 Руна дня", "❓ Вопрос"], ["🔮 Расклад", "ℹ️ Помощь"]], resize_keyboard=True)
+MAIN_KEYBOARD = ReplyKeyboardMarkup(
+    [["🌞 Руна дня", "❓ Да / Нет"], ["🔮 Расклад", "ℹ️ Помощь"]],
+    resize_keyboard=True,
+)
 
 
 def strip_html(text: str) -> str:
@@ -109,11 +155,15 @@ def log_update(update: Update, action: str) -> None:
     user = update.effective_user
     chat = update.effective_chat
     message = update.effective_message
-    logger.info("%s | user_id=%s username=%s chat_id=%s chat_type=%s text=%r", action, user.id if user else None, user.username if user else None, chat.id if chat else None, chat.type if chat else None, message.text if message else None)
-
-
-def choose_distinct_runes(count: int) -> List[Dict[str, Any]]:
-    return random.sample(RUNES, min(count, len(RUNES)))
+    logger.info(
+        "%s | user_id=%s username=%s chat_id=%s chat_type=%s text=%r",
+        action,
+        user.id if user else None,
+        user.username if user else None,
+        chat.id if chat else None,
+        chat.type if chat else None,
+        message.text if message else None,
+    )
 
 
 def bot_link(context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -126,17 +176,36 @@ def private_link_markup(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMar
 
 
 def onboarding_keyboard(step: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("A", callback_data=f"onboarding:{step}:light")], [InlineKeyboardButton("B", callback_data=f"onboarding:{step}:dark")]])
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("A", callback_data=f"onboarding:{step}:light")],
+            [InlineKeyboardButton("B", callback_data=f"onboarding:{step}:dark")],
+        ]
+    )
 
 
 def build_onboarding_question(step: int, name: str) -> str:
     question = ONBOARDING_QUESTIONS[step - 1]
-    return f"🜂 {name}, выбери вариант\n\nВопрос {step}/3\n{question['text']}\n\nA — {question['a']}\nB — {question['b']}"
+    return (
+        f"🜂 {name}, выбери вариант\n\n"
+        f"Вопрос {step}/3\n{question['text']}\n\n"
+        f"A — {question['a']}\n"
+        f"B — {question['b']}"
+    )
+
+
+def psychotype_for(palette: str) -> Dict[str, str]:
+    return (PSYCHOTYPES or {}).get(palette) or DEFAULT_PSYCHOTYPES[palette]
 
 
 def onboarding_result_text(palette: str) -> str:
-    profile = PSYCHOTYPES[palette]
-    return f"🜂 Колода закреплена\n\nТвоя палитра: {profile['description']}.\n\nСтиль чтения: {profile['reading_style']}.\n\nТеперь можно выбрать действие ниже."
+    profile = psychotype_for(palette)
+    return (
+        "🜂 Колода закреплена\n\n"
+        f"Твоя палитра: {profile['description']}.\n\n"
+        f"Стиль чтения: {profile['reading_style']}.\n\n"
+        "Теперь можно выбрать действие ниже."
+    )
 
 
 def get_user_palette(update: Update) -> str:
@@ -145,15 +214,11 @@ def get_user_palette(update: Update) -> str:
         return "light"
     try:
         profile = get_user_profile(DB_PATH, user.id)
-        if profile and profile.get("palette") in {"light", "dark"}:
+        if profile and profile.get("palette") in {"light", "dark", "premium"}:
             return profile["palette"]
     except DatabaseError:
         logger.exception("Failed to get user palette")
     return "light"
-
-
-def rune_text(rune: Dict[str, Any], palette: str) -> Dict[str, str]:
-    return get_interpretation(rune.get("key", ""), palette, rune)
 
 
 def get_rune_image_path(rune: Dict[str, Any], palette: str) -> str | None:
@@ -161,26 +226,35 @@ def get_rune_image_path(rune: Dict[str, Any], palette: str) -> str | None:
     if palette_images:
         image_file = palette_images.get(palette) or palette_images.get("light")
         deck_dir = DECK_DIRS.get(palette, "light")
-        candidates = [os.path.join(BASE_DIR, deck_dir, image_file), os.path.join(BASE_DIR, "decks", deck_dir, image_file)]
+        candidates = [
+            os.path.join(BASE_DIR, deck_dir, image_file),
+            os.path.join(BASE_DIR, "decks", deck_dir, image_file),
+        ]
         for path in candidates:
             if os.path.exists(path):
                 return path
         return None
+
     image_file = rune.get("image_file")
     if not image_file:
         return None
+
     deck_dir = DECK_DIRS.get(palette, "light")
-    candidates = [os.path.join(BASE_DIR, deck_dir, image_file), os.path.join(BASE_DIR, "decks", deck_dir, image_file)]
+    candidates = [
+        os.path.join(BASE_DIR, deck_dir, image_file),
+        os.path.join(BASE_DIR, "decks", deck_dir, image_file),
+    ]
     for path in candidates:
         if os.path.exists(path):
             return path
+
     logger.warning("Rune image not found: palette=%s file=%s", palette, image_file)
     return None
 
 
 def check_deck_files() -> Dict[str, List[str]]:
     missing: Dict[str, List[str]] = {}
-    for palette in ("light", "dark"):
+    for palette in ("light", "dark", "premium"):
         missing[palette] = []
         for rune in RUNES:
             if not get_rune_image_path(rune, palette):
@@ -188,28 +262,30 @@ def check_deck_files() -> Dict[str, List[str]]:
     return missing
 
 
-def format_daily_message(name: str, main_rune: Dict[str, Any], main_text: Dict[str, str], aux_rune: Dict[str, Any], aux_text: Dict[str, str]) -> str:
+def format_daily_message(name: str, rune: Dict[str, Any], palette: str, orientation: str, text: str) -> str:
     return (
-        f"🌞 {name}, руна дня\n\n"
-        f"Основная карта — {main_rune['name']}\n"
-        f"{main_text['short_desc']}\n\n"
-        f"Дополнительный акцент — {aux_rune['name']}\n"
-        f"{aux_text['short_desc']}\n\n"
-        f"Что сделать сегодня\n"
-        f"Выбери один конкретный шаг по основной карте. Дополнительная руна показывает, где не стоит действовать на автомате."
+        f"🌞 <b>{name}, карта дня</b>\n\n"
+        f"<b>Карта:</b> {rune['name']}\n"
+        f"<b>Положение:</b> {orientation_label(orientation)}\n"
+        f"<b>Колода:</b> {PALETTE_LABELS.get(palette, palette)}\n\n"
+        f"{text}"
     )
 
 
-def format_one_rune_answer(name: str, question: str, rune: Dict[str, Any], answer: str, label: str) -> str:
+def format_one_rune_answer(
+    name: str,
+    question: str,
+    rune: Dict[str, Any],
+    text_data: Dict[str, str],
+) -> str:
     return (
-        f"❓ {name}, ответ\n\n"
-        f"Вопрос: {question}\n\n"
-        f"Карта — {rune['name']}\n"
-        f"Формат — {label}\n\n"
-        f"Ответ\n"
-        f"{answer}\n\n"
-        f"Практический вывод\n"
-        f"Используй карту как подсказку: что проверить, где остановиться и какой шаг сделать трезво."
+        f"❓ <b>{name}, ответ Да / Нет</b>\n\n"
+        f"<b>Вопрос:</b> <i>{question}</i>\n\n"
+        f"<b>Карта:</b> {rune['name']}\n"
+        f"<b>Сфера:</b> {text_data['sphere_label']}\n"
+        f"<b>Ответ:</b> {text_data['answer_label']}\n\n"
+        f"{text_data['short_desc']}\n\n"
+        f"{text_data['answer']}"
     )
 
 
@@ -237,13 +313,21 @@ async def ensure_profile_ready(update: Update, context: ContextTypes.DEFAULT_TYP
         return False
 
 
-async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, *, image_path: str | None = None) -> None:
+async def send_private_or_group(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    *,
+    image_path: str | None = None,
+) -> None:
     message = update.effective_message
     user = update.effective_user
     if not message or not user:
         return
+
     parse_mode = "HTML" if wants_html(text) else None
     plain_text = strip_html(text)
+
     try:
         if is_private(update):
             if image_path:
@@ -252,6 +336,7 @@ async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TY
             else:
                 await message.reply_text(text, reply_markup=MAIN_KEYBOARD, parse_mode=parse_mode)
             return
+
         if image_path:
             with open(image_path, "rb") as image_file:
                 await context.bot.send_photo(chat_id=user.id, photo=image_file, caption=text, parse_mode=parse_mode)
@@ -268,6 +353,7 @@ async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TY
                 else:
                     await message.reply_text(plain_text, reply_markup=MAIN_KEYBOARD)
                 return
+
             if image_path:
                 with open(image_path, "rb") as image_file:
                     await context.bot.send_photo(chat_id=user.id, photo=image_file, caption=plain_text)
@@ -278,7 +364,10 @@ async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TY
             logger.exception("Plain fallback failed")
             await message.reply_text("Сообщение не ушло. Давай попробуем ещё раз через минуту.")
     except Forbidden:
-        await message.reply_text("Чтобы я мог писать тебе лично, открой со мной личный чат и нажми /start.", reply_markup=private_link_markup(context))
+        await message.reply_text(
+            "Чтобы я мог писать тебе лично, открой со мной личный чат и нажми /start.",
+            reply_markup=private_link_markup(context),
+        )
     except (OSError, TelegramError):
         logger.exception("Failed to send response")
         await message.reply_text("Сообщение не ушло. Давай попробуем ещё раз через минуту.")
@@ -287,11 +376,11 @@ async def send_private_or_group(update: Update, context: ContextTypes.DEFAULT_TY
 def short_help() -> str:
     return (
         "ℹ️ <b>Что я умею</b>\n\n"
-        "🌞 /runa — вытяну тебе руну дня\n"
-        "❓ /ask <i>вопрос</i> — отвечу одной картой\n"
-        "🔮 /rasklad <i>вопрос</i> — раскину три карты на ситуацию\n"
+        "🌞 /runa — вытяну карту дня из файла карты дня\n"
+        "❓ /ask <i>вопрос</i> — отвечу Да / Нет по файлу сферных ответов\n"
+        "🔮 /rasklad <i>вопрос</i> — три руны: прошлое / настоящее / будущее\n"
         "🜂 /profile — покажу твою колоду\n\n"
-        "Если просто нажать кнопку в меню — спрошу вопрос отдельным сообщением."
+        "Бот не генерирует трактовки сам. Он использует только загруженные файлы с текстами."
     )
 
 
@@ -299,9 +388,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     log_update(update, "Received /start")
     context.user_data.clear()
     name = user_name(update)
+
     if not is_private(update):
-        await update.effective_message.reply_text("Раскладам нужна личка. Открой со мной личный чат и нажми /start — там и продолжим.", reply_markup=private_link_markup(context))
+        await update.effective_message.reply_text(
+            "Раскладам нужна личка. Открой со мной личный чат и нажми /start — там и продолжим.",
+            reply_markup=private_link_markup(context),
+        )
         return
+
     try:
         ensure_user(DB_PATH, update.effective_user.id, name)
         profile = get_user_profile(DB_PATH, update.effective_user.id)
@@ -313,6 +407,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         logger.exception("Failed to start onboarding")
         await update.effective_message.reply_text("Что-то пошло не так. Попробуй ещё раз через минуту.")
         return
+
     await update.effective_message.reply_text(f"🜂 {name}, твоя колода уже выбрана.\n\nС чего начнём?", reply_markup=MAIN_KEYBOARD)
 
 
@@ -320,6 +415,7 @@ async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     if not query or not update.effective_user:
         return
+
     await query.answer()
     try:
         _, step_raw, answer = query.data.split(":", 2)
@@ -327,26 +423,29 @@ async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     except (ValueError, AttributeError):
         await query.edit_message_text("Не удалось прочитать ответ. Нажми /start и попробуй снова.")
         return
+
     try:
         result = save_onboarding_answer(DB_PATH, update.effective_user.id, answer, len(ONBOARDING_QUESTIONS))
     except DatabaseError:
         logger.exception("Failed to save onboarding answer")
         await query.edit_message_text("Не получилось сохранить ответ. Попробуй позже.")
         return
+
     if result.get("completed"):
         await query.edit_message_text(onboarding_result_text(result["palette"]))
         await context.bot.send_message(
             chat_id=update.effective_user.id,
             text=(
                 "👇 Что можно сделать:\n\n"
-                "🌞  Руна дня — фокус на сегодня\n"
-                "❓ Вопрос — быстрый ответ одной картой\n"
-                "🔮  Расклад — разбор ситуации (3 карты)\n\n"
+                "🌞 Руна дня — карта и положение на сегодня\n"
+                "❓ Да / Нет — быстрый ответ одной картой\n"
+                "🔮 Расклад — прошлое / настоящее / будущее\n\n"
                 "Выбери действие ниже"
             ),
             reply_markup=MAIN_KEYBOARD,
         )
         return
+
     next_step = result["next_step"]
     await query.edit_message_text(build_onboarding_question(next_step, user_name(update)), reply_markup=onboarding_keyboard(next_step))
 
@@ -363,11 +462,12 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     log_update(update, "Received /profile")
     if not await ensure_profile_ready(update, context):
         return
+
     palette = get_user_palette(update)
-    profile = PSYCHOTYPES[palette]
+    profile = psychotype_for(palette)
     text = (
         "🜂 Твой профиль\n\n"
-        f"Колода: {'светлая' if palette == 'light' else 'тёмная'}\n"
+        f"Колода: {PALETTE_LABELS.get(palette, palette)}\n"
         f"Стиль: {profile['name']}\n\n"
         f"Как читается:\n{profile['reading_style']}.\n\n"
         "Сброс: удалить чат с ботом и начать заново."
@@ -380,12 +480,12 @@ async def check_decks_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not is_admin(update):
         await update.effective_message.reply_text("Эта техническая команда доступна только администратору.")
         return
+
     missing = check_deck_files()
     lines = ["🧩 Проверка колод", ""]
-    for palette in ("light", "dark"):
+    for palette in ("light", "dark", "premium"):
         count = len(RUNES) - len(missing[palette])
-        title = "светлая" if palette == "light" else "тёмная"
-        lines.append(f"{title}: {count}/{len(RUNES)}")
+        lines.append(f"{PALETTE_LABELS.get(palette, palette)}: {count}/{len(RUNES)}")
         if missing[palette]:
             lines.append("Не найдены:")
             lines.extend(f"— {name}" for name in missing[palette])
@@ -394,7 +494,11 @@ async def check_decks_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def send_missing_image_error(update: Update, context: ContextTypes.DEFAULT_TYPE, rune: Dict[str, Any], palette: str) -> None:
-    await send_private_or_group(update, context, f"Не найдена карта {rune.get('image_file', rune.get('name', ''))} в папке {palette}. Проверь /check_decks.")
+    await send_private_or_group(
+        update,
+        context,
+        f"Не найдена карта {rune.get('image_file', rune.get('name', ''))} в папке {palette}. Проверь /check_decks.",
+    )
 
 
 async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -404,21 +508,30 @@ async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if not await ensure_profile_ready(update, context):
         return
+
     today = date.today().isoformat()
     try:
-        main_name, aux_name = get_or_create_daily_runes(DB_PATH, update.effective_user.id, today, RUNES)
+        rune_name, orientation = get_or_create_daily_card(DB_PATH, update.effective_user.id, today, RUNES)
     except DatabaseError:
-        logger.exception("Failed to get daily runes")
-        await send_private_or_group(update, context, "Сейчас не получается достать руну дня. Попробуй чуть позже.")
+        logger.exception("Failed to get daily card")
+        await send_private_or_group(update, context, "Сейчас не получается достать карту дня. Попробуй чуть позже.")
         return
+
     palette = get_user_palette(update)
-    main_rune = get_rune_by_name(main_name)
-    aux_rune = get_rune_by_name(aux_name)
-    image_path = get_rune_image_path(main_rune, palette)
+    rune = get_rune_by_name(rune_name)
+    image_path = get_rune_image_path(rune, palette)
     if not image_path:
-        await send_missing_image_error(update, context, main_rune, palette)
+        await send_missing_image_error(update, context, rune, palette)
         return
-    text = format_daily_message(user_name(update), main_rune, rune_text(main_rune, palette), aux_rune, rune_text(aux_rune, palette))
+
+    try:
+        text_value = get_daily_text(rune["key"], palette, orientation)
+    except KeyError:
+        logger.exception("Daily text not found")
+        await send_private_or_group(update, context, "Для этой карты не найден текст карты дня в загруженном файле.")
+        return
+
+    text = format_daily_message(user_name(update), rune, palette, orientation, text_value)
     await send_private_or_group(update, context, text, image_path=image_path)
 
 
@@ -426,116 +539,116 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     log_update(update, "Received /ask")
     if not await ensure_profile_ready(update, context):
         return
+
     question = " ".join(context.args).strip()
     if not question:
         context.user_data["state"] = STATE_WAITING_ASK
-        await update.effective_message.reply_text("❓ Напиши свой вопрос — отвечу одной картой.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
+        await update.effective_message.reply_text("❓ Напиши вопрос — отвечу Да / Нет одной картой.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
         return
+
     await send_one_rune_answer(update, context, question)
 
 
 async def send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
     if not await ensure_profile_ready(update, context):
         return
+
     palette = get_user_palette(update)
-    rune = random.choice(RUNES)
+    rune = draw_yes_no_rune(RUNES)
     image_path = get_rune_image_path(rune, palette)
     if not image_path:
         await send_missing_image_error(update, context, rune, palette)
         return
-    text_data = rune_text(rune, palette)
-    is_yes = random.random() < 0.5
-    label = "совет" if is_yes else "предупреждение"
-    answer = text_data["answer_yes"] if is_yes else text_data["answer_no"]
-    text = format_one_rune_answer(user_name(update), question, rune, answer, label)
-    await send_private_or_group(update, context, text, image_path=image_path)
 
-
-def build_template_rasklad(name: str, question: str, runes: List[Dict[str, Any]], palette: str) -> str:
-    return generate_rasklad(runes, question, palette, name)
-
-
-def build_gpt_prompt(name: str, question: str, runes: List[Dict[str, Any]]) -> str:
-    return f"Ты пишешь короткий трёхрунный расклад на русском языке до 300 символов. Не обещай гарантированный результат.\nИмя: {name}\nВопрос: {question}\nСитуация: {runes[0]['name']} — {runes[0]['meaning_situation']}\nПрепятствие: {runes[1]['name']} — {runes[1]['meaning_obstacle']}\nСовет: {runes[2]['name']} — {runes[2]['meaning_advice']}"
-
-
-async def build_ai_rasklad(name: str, question: str, runes: List[Dict[str, Any]]) -> str | None:
-    if not OPENAI_API_KEY or OpenAI is None:
-        return None
+    sphere = detect_question_sphere(question)
+    answer_kind = "yes" if random.random() < 0.5 else "no"
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY, timeout=20.0)
-        response = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": "Ты помощник для рунических раскладов. Пиши кратко и без категоричных обещаний."},
-                {"role": "user", "content": build_gpt_prompt(name, question, runes)},
-            ],
-            max_tokens=160,
-            temperature=0.8,
-        )
-        content = response.choices[0].message.content
-        return content.strip() if content else None
-    except Exception:
-        logger.exception("OpenAI generation failed; using template rasklad")
-        return None
+        text_data = get_sphere_answer(rune["key"], palette, sphere, answer_kind)
+    except KeyError:
+        logger.exception("Yes/no text not found")
+        await send_private_or_group(update, context, "Для этой карты не найден ответ Да / Нет в загруженном файле.")
+        return
+
+    text = format_one_rune_answer(user_name(update), question, rune, text_data)
+    await send_private_or_group(update, context, text, image_path=image_path)
 
 
 async def rasklad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_update(update, "Received /rasklad")
     if not await ensure_profile_ready(update, context):
         return
+
     question = " ".join(context.args).strip()
     if not question:
         context.user_data["state"] = STATE_WAITING_RASKLAD
-        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
+        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты: прошлое / настоящее / будущее.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
         return
+
     await send_rasklad(update, context, question)
 
 
 async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
     if not await ensure_profile_ready(update, context):
         return
+
     name = user_name(update)
-    runes = choose_distinct_runes(3)
     palette = get_user_palette(update)
-    image_path = get_rune_image_path(runes[2], palette)
+    rune_draws = draw_distinct_runes_with_orientations(RUNES, 3)
+    image_path = get_rune_image_path(rune_draws[2][0], palette)
     if not image_path:
-        await send_missing_image_error(update, context, runes[2], palette)
+        await send_missing_image_error(update, context, rune_draws[2][0], palette)
         return
-    text = await build_ai_rasklad(name, question, runes) if USE_GPT else None
-    if not text:
-        text = build_template_rasklad(name, question, runes, palette)
+
+    try:
+        text = generate_rasklad(rune_draws, question, palette, name)
+    except KeyError:
+        logger.exception("Spread text not found")
+        await send_private_or_group(update, context, "Для одной из карт не найден текст расклада в загруженном файле.")
+        return
+
     await send_private_or_group(update, context, text, image_path=image_path)
 
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_update(update, "Received text")
     text = (update.effective_message.text or "").strip()
+
     if not await ensure_profile_ready(update, context):
         return
+
     if text == "🌞 Руна дня":
         await runa_command(update, context)
         return
-    if text in {"❓ Вопрос", "❓ Задать вопрос"}:
+
+    if text in {"❓ Вопрос", "❓ Задать вопрос", "❓ Да / Нет"}:
         context.user_data["state"] = STATE_WAITING_ASK
-        await update.effective_message.reply_text("❓ Напиши свой вопрос — отвечу одной картой.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
+        await update.effective_message.reply_text("❓ Напиши вопрос — отвечу Да / Нет одной картой.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
         return
+
     if text == "🔮 Расклад":
         context.user_data["state"] = STATE_WAITING_RASKLAD
-        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
+        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты: прошлое / настоящее / будущее.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
         return
+
     if text == "ℹ️ Помощь":
         await help_command(update, context)
         return
+
     state = context.user_data.get("state")
     context.user_data.pop("state", None)
+
     if state == STATE_WAITING_ASK:
         await send_one_rune_answer(update, context, text)
         return
+
     if state == STATE_WAITING_RASKLAD:
         await send_rasklad(update, context, text)
         return
-    await update.effective_message.reply_text("Выбери действие на клавиатуре. Или напиши /help, если потерялся.", reply_markup=MAIN_KEYBOARD if is_private(update) else private_link_markup(context))
+
+    await update.effective_message.reply_text(
+        "Выбери действие на клавиатуре. Или напиши /help, если потерялся.",
+        reply_markup=MAIN_KEYBOARD if is_private(update) else private_link_markup(context),
+    )
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -545,6 +658,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def build_application() -> Application:
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Add it in environment variables.")
+
     init_db(DB_PATH)
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
@@ -565,6 +679,7 @@ def main() -> None:
     logger.info("WEBHOOK_URL: %r", WEBHOOK_URL)
     logger.info("PORT: %s", PORT)
     logger.info("DB_PATH: %s", DB_PATH)
+
     app = build_application()
     if WEBHOOK_URL:
         logger.info("Starting bot in webhook mode on port %s path /%s", PORT, WEBHOOK_PATH)
@@ -577,6 +692,7 @@ def main() -> None:
             drop_pending_updates=True,
         )
         return
+
     logger.info("Starting bot in polling mode")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 

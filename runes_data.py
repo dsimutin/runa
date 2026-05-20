@@ -15,27 +15,21 @@ RUNE_FILES = [
     ("perthro", "Перт", "14-perthro.jpg"),
     ("algiz", "Альгиз", "15-algiz.jpg"),
     ("sowilo", "Соулу", "16-sowilo.jpg"),
-    ("teiwaz", "Тейваз", "17-teiwaz.jpg"),
-    ("berkana", "Беркана", "18-berkana.jpg"),
+    ("tiwaz", "Тейваз", "17-teiwaz.jpg"),
+    ("berkano", "Беркана", "18-berkana.jpg"),
     ("ehwaz", "Эваз", "19-ehwaz.jpg"),
     ("mannaz", "Манназ", "20-mannaz.jpg"),
     ("laguz", "Лагуз", "21-laguz.jpg"),
-    ("inguz", "Ингуз", "22-inguz.jpg"),
+    ("ingwaz", "Ингуз", "22-inguz.jpg"),
     ("dagaz", "Дагаз", "23-dagaz.jpg"),
     ("othala", "Отал", "24-othala.jpg"),
 ]
 
 BLANK_RUNE = {
-    "key": "blank",
+    "key": "wyrd",
     "name": "Пустая руна",
     "image_file": None,
     "palette_image_files": {"light": "00_light.jpg", "dark": "00_dark.jpg", "premium": "00_premium.jpg"},
-    "short_desc": "",
-    "answer_no": "",
-    "answer_yes": "",
-    "meaning_situation": "",
-    "meaning_obstacle": "",
-    "meaning_advice": "",
 }
 
 RUNES = []
@@ -45,21 +39,30 @@ for key, name, image_file in RUNE_FILES:
             "key": key,
             "name": name,
             "image_file": image_file,
-            "short_desc": "",
-            "answer_no": "",
-            "answer_yes": "",
-            "meaning_situation": "",
-            "meaning_obstacle": "",
-            "meaning_advice": "",
         }
     )
 
 RUNES.append(BLANK_RUNE)
 
+KEY_ALIASES = {
+    "teiwaz": "tiwaz",
+    "berkana": "berkano",
+    "inguz": "ingwaz",
+    "blank": "wyrd",
+}
+
+NAME_ALIASES = {
+    "Одал": "Отал",
+}
+
+
+def normalize_key(key: str) -> str:
+    key = (key or "").strip().lower()
+    return KEY_ALIASES.get(key, key)
+
 
 def get_rune_by_name(name: str) -> dict:
-    aliases = {"Одал": "Отал"}
-    normalized = aliases.get(name, name)
+    normalized = NAME_ALIASES.get(name, name)
     for rune in RUNES:
         if rune["name"] == normalized:
             return rune
@@ -67,7 +70,8 @@ def get_rune_by_name(name: str) -> dict:
 
 
 def get_rune_by_key(key: str) -> dict:
+    normalized = normalize_key(key)
     for rune in RUNES:
-        if rune["key"] == key:
+        if rune["key"] == normalized:
             return rune
     raise KeyError(f"Rune not found: {key}")

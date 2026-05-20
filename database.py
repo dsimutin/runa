@@ -8,6 +8,7 @@ class DatabaseError(Exception):
 
 
 VALID_PALETTES = {"light", "dark", "premium"}
+DAILY_ORIENTATIONS = {"up", "rev"}
 
 
 def get_connection(db_path: str) -> sqlite3.Connection:
@@ -249,7 +250,18 @@ def set_user_palette(db_path: str, user_id: int, palette: str) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def get_or_create_daily_runes(db_path: str, user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
+def _random_orientation_for_rune(rune: Dict[str, Any]) -> str:
+    if rune.get("key") in {"wyrd", "blank"} or rune.get("name") == "Пустая руна":
+        return "up"
+    return random.choice(["up", "rev"])
+
+
+def get_or_create_daily_card(db_path: str, user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
+    """Return one daily rune and its orientation.
+
+    The legacy daily_runes.aux_rune column is reused as orientation:
+    up = прямое, rev = перевёрнутое. For the empty rune only up is allowed.
+    """
     try:
         with get_connection(db_path) as conn:
             ensure_schema(conn)
@@ -262,20 +274,50 @@ def get_or_create_daily_runes(db_path: str, user_id: int, day: str, runes: List[
                 (user_id, day),
             ).fetchone()
 
-            if row:
-                return row[0], row[1]
+            if row and row[1] in DAILY_ORIENTATIONS:
+                orientation = "up" if row[0] == "Пустая руна" else row[1]
+                if orientation != row[1]:
+                    conn.execute(
+                        """
+                        UPDATE daily_runes
+                        SET aux_rune = ?
+                        WHERE user_id = ? AND date = ?
+                        """,
+                        (orientation, user_id, day),
+                    )
+                return row[0], orientation
 
-            main_rune, aux_rune = random.sample(runes, 2)
+            if row:
+                rune_name = row[0]
+                rune = next((item for item in runes if item["name"] == rune_name), random.choice(runes))
+                orientation = _random_orientation_for_rune(rune)
+                conn.execute(
+                    """
+                    UPDATE daily_runes
+                    SET aux_rune = ?
+                    WHERE user_id = ? AND date = ?
+                    """,
+                    (orientation, user_id, day),
+                )
+                return rune["name"], orientation
+
+            rune = random.choice(runes)
+            orientation = _random_orientation_for_rune(rune)
             conn.execute(
                 """
                 INSERT INTO daily_runes (user_id, date, main_rune, aux_rune)
                 VALUES (?, ?, ?, ?)
                 """,
-                (user_id, day, main_rune["name"], aux_rune["name"]),
+                (user_id, day, rune["name"], orientation),
             )
-            return main_rune["name"], aux_rune["name"]
+            return rune["name"], orientation
     except (sqlite3.Error, ValueError) as exc:
         raise DatabaseError(str(exc)) from exc
+
+
+def get_or_create_daily_runes(db_path: str, user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
+    """Backward compatible wrapper for older imports."""
+    return get_or_create_daily_card(db_path, user_id, day, runes)
 
 
 def get_preferred_name(db_path: str, user_id: int) -> str | None:
