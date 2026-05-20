@@ -9,18 +9,16 @@ from database import get_connection, ensure_schema
 
 PREMIUM_PRICE_STARS = 99
 PREMIUM_PRICE_RUB = 299
-PREMIUM_MONTHLY_READINGS = 2
+PREMIUM_MONTHLY_READINGS = 3
 
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
 
 PREMIUM_BENEFITS = (
     "💠 <b>Премиум-подписка</b>\n\n"
     "Что входит:\n"
-    "💠 Премиум-колода — уникальные карты\n"
-    "🕯 2 бесплатных личных расклада в месяц (обычно 100 ₽ каждый)\n"
-    "⭐ Глубокий расклад на 5 карт (эксклюзив)\n"
-    "🌑 Тёмная колода — тоже доступна\n"
-    "🔔 Приоритетные уведомления\n\n"
+    "💠 Премиум-колода — уникальные карты, недоступные в базовой версии\n"
+    "🕯 3 бесплатных личных расклада в месяц\n"
+    "🔔 Ежедневная руна и еженедельный вопрос для рефлексии\n\n"
     f"<b>Стоимость: {PREMIUM_PRICE_STARS} Stars / {PREMIUM_PRICE_RUB} ₽ в месяц</b>"
 )
 

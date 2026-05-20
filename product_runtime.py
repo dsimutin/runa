@@ -30,11 +30,9 @@ bot.MAIN_KEYBOARD = ReplyKeyboardMarkup(
 )
 
 bot.ONBOARDING_QUESTIONS = [
-    {"text": "Ты входишь в незнакомое пространство. Что считываешь первым?", "a": "Атмосферу, свет, воздух, внутреннее ощущение", "b": "Границы, правила, риски и кто управляет ситуацией", "c": "Детали, символы, скрытый смысл и общее напряжение"},
-    {"text": "Когда внутри нет ясности, что тебе ближе?", "a": "Пауза и мягкое прояснение", "b": "Прямой ответ и действие", "c": "Глубокий разбор, где важны нюансы и подтекст"},
-    {"text": "Какой образ сильнее откликается сейчас?", "a": "Тёплый луч на закрытой двери", "b": "Ключ в тёмной комнате", "c": "Зеркало из тёмного металла с тонким золотым краем"},
-    {"text": "Как ты обычно принимаешь важное решение?", "a": "Слушаю состояние и выбираю то, где становится спокойнее", "b": "Сравниваю факты, риски и последствия", "c": "Смотрю на общий рисунок: что повторяется и куда ведёт линия событий"},
-    {"text": "Какого ответа ты ждёшь от рун?", "a": "Бережного ориентира", "b": "Честного предупреждения", "c": "Глубокой интерпретации без лишней мистики"},
+    {"text": "Ты входишь в незнакомое пространство. Что считываешь первым?", "a": "Атмосферу, свет, воздух, внутреннее ощущение", "b": "Границы, правила, риски и кто управляет ситуацией"},
+    {"text": "Когда внутри нет ясности, что тебе ближе?", "a": "Пауза и мягкое прояснение", "b": "Прямой ответ и действие"},
+    {"text": "Какого ответа ты ждёшь от рун?", "a": "Бережного ориентира и поддержки", "b": "Честного предупреждения без прикрас"},
 ]
 
 HUMAN_DAILY_OPENINGS = {
@@ -186,7 +184,10 @@ bot.get_user_palette = get_user_palette
 
 
 def onboarding_keyboard(step: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("A", callback_data=f"onboarding:{step}:light")], [InlineKeyboardButton("B", callback_data=f"onboarding:{step}:dark")], [InlineKeyboardButton("C", callback_data=f"onboarding:{step}:premium")]])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("A", callback_data=f"onboarding:{step}:light")],
+        [InlineKeyboardButton("B", callback_data=f"onboarding:{step}:dark")],
+    ])
 
 
 bot.onboarding_keyboard = onboarding_keyboard
@@ -194,15 +195,20 @@ bot.onboarding_keyboard = onboarding_keyboard
 
 def build_onboarding_question(step: int, name: str) -> str:
     q = bot.ONBOARDING_QUESTIONS[step - 1]
-    return f"{name}, настроим твою колоду\n\nВопрос {step}/5\n{q['text']}\n\nA — {q['a']}\nB — {q['b']}\nC — {q['c']}"
+    total = len(bot.ONBOARDING_QUESTIONS)
+    return f"{name}, настроим твою колоду\n\nВопрос {step}/{total}\n{q['text']}\n\nA — {q['a']}\nB — {q['b']}"
 
 
 bot.build_onboarding_question = build_onboarding_question
 
 
 def onboarding_result_text(palette: str) -> str:
-    titles = {"light": "🌕 Светлая колода настроена", "dark": "🌑 Тёмная колода настроена", "premium": "💠 Премиум-колода настроена"}
-    descriptions = {"light": "Мягкие трактовки, больше поддержки и спокойного ориентира.", "dark": "Более прямое чтение: границы, риски и честная позиция.", "premium": "Более глубокий разбор: подтекст, повторяющиеся сигналы и скрытая структура вопроса."}
+    titles = {"light": "🌕 Светлая колода настроена", "dark": "🌑 Тёмная колода настроена", "premium": "💠 Премиум-колода активирована"}
+    descriptions = {
+        "light": "Мягкие трактовки, больше поддержки и спокойного ориентира.",
+        "dark": "Более прямое чтение: границы, риски и честная позиция.",
+        "premium": "Глубокий разбор, уникальные карты и приоритетный доступ к личным раскладам.",
+    }
     return f"{titles.get(palette, 'Колода настроена')}\n\n{descriptions.get(palette, '')}\n\nКолоду можно сменить позже в ⚙️ Настройках."
 
 
@@ -321,7 +327,13 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
     key = palette if palette in HUMAN_DAILY_OPENINGS else "light"
     opening = stable_pick(HUMAN_DAILY_OPENINGS[key], bot.user_name(update), main["key"], orientation, today).format(name=bot.user_name(update))
     closing = stable_pick(HUMAN_DAILY_CLOSINGS[key], bot.user_name(update), main["key"], orientation, "closing", today)
-    text = f"{opening}\n\n{day_text}\n\n{closing}"
+    try:
+        from lunar_calendar import moon_phase_today
+        moon = moon_phase_today()
+        moon_line = f"\n\n{moon['emoji']} {moon['phase_name']} — {moon['description']}"
+    except Exception:
+        moon_line = ""
+    text = f"{opening}\n\n{day_text}\n\n{closing}{moon_line}"
     await bot.send_private_or_group(update, context, text, image_path=image_path)
 
 

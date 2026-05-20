@@ -152,7 +152,8 @@ def _winning_palette(light_score: int, dark_score: int, premium_score: int) -> s
 
 
 def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questions: int) -> Dict[str, Any]:
-    if answer not in VALID_PALETTES:
+    # Onboarding only assigns light/dark; premium is via subscription only
+    if answer not in {"light", "dark"}:
         raise DatabaseError("Invalid onboarding answer")
 
     try:
