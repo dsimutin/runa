@@ -304,7 +304,6 @@ def format_one_rune_answer(
         f"❓ <b>{name}, ответ Да / Нет</b>\n\n"
         f"<b>Вопрос:</b> <i>{question}</i>\n\n"
         f"<b>Карта:</b> {rune['name']}\n"
-        f"<b>Сфера:</b> {text_data['sphere_label']}\n"
         f"<b>Ответ:</b> {text_data['answer_label']}\n\n"
         f"{text_data['short_desc']}\n\n"
         f"{text_data['answer']}"
