@@ -1,8 +1,11 @@
-"""Compatibility shim: Render dashboard startCommand still points here.
+"""Render entry point for the data-only rune bot.
 
-Delegates to product_runtime_final, which is the real entry point.
+The service must use bot.py directly so rune readings come only from the
+uploaded data files through rune_text_repository.py.
 """
 
-import runpy
+from bot import main
 
-runpy.run_module("product_runtime_final", run_name="__main__")
+
+if __name__ == "__main__":
+    main()
