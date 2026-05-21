@@ -66,6 +66,8 @@ def is_operator_chat(update: Update) -> bool:
 def is_authorized_operator(update: Update) -> bool:
     user = update.effective_user
     chat = update.effective_chat
+    if user and user.id in bot.ADMIN_IDS:
+        return True
     if chat and chat.id in bot.ADMIN_IDS:
         return True
     return bool(user and user.username and user.username.lower() in ALLOWED_OPERATOR_USERNAMES)
@@ -719,26 +721,43 @@ async def admin_activate_callback(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     if not query or not update.effective_user:
         return
+
+    # Validate access before any async work
     if not is_authorized_operator(update):
         await query.answer("Нет доступа.", show_alert=True)
         return
+
+    # Parse target user_id from callback data "admin:activate:<user_id>"
     try:
         target_id = int(query.data.split(":")[2])
     except (IndexError, ValueError):
-        await query.answer("Ошибка: неверный user_id.", show_alert=True)
+        await query.answer("Ошибка: неверный user_id в кнопке.", show_alert=True)
         return
+
+    # Activate — answer immediately so Telegram doesn't show spinner
     try:
         activate_premium(bot.DB_PATH, target_id)
     except Exception:
         bot.logger.exception("Failed to activate premium via button for user_id=%s", target_id)
         await query.answer("Не удалось активировать. Проверь логи.", show_alert=True)
         return
-    original_text = (query.message.text or "") if query.message else ""
+
+    await query.answer("✅ Премиум активирован!")
+
+    # Remove the activation button so it can't be clicked twice
     try:
-        await query.edit_message_text(f"✅ Премиум активирован для user_id={target_id}.\n\n{original_text}")
+        await query.edit_message_reply_markup(reply_markup=None)
     except TelegramError:
         pass
-    await query.answer("Премиум активирован!")
+
+    # Mark the operator message as done
+    try:
+        original = (query.message.text or "").split("\n")[0] if query.message else ""
+        await query.edit_message_text(f"✅ Премиум активирован (user_id={target_id})\n\n{original}")
+    except TelegramError:
+        pass
+
+    # Notify the user
     try:
         from database import get_premium_status
         status = get_premium_status(bot.DB_PATH, target_id)
