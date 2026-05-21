@@ -1,4 +1,9 @@
-"""Telegram symptom-triage bot for @healthyz_bot."""
+"""Telegram symptom-triage bot for @healthyz_bot.
+
+Run modes:
+  - Polling (local dev): set no SYMPTOM_WEBHOOK_URL
+  - Webhook (Render):    set SYMPTOM_WEBHOOK_URL=https://your-app.onrender.com
+"""
 
 import json
 import logging
@@ -25,16 +30,17 @@ TOKEN = os.getenv("SYMPTOM_BOT_TOKEN", "8612652867:AAFaoodd22CDIxGidaHHLOH7sZbXf
 ADMIN_CHAT_ID = os.getenv("SYMPTOM_ADMIN_CHAT_ID", "")
 ADMIN_USERNAME = os.getenv("SYMPTOM_ADMIN_USERNAME", "@healthyz_admin")
 DB_PATH = os.getenv("SYMPTOM_DB_PATH", "symptom_bot.db")
-METHODICHKA_URL = os.getenv("METHODICHKA_URL", "")
 SPREADSHEET_ID = "1412ndzec1Yy8JNk-i056de5205FXWQCioHHt6Z0MLd8"
 GOOGLE_CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON", "")
+WEBHOOK_URL = os.getenv("SYMPTOM_WEBHOOK_URL", "")
+PORT = int(os.getenv("PORT", "10001"))
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ── Conversation states ─────────────────────────────────────────────────────
+# ── Conversation states ──────────────────────────────────────────────────────
 (
     GENDER,
     AGE,
@@ -42,13 +48,13 @@ logger = logging.getLogger(__name__)
     MAIN_COMPLAINTS,
     DETAIL_BLOCK,
     SAFETY_CHECK,
+    BOOKING_SERVICE,
     BOOKING_NAME,
     BOOKING_CONTACT,
-    BOOKING_SERVICE,
     BOOKING_REQUEST,
 ) = range(10)
 
-# ── Analysis data ───────────────────────────────────────────────────────────
+# ── Analysis data ────────────────────────────────────────────────────────────
 BASE_ANALYSES = [
     "Общий анализ крови с лейкоцитарной формулой",
     "Ферритин",
@@ -59,21 +65,20 @@ BASE_ANALYSES = [
 ]
 
 BLOCK_ANALYSES: Dict[str, List[str]] = {
-    "gi":           ["С-реактивный белок", "АЛТ, АСТ", "ГГТ", "Копрограмма"],
-    "gi_hpylori":   ["АЛТ, АСТ", "ГГТ", "H. pylori", "Копрограмма"],
-    "glucose":      ["Гликированный гемоглобин HbA1c", "Липидограмма", "АЛТ, АСТ", "Общий анализ мочи"],
-    "skin_hair":    ["Витамин B12", "Общий белок", "Цинк", "АЛТ, АСТ"],
-    "skin_androgens": ["Витамин B12", "Общий белок", "Цинк", "Тестостерон общий"],
+    "gi":              ["С-реактивный белок", "АЛТ, АСТ", "ГГТ", "Копрограмма"],
+    "gi_hpylori":      ["АЛТ, АСТ", "ГГТ", "H. pylori", "Копрограмма"],
+    "glucose":         ["Гликированный гемоглобин HbA1c", "Липидограмма", "АЛТ, АСТ", "Общий анализ мочи"],
+    "skin_hair":       ["Витамин B12", "Общий белок", "Цинк", "АЛТ, АСТ"],
+    "skin_androgens":  ["Витамин B12", "Общий белок", "Цинк", "Тестостерон общий"],
     "female_hormones": ["Пролактин", "ЛГ", "ФСГ", "Эстрадиол"],
-    "androgens":    ["Пролактин", "Тестостерон общий", "ГСПГ", "ДГЭА-С"],
-    "stress":       ["Витамин B12", "Магний", "Гликированный гемоглобин HbA1c", "АЛТ, АСТ"],
-    "immunity":     ["С-реактивный белок", "Витамин B12", "Общий белок", "Цинк"],
-    "supplements":  ["АЛТ, АСТ", "ГГТ", "Креатинин", "Витамин B12"],
-    "energy":       ["Витамин B12", "АЛТ, АСТ", "Креатинин", "Общий белок"],
-    "sleep":        ["Витамин B12", "Магний", "Гликированный гемоглобин HbA1c", "АЛТ, АСТ"],
+    "androgens":       ["Пролактин", "Тестостерон общий", "ГСПГ", "ДГЭА-С"],
+    "stress":          ["Витамин B12", "Магний", "Гликированный гемоглобин HbA1c", "АЛТ, АСТ"],
+    "immunity":        ["С-реактивный белок", "Витамин B12", "Общий белок", "Цинк"],
+    "supplements":     ["АЛТ, АСТ", "ГГТ", "Креатинин", "Витамин B12"],
+    "energy":          ["Витамин B12", "АЛТ, АСТ", "Креатинин", "Общий белок"],
+    "sleep":           ["Витамин B12", "Магний", "Гликированный гемоглобин HbA1c", "АЛТ, АСТ"],
 }
 
-# Priority order for picking additional analyses
 PRIORITY_ORDER = [
     "gi", "gi_hpylori",
     "glucose",
@@ -116,48 +121,53 @@ def init_db() -> None:
 
 
 def upsert_user(user_id: int, data: Dict[str, Any]) -> None:
-    fields = {k: v for k, v in data.items()
-              if k in {
-                  "username", "tg_name", "gender", "age_group", "red_flags",
-                  "main_complaints", "detail_symptoms", "medications_status",
-                  "tags", "final_analysis_list", "opened_methodichka",
-                  "opened_booking", "selected_service", "user_name",
-                  "contact", "user_request",
-              }}
+    allowed = {
+        "username", "tg_name", "gender", "age_group", "red_flags",
+        "main_complaints", "detail_symptoms", "medications_status",
+        "tags", "final_analysis_list", "opened_methodichka",
+        "opened_booking", "selected_service", "user_name",
+        "contact", "user_request",
+    }
+    fields = {k: v for k, v in data.items() if k in allowed}
     fields["updated_at"] = datetime.utcnow().isoformat()
-    with sqlite3.connect(DB_PATH) as conn:
-        existing = conn.execute(
-            "SELECT user_id FROM symptom_users WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        if existing:
-            sets = ", ".join(f"{k} = ?" for k in fields)
-            conn.execute(
-                f"UPDATE symptom_users SET {sets} WHERE user_id = ?",
-                list(fields.values()) + [user_id],
-            )
-        else:
-            fields["user_id"] = user_id
-            fields["created_at"] = fields["updated_at"]
-            cols = ", ".join(fields.keys())
-            placeholders = ", ".join("?" for _ in fields)
-            conn.execute(
-                f"INSERT INTO symptom_users ({cols}) VALUES ({placeholders})",
-                list(fields.values()),
-            )
-
-
-def get_user_row(user_id: int) -> Optional[Dict[str, Any]]:
-    with sqlite3.connect(DB_PATH) as conn:
-        row = conn.execute(
-            "SELECT * FROM symptom_users WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        if not row:
-            return None
-        cols = [d[0] for d in conn.execute("SELECT * FROM symptom_users LIMIT 0").description]
-        return dict(zip(cols, row))
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            existing = conn.execute(
+                "SELECT user_id FROM symptom_users WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            if existing:
+                sets = ", ".join(f"{k} = ?" for k in fields)
+                conn.execute(
+                    f"UPDATE symptom_users SET {sets} WHERE user_id = ?",
+                    list(fields.values()) + [user_id],
+                )
+            else:
+                fields["user_id"] = user_id
+                fields["created_at"] = fields["updated_at"]
+                cols = ", ".join(fields.keys())
+                placeholders = ", ".join("?" for _ in fields)
+                conn.execute(
+                    f"INSERT INTO symptom_users ({cols}) VALUES ({placeholders})",
+                    list(fields.values()),
+                )
+    except sqlite3.Error as exc:
+        logger.warning("DB error: %s", exc)
 
 
 # ── Google Sheets ────────────────────────────────────────────────────────────
+
+def _sheets_ensure_header(ws) -> None:
+    """Add header row if sheet is empty."""
+    try:
+        if not ws.get_all_values():
+            ws.append_row([
+                "user_id", "username", "tg_name", "user_name", "contact",
+                "selected_service", "user_request", "gender", "age_group",
+                "complaints", "analyses", "datetime",
+            ])
+    except Exception:
+        pass
+
 
 def append_to_sheets(row_data: List[str]) -> None:
     if not GOOGLE_CREDS_JSON:
@@ -172,6 +182,7 @@ def append_to_sheets(row_data: List[str]) -> None:
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(SPREADSHEET_ID)
         ws = sh.sheet1
+        _sheets_ensure_header(ws)
         ws.append_row(row_data, value_input_option="USER_ENTERED")
     except Exception as exc:
         logger.warning("Google Sheets error: %s", exc)
@@ -181,12 +192,10 @@ def append_to_sheets(row_data: List[str]) -> None:
 
 def _ms_keyboard(
     group: str,
-    options: List[tuple],  # (label, key)
+    options: List[tuple],
     selected: Set[str],
     done_label: str = "✅ Готово",
-    none_key: Optional[str] = None,
 ) -> InlineKeyboardMarkup:
-    """Build a multi-select inline keyboard."""
     rows = []
     for label, key in options:
         check = "✅ " if key in selected else ""
@@ -206,27 +215,22 @@ def _btn(text: str, cb: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text, callback_data=cb)
 
 
-def _kb(*rows) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[b] for b in rows])
+# ── Multi-select toggle ──────────────────────────────────────────────────────
 
-
-# ── Multi-select toggle handler ──────────────────────────────────────────────
-
-async def ms_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle toggle callbacks for multi-select keyboards. Does NOT advance state."""
+async def ms_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    _, group, key = query.data.split(":", 2)
+    parts = query.data.split(":", 2)
+    group, key = parts[1], parts[2]
 
     ud = context.user_data
     sels: Set[str] = set(ud.get(f"sel_{group}", []))
+    none_keys: List[str] = ud.get(f"none_keys_{group}", [])
 
-    # "none" keys are exclusive
-    none_keys = ud.get(f"none_keys_{group}", [])
     if key in none_keys:
         sels = {key}
-    elif key not in none_keys:
-        sels.discard(*none_keys) if none_keys else None
+    else:
+        # Deselect any exclusive "none" keys
         for nk in none_keys:
             sels.discard(nk)
         if key in sels:
@@ -235,26 +239,10 @@ async def ms_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             sels.add(key)
 
     ud[f"sel_{group}"] = list(sels)
-
-    # Rebuild keyboard
     options = ud.get(f"opts_{group}", [])
-    kb = _ms_keyboard(group, options, sels)
-    await query.edit_message_reply_markup(reply_markup=kb)
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _ud_list(ud: Dict, key: str) -> List[str]:
-    return ud.get(key) or []
-
-
-def _store_sel(ud: Dict, var: str, group: str) -> None:
-    ud[var] = ud.get(f"sel_{group}", [])
-
-
-def _has_sel(ud: Dict, group: str, *keys) -> bool:
-    sels = set(ud.get(f"sel_{group}", []))
-    return bool(sels & set(keys))
+    await query.edit_message_reply_markup(reply_markup=_ms_keyboard(group, options, sels))
+    # Return None to stay in current state
+    return None  # type: ignore[return-value]
 
 
 # ── Analysis engine ──────────────────────────────────────────────────────────
@@ -264,21 +252,13 @@ def build_analysis_list(ud: Dict[str, Any]) -> List[str]:
     result = list(BASE_ANALYSES)
     seen = set(result)
 
-    # Resolve which block key to use
-    def add_from(block: str) -> bool:
-        nonlocal result, seen
-        analyses = BLOCK_ANALYSES.get(block, [])
-        added = False
-        for a in analyses:
+    for block in PRIORITY_ORDER:
+        if block not in tags:
+            continue
+        for a in BLOCK_ANALYSES.get(block, []):
             if a not in seen and len(result) < 10:
                 result.append(a)
                 seen.add(a)
-                added = True
-        return added
-
-    for block in PRIORITY_ORDER:
-        if block in tags:
-            add_from(block)
         if len(result) >= 10:
             break
 
@@ -301,13 +281,10 @@ def determine_tags(ud: Dict[str, Any]) -> List[str]:
 
     if "weight" in complaints:
         tags.add("glucose")
-        weight = set(ud.get("weight_symptoms", []))
-        if "edema_morning" in weight or "edema_evening" in weight:
-            tags.add("glucose")  # includes urine analysis
 
     if "gi" in complaints:
         gi = set(ud.get("gi_symptoms", []))
-        if "heartburn" in gi or "belching" in gi or "heaviness" in gi:
+        if {"heartburn", "belching", "heaviness"} & gi:
             tags.add("gi_hpylori")
         else:
             tags.add("gi")
@@ -335,34 +312,39 @@ def determine_tags(ud: Dict[str, Any]) -> List[str]:
     if "supplements" in complaints:
         tags.add("supplements")
 
+    # When full androgens panel is needed, skip the skin-only androgens set
+    # (androgens panel already includes Тестостерон общий, which is the overlap)
+    if "androgens" in tags:
+        tags.discard("skin_androgens")
+
     return list(tags)
 
 
 def directions_text(ud: Dict[str, Any]) -> str:
     tags = set(ud.get("tags", []))
-    directions = []
+    parts = []
     if "energy" in tags or "sleep" in tags:
-        directions.append("энергия и восстановление")
+        parts.append("энергия и восстановление")
     if "gi" in tags or "gi_hpylori" in tags:
-        directions.append("пищеварение")
+        parts.append("пищеварение")
     if "glucose" in tags:
-        directions.append("углеводный обмен")
+        parts.append("углеводный обмен")
     if "skin_hair" in tags or "skin_androgens" in tags:
-        directions.append("кожа, волосы, ногти")
+        parts.append("кожа, волосы, ногти")
     if "androgens" in tags:
-        directions.append("андрогенный фон")
+        parts.append("андрогенный фон")
     if "female_hormones" in tags:
-        directions.append("женский гормональный фон")
+        parts.append("женский гормональный фон")
     if "stress" in tags:
-        directions.append("стресс и нервная система")
+        parts.append("стресс и нервная система")
     if "immunity" in tags:
-        directions.append("иммунитет")
+        parts.append("иммунитет")
     if "supplements" in tags:
-        directions.append("безопасность БАДов")
-    return ", ".join(directions) if directions else "общая оценка состояния"
+        parts.append("безопасность БАДов")
+    return ", ".join(parts) if parts else "общая оценка состояния"
 
 
-# ── Start ────────────────────────────────────────────────────────────────────
+# ── /start ───────────────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
@@ -372,7 +354,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     text = (
         "Здравствуйте!\n\n"
-        "Я помогу вам сориентироваться, какие анализы можно сдать для первичной оценки состояния организма.\n\n"
+        "Я помогу вам сориентироваться, какие анализы можно сдать для первичной "
+        "оценки состояния организма.\n\n"
         "Бот не ставит диагноз, не назначает лечение и не заменяет врача. "
         "Он помогает собрать жалобы и подготовиться к консультации нутрициолога или врача.\n\n"
         "Ответьте на несколько вопросов — в конце вы получите короткий список анализов."
@@ -396,19 +379,19 @@ async def begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return GENDER
 
 
+# ── Gender → Age → Red flags ──────────────────────────────────────────────────
+
 async def gender_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    gender = query.data.split(":")[1]
-    context.user_data["gender"] = gender
-
+    context.user_data["gender"] = query.data.split(":")[1]
     kb = InlineKeyboardMarkup([
-        [_btn("до 18", "age:under_18")],
-        [_btn("18–25", "age:18_25")],
-        [_btn("26–35", "age:26_35")],
-        [_btn("36–45", "age:36_45")],
-        [_btn("46–55", "age:46_55")],
-        [_btn("56+", "age:56_plus")],
+        [_btn("до 18",  "age:under_18")],
+        [_btn("18–25",  "age:18_25")],
+        [_btn("26–35",  "age:26_35")],
+        [_btn("36–45",  "age:36_45")],
+        [_btn("46–55",  "age:46_55")],
+        [_btn("56+",    "age:56_plus")],
     ])
     await query.edit_message_text("Укажите ваш возраст:", reply_markup=kb)
     return AGE
@@ -440,9 +423,9 @@ async def age_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         ("Сильная необычная головная боль", "severe_headache"),
         ("Спутанность сознания", "confusion"),
         ("Высокая температура + сильная боль", "fever_pain"),
-        ("Резкая потеря веса без причины", "weight_loss"),
+        ("Резкая потеря веса без причины", "weight_loss_flag"),
         ("Беременность + боль/кровотечение", "pregnancy_bleeding"),
-        ("Мысли о самоповреждении", "self_harm"),
+        ("Мысли о самоповреждении", "self_harm_flag"),
         ("Ничего из перечисленного", "none"),
     ]
     context.user_data["opts_red_flags"] = options
@@ -468,19 +451,7 @@ async def red_flags_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     context.user_data["red_flags"] = list(selected)
 
-    # If anything selected except "none" → stop scenario
-    dangerous = selected - {"none"}
-    if dangerous:
-        await query.edit_message_text(
-            "По вашим ответам есть симптомы, которые требуют очной медицинской оценки.\n\n"
-            "В этой ситуации не стоит начинать с самостоятельной сдачи анализов или нутрициологического разбора. "
-            "Пожалуйста, обратитесь к врачу, в неотложную помощь или вызовите скорую, если состояние острое.\n\n"
-            "После исключения острых состояний можно вернуться к разбору питания, дефицитов и анализов.",
-            reply_markup=InlineKeyboardMarkup([
-                [_btn("Пройти заново", "restart")],
-                [_btn("Связаться с Мариной после врача", "contact_marina")],
-            ]),
-        )
+    if selected - {"none"}:
         upsert_user(update.effective_user.id, {
             "username": context.user_data.get("username"),
             "tg_name": context.user_data.get("tg_name"),
@@ -488,10 +459,23 @@ async def red_flags_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "age_group": context.user_data.get("age_group"),
             "red_flags": json.dumps(list(selected), ensure_ascii=False),
         })
+        await query.edit_message_text(
+            "По вашим ответам есть симптомы, которые требуют очной медицинской оценки.\n\n"
+            "В этой ситуации не стоит начинать с самостоятельной сдачи анализов или "
+            "нутрициологического разбора. Пожалуйста, обратитесь к врачу, в неотложную "
+            "помощь или вызовите скорую, если состояние острое.\n\n"
+            "После исключения острых состояний можно вернуться к разбору питания, дефицитов и анализов.",
+            reply_markup=InlineKeyboardMarkup([
+                [_btn("🔄 Пройти заново", "restart")],
+                [_btn("💬 Связаться с Мариной после врача", "contact_marina")],
+            ]),
+        )
         return ConversationHandler.END
 
     return await _show_main_complaints(query, context)
 
+
+# ── Main complaints ──────────────────────────────────────────────────────────
 
 async def _show_main_complaints(query, context: ContextTypes.DEFAULT_TYPE) -> int:
     gender = context.user_data.get("gender", "")
@@ -533,7 +517,6 @@ async def main_complaints_done(update: Update, context: ContextTypes.DEFAULT_TYP
 
     context.user_data["main_complaints"] = list(selected)
 
-    # Special cases
     if "has_analyses" in selected:
         await query.edit_message_text(
             "Хотите получить список для досдачи или записаться на разбор уже имеющихся анализов?",
@@ -545,31 +528,31 @@ async def main_complaints_done(update: Update, context: ContextTypes.DEFAULT_TYP
         return DETAIL_BLOCK
 
     if "checkup" in selected and len(selected) == 1:
-        # Skip detail screens, go straight to result
         context.user_data["tags"] = []
         context.user_data["pending_blocks"] = []
         return await _show_result(query, context)
 
-    # Build queue of detail blocks to ask
-    block_order = ["fatigue", "sleep", "weight", "gi", "skin", "female_cycle", "stress", "immunity", "supplements"]
+    block_order = ["fatigue", "sleep", "weight", "gi", "skin",
+                   "female_cycle", "stress", "immunity", "supplements"]
     pending = [b for b in block_order if b in selected]
 
     if len(pending) > 4:
         pending = pending[:4]
+        context.user_data["pending_blocks"] = pending
         await query.edit_message_text(
-            "Вы выбрали несколько направлений. Чтобы не делать опрос слишком длинным, уточним только основные симптомы.",
+            "Вы выбрали несколько направлений. Чтобы не делать опрос слишком длинным, "
+            "уточним только основные симптомы.",
             reply_markup=InlineKeyboardMarkup([[_btn("Продолжить", "detail_continue")]]),
         )
-        context.user_data["pending_blocks"] = pending
         return DETAIL_BLOCK
 
     context.user_data["pending_blocks"] = pending
     return await _next_detail_block(query, context)
 
 
-# ── Detail blocks ────────────────────────────────────────────────────────────
+# ── Detail block configs ─────────────────────────────────────────────────────
 
-DETAIL_CONFIGS = {
+DETAIL_CONFIGS: Dict[str, Any] = {
     "fatigue": {
         "text": "Что именно вы ощущаете?\n\nМожно выбрать несколько вариантов.",
         "var": "fatigue_symptoms",
@@ -632,7 +615,7 @@ DETAIL_CONFIGS = {
             ("Урчание", "gurgling"),
             ("Слизь в стуле", "mucus_stool"),
         ],
-        "safety_check": True,
+        "safety_check": "gi",
     },
     "skin": {
         "text": "Что именно беспокоит?\n\nМожно выбрать несколько вариантов.",
@@ -670,6 +653,7 @@ DETAIL_CONFIGS = {
             ("Ночная потливость", "night_sweats_cycle"),
             ("Планирование беременности", "pregnancy_planning"),
         ],
+        "cycle_question": True,
     },
     "stress": {
         "text": "Что именно вы замечаете?\n\nМожно выбрать несколько вариантов.",
@@ -686,7 +670,7 @@ DETAIL_CONFIGS = {
             ("Тяга к сладкому на фоне стресса", "stress_craving"),
             ("Нет сил после работы/общения", "exhaustion"),
         ],
-        "safety_check": True,
+        "safety_check": "stress",
     },
     "immunity": {
         "text": "Что именно вас беспокоит?\n\nМожно выбрать несколько вариантов.",
@@ -701,7 +685,7 @@ DETAIL_CONFIGS = {
             ("Температура держится без причины", "unexplained_fever"),
             ("Слабость после болезни", "post_illness_weakness"),
         ],
-        "warning_keys": ["lymph_nodes", "unexplained_fever"],
+        "warning_keys": {"lymph_nodes", "unexplained_fever"},
     },
     "supplements": {
         "text": "Что ближе к вашей ситуации?\n\nМожно выбрать несколько вариантов.",
@@ -722,7 +706,7 @@ DETAIL_CONFIGS = {
 
 
 async def _next_detail_block(query, context: ContextTypes.DEFAULT_TYPE) -> int:
-    pending = context.user_data.get("pending_blocks", [])
+    pending: List[str] = context.user_data.get("pending_blocks", [])
     if not pending:
         context.user_data["tags"] = determine_tags(context.user_data)
         return await _show_result(query, context)
@@ -730,16 +714,13 @@ async def _next_detail_block(query, context: ContextTypes.DEFAULT_TYPE) -> int:
     block = pending[0]
     context.user_data["current_block"] = block
     cfg = DETAIL_CONFIGS[block]
-
-    options = cfg["options"]
-    var = cfg["var"]
     group = f"detail_{block}"
 
-    context.user_data[f"opts_{group}"] = options
+    context.user_data[f"opts_{group}"] = cfg["options"]
     context.user_data[f"none_keys_{group}"] = []
     context.user_data[f"sel_{group}"] = []
 
-    kb = _ms_keyboard(group, options, set())
+    kb = _ms_keyboard(group, cfg["options"], set())
     await query.edit_message_text(cfg["text"], reply_markup=kb)
     return DETAIL_BLOCK
 
@@ -747,29 +728,31 @@ async def _next_detail_block(query, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def detail_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    _, raw_group = query.data.split(":", 1)
 
-    block = raw_group.replace("detail_", "")
+    # Extract block name from "ms_done:detail_<block>"
+    raw_group = query.data.split(":", 1)[1]          # "detail_fatigue"
+    block = raw_group[len("detail_"):]                # "fatigue"
     cfg = DETAIL_CONFIGS.get(block, {})
-    var = cfg.get("var", f"{block}_symptoms")
     group = f"detail_{block}"
 
     selected = set(context.user_data.get(f"sel_{group}", []))
-    context.user_data[var] = list(selected)
+    context.user_data[cfg.get("var", f"{block}_symptoms")] = list(selected)
 
-    # Immunity warning
-    warning_keys = set(cfg.get("warning_keys", []))
+    # ── Immunity warning (pop block FIRST, then show warning) ────────────────
+    warning_keys: Set[str] = cfg.get("warning_keys", set())
     if warning_keys & selected:
+        # FIX: pop the block before showing warning so detail_continue skips it
+        context.user_data["pending_blocks"] = context.user_data.get("pending_blocks", [])[1:]
+        context.user_data["immunity_doctor_note"] = True
         await query.edit_message_text(
             "Эти симптомы лучше обсудить с врачом очно. "
             "Бот может дать только общий список для подготовки, но не заменяет медицинскую оценку.",
             reply_markup=InlineKeyboardMarkup([[_btn("Продолжить", "detail_continue")]]),
         )
-        context.user_data["immunity_doctor_note"] = True
         return DETAIL_BLOCK
 
-    # GI safety check
-    if cfg.get("safety_check") and block == "gi":
+    # ── GI safety check ───────────────────────────────────────────────────────
+    if cfg.get("safety_check") == "gi":
         await query.edit_message_text(
             "Есть ли у вас сейчас кровь в стуле, чёрный стул, рвота кровью, "
             "резкая сильная боль в животе или необъяснимая потеря веса?",
@@ -777,29 +760,16 @@ async def detail_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         )
         return SAFETY_CHECK
 
-    # Stress safety check
-    if cfg.get("safety_check") and block == "stress":
+    # ── Stress safety check ───────────────────────────────────────────────────
+    if cfg.get("safety_check") == "stress":
         await query.edit_message_text(
             "Есть ли у вас мысли о самоповреждении?",
             reply_markup=_yn_keyboard("stress_safety:yes", "stress_safety:no"),
         )
         return SAFETY_CHECK
 
-    # Medications question for supplements block
-    if cfg.get("medications_question"):
-        await query.edit_message_text(
-            "Принимаете ли вы сейчас лекарства?",
-            reply_markup=InlineKeyboardMarkup([
-                [_btn("Да", "meds:yes")],
-                [_btn("Нет", "meds:no")],
-                [_btn("Иногда", "meds:sometimes")],
-                [_btn("Не хочу отвечать", "meds:skip")],
-            ]),
-        )
-        return DETAIL_BLOCK
-
-    # Female cycle: cycle status question
-    if block == "female_cycle":
+    # ── Female cycle — ask cycle status ───────────────────────────────────────
+    if cfg.get("cycle_question"):
         await query.edit_message_text(
             "Цикл регулярный?",
             reply_markup=InlineKeyboardMarkup([
@@ -812,12 +782,25 @@ async def detail_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         )
         return DETAIL_BLOCK
 
-    # Pop block and continue
-    context.user_data["pending_blocks"] = context.user_data["pending_blocks"][1:]
+    # ── Supplements — ask medications ─────────────────────────────────────────
+    if cfg.get("medications_question"):
+        await query.edit_message_text(
+            "Принимаете ли вы сейчас лекарства?",
+            reply_markup=InlineKeyboardMarkup([
+                [_btn("Да",             "meds:yes")],
+                [_btn("Нет",           "meds:no")],
+                [_btn("Иногда",        "meds:sometimes")],
+                [_btn("Не хочу отвечать", "meds:skip")],
+            ]),
+        )
+        return DETAIL_BLOCK
+
+    # ── No special follow-up: pop and continue ────────────────────────────────
+    context.user_data["pending_blocks"] = context.user_data.get("pending_blocks", [])[1:]
     return await _next_detail_block(query, context)
 
 
-# ── Safety check handlers ────────────────────────────────────────────────────
+# ── Safety check ─────────────────────────────────────────────────────────────
 
 async def safety_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -830,40 +813,37 @@ async def safety_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 "По вашим ответам есть симптомы, которые требуют очной медицинской оценки. "
                 "Пожалуйста, обратитесь к врачу.",
                 reply_markup=InlineKeyboardMarkup([
-                    [_btn("Пройти заново", "restart")],
-                    [_btn("Связаться с Мариной после врача", "contact_marina")],
+                    [_btn("🔄 Пройти заново", "restart")],
+                    [_btn("💬 Связаться с Мариной после врача", "contact_marina")],
                 ]),
             )
             return ConversationHandler.END
-        # No → pop block and continue
-        context.user_data["pending_blocks"] = context.user_data["pending_blocks"][1:]
+        context.user_data["pending_blocks"] = context.user_data.get("pending_blocks", [])[1:]
         return await _next_detail_block(query, context)
 
     if action == "stress_safety":
         if answer == "yes":
             await query.edit_message_text(
                 "В такой ситуации важно не оставаться одному/одной. "
-                "Обратитесь за срочной помощью к врачу, в кризисную службу или к близкому человеку рядом. "
-                "Бот не подходит для таких состояний.",
-                reply_markup=InlineKeyboardMarkup([[_btn("Пройти заново", "restart")]]),
+                "Обратитесь за срочной помощью к врачу, в кризисную службу "
+                "или к близкому человеку рядом. Бот не подходит для таких состояний.",
+                reply_markup=InlineKeyboardMarkup([[_btn("🔄 Пройти заново", "restart")]]),
             )
             return ConversationHandler.END
-        context.user_data["pending_blocks"] = context.user_data["pending_blocks"][1:]
+        context.user_data["pending_blocks"] = context.user_data.get("pending_blocks", [])[1:]
         return await _next_detail_block(query, context)
 
     return SAFETY_CHECK
 
 
-# ── Detail sub-state callbacks ────────────────────────────────────────────────
+# ── Detail sub-callbacks (non-toggle) ────────────────────────────────────────
 
 async def detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle non-toggle callbacks within the DETAIL_BLOCK state."""
     query = update.callback_query
     await query.answer()
     data = query.data
 
     if data == "detail_continue":
-        # After warning or "too many blocks" message
         pending = context.user_data.get("pending_blocks", [])
         if pending:
             return await _next_detail_block(query, context)
@@ -871,29 +851,28 @@ async def detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return await _show_result(query, context)
 
     if data.startswith("has_analyses:"):
-        action = data.split(":")[1]
-        if action == "booking":
-            return await _start_booking(query, context, preselected="")
-        # list → continue as checkup
+        if data.endswith(":booking"):
+            return await _show_booking_menu(query, context)
+        # :list → base analyses only
         context.user_data["tags"] = []
         context.user_data["pending_blocks"] = []
         return await _show_result(query, context)
 
     if data.startswith("meds:"):
-        val_map = {"yes": "yes", "no": "no", "sometimes": "sometimes", "skip": "skip"}
-        context.user_data["medications_status"] = val_map.get(data.split(":")[1], "skip")
-        if data.split(":")[1] in ("yes", "sometimes"):
+        status = data.split(":")[1]
+        context.user_data["medications_status"] = status
+        if status in ("yes", "sometimes"):
             await query.edit_message_text(
                 "Совместимость БАДов с лекарствами нужно проверять отдельно. "
                 "Не отменяйте и не меняйте лекарства самостоятельно.",
-                reply_markup=InlineKeyboardMarkup([[_btn("Продолжить", "meds_continue")]])
+                reply_markup=InlineKeyboardMarkup([[_btn("Продолжить", "meds_continue")]]),
             )
             return DETAIL_BLOCK
-        context.user_data["pending_blocks"] = context.user_data["pending_blocks"][1:]
+        context.user_data["pending_blocks"] = context.user_data.get("pending_blocks", [])[1:]
         return await _next_detail_block(query, context)
 
     if data == "meds_continue":
-        context.user_data["pending_blocks"] = context.user_data["pending_blocks"][1:]
+        context.user_data["pending_blocks"] = context.user_data.get("pending_blocks", [])[1:]
         return await _next_detail_block(query, context)
 
     if data.startswith("cycle:"):
@@ -901,16 +880,16 @@ async def detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data["cycle_status"] = status
         if status == "pregnancy":
             await query.edit_message_text(
-                "В период беременности и грудного вскармливания анализы, питание и добавки лучше согласовывать с врачом. "
-                "Бот может дать только общую ориентировочную информацию.",
-                reply_markup=InlineKeyboardMarkup([[_btn("Продолжить", "cycle_continue")]])
+                "В период беременности и грудного вскармливания анализы, питание и добавки "
+                "лучше согласовывать с врачом. Бот может дать только общую ориентировочную информацию.",
+                reply_markup=InlineKeyboardMarkup([[_btn("Продолжить", "cycle_continue")]]),
             )
             return DETAIL_BLOCK
-        context.user_data["pending_blocks"] = context.user_data["pending_blocks"][1:]
+        context.user_data["pending_blocks"] = context.user_data.get("pending_blocks", [])[1:]
         return await _next_detail_block(query, context)
 
     if data == "cycle_continue":
-        context.user_data["pending_blocks"] = context.user_data["pending_blocks"][1:]
+        context.user_data["pending_blocks"] = context.user_data.get("pending_blocks", [])[1:]
         return await _next_detail_block(query, context)
 
     return DETAIL_BLOCK
@@ -925,6 +904,9 @@ async def _show_result(query, context: ContextTypes.DEFAULT_TYPE) -> int:
     final_list = build_analysis_list(context.user_data)
     context.user_data["final_analysis_list"] = final_list
 
+    main_complaints = context.user_data.get("main_complaints", [])
+    relevant = [c for c in main_complaints if c not in ("checkup", "has_analyses")]
+
     age_note = ""
     if context.user_data.get("age_group") == "under_18":
         age_note = "\n\n⚠️ Так как возраст до 18 лет, итоговый список лучше согласовать с врачом."
@@ -934,8 +916,6 @@ async def _show_result(query, context: ContextTypes.DEFAULT_TYPE) -> int:
         immunity_note = "\n\n⚠️ По ряду симптомов иммунитета рекомендована очная консультация врача."
 
     many_note = ""
-    main_complaints = context.user_data.get("main_complaints", [])
-    relevant = [c for c in main_complaints if c not in ("checkup", "has_analyses")]
     if len(relevant) >= 3:
         many_note = (
             "\n\nВы отметили несколько групп симптомов. Чтобы не сдавать лишнее, "
@@ -953,20 +933,19 @@ async def _show_result(query, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"<b>Ваш список анализов:</b>\n{numbered}\n\n"
         "После получения результатов вы сможете сравнить показатели с методичкой "
         "или обратиться за персональным разбором.\n\n"
-        "Анализы важно смотреть вместе с симптомами, питанием, сном, стрессом, циклом, лекарствами и добавками."
-        f"{age_note}{immunity_note}\n\n"
-        "<i>Важно: список анализов носит информационный характер и не является диагнозом или назначением лечения. "
-        "Интерпретировать показатели лучше вместе с жалобами, питанием, образом жизни, лекарствами и добавками.</i>"
+        "Анализы важно смотреть вместе с симптомами, питанием, сном, стрессом, "
+        f"циклом, лекарствами и добавками.{age_note}{immunity_note}\n\n"
+        "<i>Важно: список анализов носит информационный характер и не является "
+        "диагнозом или назначением лечения.</i>"
     )
 
     kb = InlineKeyboardMarkup([
-        [_btn("📖 Открыть методичку", "methodichka")],
+        [_btn("📖 Открыть методичку",    "methodichka")],
         [_btn("📋 Записаться на разбор", "booking")],
-        [_btn("🔄 Пройти заново", "restart")],
+        [_btn("🔄 Пройти заново",        "restart")],
     ])
     await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
 
-    # Save to DB
     upsert_user(query.from_user.id, {
         "username": context.user_data.get("username"),
         "tg_name": context.user_data.get("tg_name"),
@@ -988,131 +967,75 @@ async def _show_result(query, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
-# ── Post-result callbacks (outside conversation) ─────────────────────────────
+# ── Booking ───────────────────────────────────────────────────────────────────
 
-async def methodichka_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    upsert_user(query.from_user.id, {"opened_methodichka": 1})
+BOOKING_TEXT = (
+    "Анализы сами по себе не дают готового плана. "
+    "Важно смотреть их вместе с симптомами, питанием, сном, стрессом, "
+    "циклом, лекарствами и добавками.\n\n"
+    "Если хотите получить персональный разбор, выберите формат:"
+)
 
-    text = (
-        "В методичке вы сможете посмотреть, что означает каждый показатель "
-        "и на что обратить внимание при подготовке к разбору.\n\n"
-        "<b>Важно:</b> методичка не заменяет консультацию врача или нутрициолога. "
-        "Не начинайте приём добавок только по одному показателю без учёта симптомов, "
-        "питания, лекарств и противопоказаний.\n\n"
-        "Если показатель выходит за пределы лабораторных референсов или есть симптомы, "
-        "обсудите результат со специалистом.\n\n"
-    )
+BOOKING_KB = InlineKeyboardMarkup([
+    [_btn("⚡ Экспресс-навигация — 3 500 ₽",              "service:express")],
+    [_btn("📊 Полный разбор «Анализы + питание» — 7 500 ₽", "service:full")],
+    [_btn("🔄 Ведение 1 месяц «Перезапуск» — 19 000 ₽",    "service:monthly")],
+    [_btn("💬 Задать вопрос Марине",                         "service:question")],
+])
 
-    methodichka = """<b>Краткая методичка по анализам:</b>
+SERVICE_DESC = {
+    "service:express": (
+        "<b>Экспресс-навигация — 3 500 ₽</b>\n\n"
+        "Подходит, если вы не понимаете, с чего начать.\n\n"
+        "Входит:\n— анкета\n— консультация 60 минут\n— базовые рекомендации\n"
+        "— список анализов\n— короткое резюме."
+    ),
+    "service:full": (
+        "<b>Полный разбор «Анализы + питание» — 7 500 ₽</b>\n\n"
+        "Подходит, если есть жалобы, анализы или желание получить понятный план.\n\n"
+        "Входит:\n— подробная анкета\n— разбор питания\n— интерпретация анализов\n"
+        "— рекомендации по питанию\n— базовые рекомендации по добавкам\n"
+        "— письменный план на 4–6 недель\n— 5 дней поддержки после консультации."
+    ),
+    "service:monthly": (
+        "<b>Ведение 1 месяц «Перезапуск» — 19 000 ₽</b>\n\n"
+        "Подходит, если нужна не только консультация, но и поддержка при внедрении рекомендаций.\n\n"
+        "Входит:\n— стартовая консультация\n— разбор анализов\n— план питания\n"
+        "— нутрицевтический протокол\n— еженедельная корректировка\n"
+        "— чат-поддержка\n— финальная мини-встреча."
+    ),
+    "service:question": "Отлично! Напишите ваш вопрос Марине.",
+}
 
-<b>ОАК с лейкоцитарной формулой</b> — общее состояние крови, признаки воспаления, анемии.
-<b>Ферритин</b> — запасы железа в организме; низкий может сопровождаться усталостью и выпадением волос.
-<b>Витамин D 25(OH)</b> — уровень витамина D; влияет на иммунитет, кости, настроение.
-<b>Глюкоза натощак</b> — оценка углеводного обмена.
-<b>Инсулин натощак</b> — чувствительность к инсулину, ранние признаки нарушений обмена.
-<b>ТТГ</b> — работа щитовидной железы; влияет на вес, энергию, настроение.
-<b>Витамин B12</b> — нервная система, энергия, кроветворение.
-<b>Гликированный гемоглобин HbA1c</b> — средний уровень глюкозы за 2–3 месяца.
-<b>АЛТ, АСТ</b> — состояние печени и мышц.
-<b>ГГТ</b> — желчевыводящие пути, печень.
-<b>Креатинин</b> — работа почек.
-<b>Общий белок</b> — достаточность белка в питании.
-<b>Цинк</b> — иммунитет, кожа, волосы, ногти.
-<b>Магний</b> — нервная система, сон, мышцы.
-<b>Липидограмма</b> — холестерин, триглицериды, сердечно-сосудистый риск.
-<b>Общий анализ мочи</b> — работа почек, воспалительные маркеры.
-<b>Копрограмма</b> — состояние пищеварения, ферментативная активность.
-<b>С-реактивный белок</b> — маркер системного воспаления.
-<b>Пролактин</b> — гормон гипофиза; влияет на цикл, либидо.
-<b>ЛГ / ФСГ</b> — регуляция менструального цикла.
-<b>Эстрадиол</b> — основной женский половой гормон.
-<b>Тестостерон общий</b> — андрогенный фон, акне, либидо.
-<b>ГСПГ</b> — транспортный белок для половых гормонов.
-<b>ДГЭА-С</b> — надпочечниковый андроген.
-<b>H. pylori</b> — бактерия, связанная с гастритом и язвой желудка."""
-
-    await query.message.reply_text(text + methodichka, parse_mode="HTML")
+SERVICE_NAMES = {
+    "service:express":  "Экспресс-навигация (3 500 ₽)",
+    "service:full":     "Полный разбор «Анализы + питание» (7 500 ₽)",
+    "service:monthly":  "Ведение 1 месяц «Перезапуск» (19 000 ₽)",
+    "service:question": "Вопрос Марине",
+}
 
 
-async def booking_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
+async def _show_booking_menu(query, context: ContextTypes.DEFAULT_TYPE) -> int:
     upsert_user(query.from_user.id, {"opened_booking": 1})
-
-    text = (
-        "Анализы сами по себе не дают готового плана. "
-        "Важно смотреть их вместе с симптомами, питанием, сном, стрессом, циклом, лекарствами и добавками.\n\n"
-        "Если хотите получить персональный разбор, выберите формат:"
-    )
-    kb = InlineKeyboardMarkup([
-        [_btn("⚡ Экспресс-навигация — 3 500 ₽", "service:express")],
-        [_btn("📊 Полный разбор «Анализы + питание» — 7 500 ₽", "service:full")],
-        [_btn("🔄 Ведение 1 месяц «Перезапуск» — 19 000 ₽", "service:monthly")],
-        [_btn("💬 Задать вопрос Марине", "service:question")],
-    ])
-    await query.message.reply_text(text, reply_markup=kb)
+    await query.edit_message_text(BOOKING_TEXT, reply_markup=BOOKING_KB)
     return BOOKING_SERVICE
 
 
-async def _start_booking(query, context: ContextTypes.DEFAULT_TYPE, preselected: str) -> int:
+async def booking_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Entry point for booking_conv (called after conversation ends)."""
+    query = update.callback_query
+    await query.answer()
     upsert_user(query.from_user.id, {"opened_booking": 1})
-    text = (
-        "Анализы сами по себе не дают готового плана. "
-        "Важно смотреть их вместе с симптомами, питанием, сном, стрессом, циклом, лекарствами и добавками.\n\n"
-        "Если хотите получить персональный разбор, выберите формат:"
-    )
-    kb = InlineKeyboardMarkup([
-        [_btn("⚡ Экспресс-навигация — 3 500 ₽", "service:express")],
-        [_btn("📊 Полный разбор «Анализы + питание» — 7 500 ₽", "service:full")],
-        [_btn("🔄 Ведение 1 месяц «Перезапуск» — 19 000 ₽", "service:monthly")],
-        [_btn("💬 Задать вопрос Марине", "service:question")],
-    ])
-    await query.edit_message_text(text, reply_markup=kb)
+    await query.message.reply_text(BOOKING_TEXT, reply_markup=BOOKING_KB)
     return BOOKING_SERVICE
 
 
 async def service_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    service_map = {
-        "service:express":   "Экспресс-навигация (3 500 ₽)",
-        "service:full":      "Полный разбор «Анализы + питание» (7 500 ₽)",
-        "service:monthly":   "Ведение 1 месяц «Перезапуск» (19 000 ₽)",
-        "service:question":  "Вопрос Марине",
-    }
-    context.user_data["selected_service"] = service_map.get(query.data, query.data)
-
-    # Show service description
-    desc_map = {
-        "service:express": (
-            "<b>Экспресс-навигация — 3 500 ₽</b>\n\n"
-            "Подходит, если вы не понимаете, с чего начать.\n\n"
-            "Входит:\n— анкета\n— консультация 60 минут\n— базовые рекомендации\n"
-            "— список анализов\n— короткое резюме."
-        ),
-        "service:full": (
-            "<b>Полный разбор «Анализы + питание» — 7 500 ₽</b>\n\n"
-            "Подходит, если есть жалобы, анализы или желание получить понятный план.\n\n"
-            "Входит:\n— подробная анкета\n— разбор питания\n— интерпретация анализов\n"
-            "— рекомендации по питанию\n— базовые рекомендации по добавкам\n"
-            "— письменный план на 4–6 недель\n— 5 дней поддержки после консультации."
-        ),
-        "service:monthly": (
-            "<b>Ведение 1 месяц «Перезапуск» — 19 000 ₽</b>\n\n"
-            "Подходит, если нужна не только консультация, но и поддержка при внедрении рекомендаций.\n\n"
-            "Входит:\n— стартовая консультация\n— разбор анализов\n— план питания\n"
-            "— нутрицевтический протокол\n— еженедельная корректировка\n"
-            "— чат-поддержка\n— финальная мини-встреча."
-        ),
-        "service:question": "Отлично! Вы можете задать вопрос Марине напрямую.",
-    }
-
-    await query.edit_message_text(
-        desc_map.get(query.data, "") + "\n\nКак вас зовут?",
-        parse_mode="HTML",
-    )
+    context.user_data["selected_service"] = SERVICE_NAMES.get(query.data, query.data)
+    desc = SERVICE_DESC.get(query.data, "")
+    await query.edit_message_text(desc + "\n\nКак вас зовут?", parse_mode="HTML")
     return BOOKING_NAME
 
 
@@ -1146,10 +1069,9 @@ async def booking_request(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "opened_booking": 1,
     })
 
-    # Notify admin
-    analyses = ud.get("final_analysis_list", [])
+    analyses: List[str] = ud.get("final_analysis_list") or []
     analyses_str = "\n".join(f"• {a}" for a in analyses) if analyses else "—"
-    complaints_str = ", ".join(ud.get("main_complaints", [])) or "—"
+    complaints_str = ", ".join(ud.get("main_complaints") or []) or "—"
 
     admin_text = (
         "🔔 <b>Новая заявка из бота</b>\n\n"
@@ -1164,13 +1086,12 @@ async def booking_request(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if ADMIN_CHAT_ID:
         try:
             await update.get_bot().send_message(
-                chat_id=ADMIN_CHAT_ID, text=admin_text, parse_mode="HTML"
+                chat_id=int(ADMIN_CHAT_ID), text=admin_text, parse_mode="HTML"
             )
         except Exception as exc:
-            logger.warning("Failed to notify admin: %s", exc)
+            logger.warning("Admin notify failed: %s", exc)
 
-    # Google Sheets
-    row = [
+    append_to_sheets([
         str(user_id),
         ud.get("username", ""),
         ud.get("tg_name", ""),
@@ -1183,53 +1104,54 @@ async def booking_request(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         complaints_str,
         "; ".join(analyses),
         datetime.utcnow().isoformat(),
-    ]
-    append_to_sheets(row)
+    ])
 
     return ConversationHandler.END
 
 
-# ── Global callbacks (outside conversation) ──────────────────────────────────
+# ── Post-conversation callbacks ───────────────────────────────────────────────
 
-async def global_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+METHODICHKA_TEXT = (
+    "В методичке вы сможете посмотреть, что означает каждый показатель "
+    "и на что обратить внимание при подготовке к разбору.\n\n"
+    "<b>Важно:</b> методичка не заменяет консультацию врача или нутрициолога. "
+    "Не начинайте приём добавок только по одному показателю без учёта симптомов, "
+    "питания, лекарств и противопоказаний. "
+    "Если показатель выходит за пределы референсов — обсудите результат со специалистом.\n\n"
+    "<b>Краткая методичка:</b>\n\n"
+    "<b>ОАК с формулой</b> — общее состояние крови, признаки воспаления и анемии.\n"
+    "<b>Ферритин</b> — запасы железа; низкий = усталость, выпадение волос.\n"
+    "<b>Витамин D 25(OH)</b> — иммунитет, кости, настроение.\n"
+    "<b>Глюкоза натощак</b> — углеводный обмен.\n"
+    "<b>Инсулин натощак</b> — чувствительность к инсулину.\n"
+    "<b>ТТГ</b> — щитовидная железа; вес, энергия, настроение.\n"
+    "<b>Витамин B12</b> — нервная система, энергия, кроветворение.\n"
+    "<b>HbA1c</b> — средний уровень глюкозы за 2–3 месяца.\n"
+    "<b>АЛТ, АСТ</b> — состояние печени и мышц.\n"
+    "<b>ГГТ</b> — желчевыводящие пути, печень.\n"
+    "<b>Креатинин</b> — работа почек.\n"
+    "<b>Общий белок</b> — достаточность белка в питании.\n"
+    "<b>Цинк</b> — иммунитет, кожа, волосы, ногти.\n"
+    "<b>Магний</b> — нервная система, сон, мышцы.\n"
+    "<b>Липидограмма</b> — холестерин, триглицериды.\n"
+    "<b>Общий анализ мочи</b> — почки, воспаление.\n"
+    "<b>Копрограмма</b> — пищеварение, ферменты.\n"
+    "<b>С-реактивный белок</b> — системное воспаление.\n"
+    "<b>Пролактин</b> — цикл, либидо.\n"
+    "<b>ЛГ / ФСГ</b> — регуляция цикла.\n"
+    "<b>Эстрадиол</b> — основной женский гормон.\n"
+    "<b>Тестостерон общий</b> — андрогенный фон, акне.\n"
+    "<b>ГСПГ</b> — транспортный белок половых гормонов.\n"
+    "<b>ДГЭА-С</b> — надпочечниковый андроген.\n"
+    "<b>H. pylori</b> — связан с гастритом и язвой желудка."
+)
+
+
+async def methodichka_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    data = query.data
-
-    if data == "restart":
-        await start(update, context)
-        return
-
-    if data == "contact_marina":
-        await query.message.reply_text(
-            f"Напишите Марине в личные сообщения: {ADMIN_USERNAME}\n\n"
-            "Лучше кратко указать, что вы уже обратились к врачу или планируете очную консультацию."
-        )
-        return
-
-    if data == "methodichka":
-        await methodichka_callback(update, context)
-        return
-
-    if data == "menu":
-        await show_menu(update, context)
-        return
-
-
-async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    kb = InlineKeyboardMarkup([
-        [_btn("🔍 Пройти опрос", "begin")],
-        [_btn("📖 Открыть методичку", "methodichka")],
-        [_btn("💼 Услуги и цены", "prices")],
-        [_btn("📋 Записаться к Марине", "booking")],
-        [_btn("💬 Задать вопрос", "service:question")],
-        [_btn("🔄 Пройти заново", "restart")],
-    ])
-    text = "Главное меню"
-    if update.message:
-        await update.message.reply_text(text, reply_markup=kb)
-    elif update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=kb)
+    upsert_user(query.from_user.id, {"opened_methodichka": 1})
+    await query.message.reply_text(METHODICHKA_TEXT, parse_mode="HTML")
 
 
 async def prices_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1242,13 +1164,30 @@ async def prices_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "<b>📊 Полный разбор «Анализы + питание» — 7 500 ₽</b>\n"
         "Разбор питания + анализов + план на 4–6 недель + 5 дней поддержки.\n\n"
         "<b>🔄 Ведение 1 месяц «Перезапуск» — 19 000 ₽</b>\n"
-        "Стартовая консультация + план питания + протокол + еженедельная корректировка + чат."
+        "Консультация + план питания + протокол + еженедельная корректировка + чат."
     )
-    kb = InlineKeyboardMarkup([[_btn("📋 Записаться", "booking")]])
-    await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([[_btn("📋 Записаться", "booking")]]),
+        parse_mode="HTML",
+    )
 
 
-# ── Commands ─────────────────────────────────────────────────────────────────
+async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    kb = InlineKeyboardMarkup([
+        [_btn("🔍 Пройти опрос",          "begin")],
+        [_btn("📖 Открыть методичку",     "methodichka")],
+        [_btn("💼 Услуги и цены",         "prices")],
+        [_btn("📋 Записаться к Марине",   "booking")],
+        [_btn("🔄 Пройти заново",         "restart")],
+    ])
+    if update.message:
+        await update.message.reply_text("Главное меню:", reply_markup=kb)
+    elif update.callback_query:
+        await update.callback_query.edit_message_text("Главное меню:", reply_markup=kb)
+
+
+# ── Commands ──────────────────────────────────────────────────────────────────
 
 async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await show_menu(update, context)
@@ -1289,28 +1228,31 @@ async def cmd_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def unknown_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "Пожалуйста, выберите один из вариантов ниже, чтобы бот смог корректно сформировать список.",
+        "Пожалуйста, выберите один из вариантов ниже.",
         reply_markup=InlineKeyboardMarkup([[_btn("🔄 Пройти заново", "restart")]]),
     )
 
 
-# ── Booking conversation (standalone) ────────────────────────────────────────
+# ── Conversation handlers ─────────────────────────────────────────────────────
 
+# Booking conversation — entry from post-result "Записаться" button
 booking_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(booking_start, pattern="^booking$")],
+    entry_points=[CallbackQueryHandler(booking_entry, pattern="^booking$")],
     states={
         BOOKING_SERVICE: [CallbackQueryHandler(service_chosen, pattern="^service:")],
-        BOOKING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, booking_name)],
+        BOOKING_NAME:    [MessageHandler(filters.TEXT & ~filters.COMMAND, booking_name)],
         BOOKING_CONTACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, booking_contact)],
         BOOKING_REQUEST: [MessageHandler(filters.TEXT & ~filters.COMMAND, booking_request)],
     },
-    fallbacks=[CommandHandler("start", start), CommandHandler("restart", cmd_restart)],
+    fallbacks=[
+        CommandHandler("start", start),
+        CommandHandler("restart", cmd_restart),
+    ],
     per_message=False,
     allow_reentry=True,
 )
 
-# ── Main conversation ────────────────────────────────────────────────────────
-
+# Main survey conversation
 main_conv = ConversationHandler(
     entry_points=[
         CommandHandler("start", start),
@@ -1323,25 +1265,29 @@ main_conv = ConversationHandler(
             CallbackQueryHandler(begin, pattern="^begin$"),
             CallbackQueryHandler(gender_chosen, pattern="^gender:"),
         ],
-        AGE: [CallbackQueryHandler(age_chosen, pattern="^age:")],
+        AGE: [
+            CallbackQueryHandler(age_chosen, pattern="^age:"),
+        ],
         RED_FLAGS: [
-            CallbackQueryHandler(ms_toggle, pattern="^ms:red_flags:"),
+            CallbackQueryHandler(ms_toggle,      pattern="^ms:red_flags:"),
             CallbackQueryHandler(red_flags_done, pattern="^ms_done:red_flags$"),
         ],
         MAIN_COMPLAINTS: [
-            CallbackQueryHandler(ms_toggle, pattern="^ms:main:"),
+            CallbackQueryHandler(ms_toggle,            pattern="^ms:main:"),
             CallbackQueryHandler(main_complaints_done, pattern="^ms_done:main$"),
         ],
         DETAIL_BLOCK: [
-            CallbackQueryHandler(ms_toggle, pattern="^ms:detail_"),
-            CallbackQueryHandler(detail_done, pattern="^ms_done:detail_"),
-            CallbackQueryHandler(detail_callback, pattern="^(detail_continue|has_analyses:|meds:|meds_continue|cycle:|cycle_continue)"),
+            CallbackQueryHandler(ms_toggle,     pattern=r"^ms:detail_"),
+            CallbackQueryHandler(detail_done,   pattern=r"^ms_done:detail_"),
+            CallbackQueryHandler(detail_callback,
+                pattern=r"^(detail_continue|has_analyses:|meds:|meds_continue|cycle:|cycle_continue)"),
         ],
         SAFETY_CHECK: [
             CallbackQueryHandler(safety_answer, pattern="^(gi_safety|stress_safety):"),
         ],
+        # Booking from within conversation (has_analyses:booking path)
         BOOKING_SERVICE: [CallbackQueryHandler(service_chosen, pattern="^service:")],
-        BOOKING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, booking_name)],
+        BOOKING_NAME:    [MessageHandler(filters.TEXT & ~filters.COMMAND, booking_name)],
         BOOKING_CONTACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, booking_contact)],
         BOOKING_REQUEST: [MessageHandler(filters.TEXT & ~filters.COMMAND, booking_request)],
     },
@@ -1355,26 +1301,57 @@ main_conv = ConversationHandler(
 )
 
 
-def main() -> None:
+# ── App setup ────────────────────────────────────────────────────────────────
+
+def build_app() -> Application:
     init_db()
     app = Application.builder().token(TOKEN).build()
 
+    # Main survey (must be first)
     app.add_handler(main_conv)
+    # Standalone booking after survey ends
+    app.add_handler(booking_conv)
 
-    # Global callbacks (outside conversation)
+    # Stateless callbacks
     app.add_handler(CallbackQueryHandler(methodichka_callback, pattern="^methodichka$"))
-    app.add_handler(CallbackQueryHandler(prices_callback, pattern="^prices$"))
-    app.add_handler(CallbackQueryHandler(global_callback, pattern="^(restart|contact_marina|menu)$"))
+    app.add_handler(CallbackQueryHandler(prices_callback,      pattern="^prices$"))
+    app.add_handler(CallbackQueryHandler(
+        lambda u, c: (u.callback_query.answer(), u.callback_query.message.reply_text(
+            f"Напишите Марине: {ADMIN_USERNAME}\n\n"
+            "Лучше кратко указать, что вы уже обратились к врачу."
+        )),
+        pattern="^contact_marina$",
+    ))
 
-    app.add_handler(CommandHandler("menu", cmd_menu))
-    app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CommandHandler("price", cmd_price))
+    app.add_handler(CommandHandler("menu",    cmd_menu))
+    app.add_handler(CommandHandler("help",    cmd_help))
+    app.add_handler(CommandHandler("price",   cmd_price))
     app.add_handler(CommandHandler("contact", cmd_contact))
-
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_message))
 
-    logger.info("Symptom bot starting…")
-    app.run_polling(drop_pending_updates=True)
+    return app
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+def main() -> None:
+    app = build_app()
+
+    if WEBHOOK_URL:
+        # ── Webhook mode (Render) ─────────────────────────────────────────────
+        webhook_path = f"/webhook/{TOKEN}"
+        full_url = f"{WEBHOOK_URL.rstrip('/')}{webhook_path}"
+        logger.info("Starting in webhook mode: %s on port %d", full_url, PORT)
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=webhook_path,
+            webhook_url=full_url,
+        )
+    else:
+        # ── Polling mode (local dev) ──────────────────────────────────────────
+        logger.info("Starting in polling mode")
+        app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
