@@ -39,6 +39,7 @@ from premium_subscription import (
     PREMIUM_PRICE_RUB,
     PAYMENT_PROVIDER_TOKEN,
 )
+from product_runtime import PREMIUM_KEYBOARD, get_main_keyboard, WEEKLY_RUNE_BUTTON
 from support_requests import (
     SupportRequestError,
     claim_request,
@@ -140,7 +141,8 @@ async def final_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         bot.logger.exception("Failed to start final onboarding")
         await update.effective_message.reply_text("Что-то пошло не так. Попробуй ещё раз через минуту.", reply_markup=bot.MAIN_KEYBOARD)
         return
-    await update.effective_message.reply_text(f"{name}, всё готово. С чего начнём?", reply_markup=bot.MAIN_KEYBOARD)
+    keyboard = get_main_keyboard(bot.DB_PATH, update.effective_user.id)
+    await update.effective_message.reply_text(f"{name}, всё готово. С чего начнём?", reply_markup=keyboard)
 
 
 async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -374,8 +376,11 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if is_operator_chat(update):
         await handle_operator_reply(update, context)
         return
-    if text == "🌞 Руна дня":
+    if text in {"🌞 Руна дня", "💠 Руна дня"}:
         await product_runtime.product_runa_command(update, context)
+        return
+    if text == WEEKLY_RUNE_BUTTON:
+        await weekly_rune_on_demand(update, context)
         return
     if text in {"❓ Вопрос", "❓ Задать вопрос", "❓ Вопрос (да/нет)"}:
         context.user_data["state"] = bot.STATE_WAITING_ASK
@@ -453,12 +458,16 @@ async def activatepremium_command(update: Update, context: ContextTypes.DEFAULT_
             chat_id=target_id,
             text=(
                 "💠 <b>Премиум активирован!</b>\n\n"
-                f"Подписка действует до {status['expires_at']}.\n"
-                "Доступна премиум-колода и 3 бесплатных личных расклада в месяц.\n\n"
-                "Напиши /premium чтобы проверить статус."
+                f"Подписка действует до {status['expires_at']}.\n\n"
+                "Что теперь доступно:\n"
+                "💠 Премиум-колода — уже подключена\n"
+                "🪬 Руна недели — кнопка появилась в меню\n"
+                "🕯 3 личных расклада в месяц бесплатно\n"
+                "🌞 Руна дня — рассылка включена автоматически\n\n"
+                "Меню обновилось — нажми любую кнопку!"
             ),
             parse_mode=ParseMode.HTML,
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=PREMIUM_KEYBOARD,
         )
     except Exception:
         pass
@@ -526,11 +535,14 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except (ValueError, TypeError):
             exp_formatted = expires_str or "неизвестно"
         free_left = get_free_readings_left(bot.DB_PATH, user.id)
+        from database import get_streak
+        streak = get_streak(bot.DB_PATH, user.id)
+        streak_line = f"\n🔥 Серия дней подряд: <b>{streak}</b>" if streak > 1 else ""
         await message.reply_text(
             f"💠 <b>Премиум активен до {exp_formatted}</b>\n\n"
-            f"Осталось бесплатных личных раскладов: <b>{free_left}</b>",
+            f"Осталось бесплатных личных раскладов: <b>{free_left}</b>{streak_line}",
             parse_mode=ParseMode.HTML,
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=PREMIUM_KEYBOARD,
         )
         return
     await message.reply_text(
@@ -614,17 +626,20 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     if data == "premium:paid:card":
-        # Manual payment claimed — notify operators
+        # Manual payment claimed — notify operators with one-tap activation button
         sender = f"@{user.username}" if user.username else (user.first_name or str(user.id))
         note = (
             f"💠 Заявка на премиум (карта)\n\n"
             f"От: {sender}\nUser ID: {user.id}\n"
             f"Сумма: {PREMIUM_PRICE_RUB} ₽\n\n"
-            "ПРОВЕРЬ ПОСТУПЛЕНИЕ. Чтобы активировать, используй /activatepremium <user_id>"
+            "ПРОВЕРЬ ПОСТУПЛЕНИЕ и нажми кнопку ниже чтобы активировать."
         )
+        activate_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Активировать премиум", callback_data=f"admin:activate:{user.id}")
+        ]])
         for admin_id in bot.ADMIN_IDS:
             try:
-                await context.bot.send_message(chat_id=admin_id, text=note)
+                await context.bot.send_message(chat_id=admin_id, text=note, reply_markup=activate_kb)
             except TelegramError:
                 bot.logger.exception("Failed to notify admin about premium payment chat_id=%s", admin_id)
         await context.bot.send_message(
@@ -644,9 +659,15 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
     if payment.invoice_payload.startswith("premium_"):
         activate_premium(bot.DB_PATH, update.effective_user.id)
         await update.message.reply_text(
-            "💠 Премиум активирован на 30 дней!\n\n"
-            "Теперь доступна премиум-колода и 3 бесплатных личных расклада в месяц.",
-            reply_markup=bot.MAIN_KEYBOARD,
+            "💠 <b>Премиум активирован на 31 день!</b>\n\n"
+            "Что теперь доступно:\n"
+            "💠 Премиум-колода — уже подключена\n"
+            "🪬 Руна недели — кнопка появилась в меню\n"
+            "🕯 3 личных расклада в месяц бесплатно\n"
+            "🌞 Руна дня — рассылка включена автоматически\n\n"
+            "Меню обновилось — нажми любую кнопку!",
+            parse_mode=ParseMode.HTML,
+            reply_markup=PREMIUM_KEYBOARD,
         )
 
 
@@ -691,6 +712,109 @@ async def weekly_day_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"✅ Буду присылать руну недели каждый <b>{day_name.lower()}</b>.",
         parse_mode=ParseMode.HTML,
     )
+
+
+async def admin_activate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """One-tap premium activation for operators."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    if not is_authorized_operator(update):
+        await query.answer("Нет доступа.", show_alert=True)
+        return
+    try:
+        target_id = int(query.data.split(":")[2])
+    except (IndexError, ValueError):
+        await query.answer("Ошибка: неверный user_id.", show_alert=True)
+        return
+    try:
+        activate_premium(bot.DB_PATH, target_id)
+    except Exception:
+        bot.logger.exception("Failed to activate premium via button for user_id=%s", target_id)
+        await query.answer("Не удалось активировать. Проверь логи.", show_alert=True)
+        return
+    original_text = (query.message.text or "") if query.message else ""
+    try:
+        await query.edit_message_text(f"✅ Премиум активирован для user_id={target_id}.\n\n{original_text}")
+    except TelegramError:
+        pass
+    await query.answer("Премиум активирован!")
+    try:
+        from database import get_premium_status
+        status = get_premium_status(bot.DB_PATH, target_id)
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=(
+                "💠 <b>Премиум активирован!</b>\n\n"
+                f"Подписка действует до {status['expires_at']}.\n\n"
+                "Что теперь доступно:\n"
+                "💠 Премиум-колода — уже подключена\n"
+                "🪬 Руна недели — кнопка появилась в меню\n"
+                "🕯 3 личных расклада в месяц бесплатно\n"
+                "🌞 Руна дня — рассылка включена автоматически\n\n"
+                "Меню обновилось — нажми любую кнопку!"
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=PREMIUM_KEYBOARD,
+        )
+    except Exception:
+        bot.logger.exception("Failed to notify user about premium activation user_id=%s", target_id)
+
+
+async def weekly_rune_on_demand(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Premium-only: get this week's rune and reflection question on demand."""
+    user = update.effective_user
+    if not user or not update.effective_message:
+        return
+    if not is_premium_active(bot.DB_PATH, user.id):
+        await update.effective_message.reply_text(
+            "🪬 <b>Руна недели</b> — премиум-функция.\n\n"
+            "Каждую неделю — новая руна и вопрос для рефлексии. "
+            "Нажми 💠 Премиум чтобы узнать подробнее.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+        return
+    from datetime import date as _date
+    from runes_data import RUNES
+    from weekly_questions import rune_of_week, question_for_rune
+
+    today = _date.today()
+    week = today.isocalendar()[1]
+    weekly_rune = rune_of_week(RUNES, week)
+    question = question_for_rune(weekly_rune["key"], week)
+    palette = bot.get_user_palette(update)
+    image_path = bot.get_rune_image_path(weekly_rune, palette)
+    text = (
+        f"🪬 <b>Руна недели — {weekly_rune['name']}</b>\n\n"
+        f"<b>Вопрос для рефлексии:</b>\n{question}\n\n"
+        "<i>Подержи этот вопрос в уме в течение недели. "
+        "Или сразу спроси руны — кнопка ниже.</i>"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔮 Спросить руны об этом", callback_data=f"weekly_rasklad:{week}")
+    ]])
+    try:
+        if image_path:
+            await update.effective_message.reply_photo(
+                photo=open(image_path, "rb"),
+                caption=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb,
+            )
+        else:
+            await update.effective_message.reply_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb,
+            )
+    except Exception:
+        bot.logger.exception("Failed to send weekly rune on demand for user_id=%s", user.id)
+        await update.effective_message.reply_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb,
+        )
 
 
 async def weekly_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -750,6 +874,7 @@ def final_build_application():
     app.add_handler(CallbackQueryHandler(weekly_rasklad_callback, pattern=r"^weekly_rasklad:"))
     app.add_handler(CallbackQueryHandler(human_reading_payment_callback, pattern=r"^human_reading:"))
     app.add_handler(CallbackQueryHandler(premium_callback, pattern=r"^premium:"))
+    app.add_handler(CallbackQueryHandler(admin_activate_callback, pattern=r"^admin:activate:"))
     app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
     app.add_handler(MessageHandler((filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, operator_media_router))

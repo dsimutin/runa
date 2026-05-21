@@ -18,6 +18,7 @@ from runes_interpretations import get_rune_day_text
 STATE_WAITING_HUMAN = "waiting_human"
 SETTINGS_BUTTON = "⚙️ Настройки"
 QUESTION_BUTTON = "❓ Вопрос (да/нет)"
+WEEKLY_RUNE_BUTTON = "🪬 Руна недели"
 OLD_QUESTION_BUTTONS = {"❓ Вопрос", "❓ Задать вопрос", QUESTION_BUTTON}
 PALETTE_NAMES = {"light": "Светлая", "dark": "Тёмная", "premium": "Премиум"}
 
@@ -28,6 +29,24 @@ bot.MAIN_KEYBOARD = ReplyKeyboardMarkup(
     resize_keyboard=True,
     is_persistent=True,
 )
+
+PREMIUM_KEYBOARD = ReplyKeyboardMarkup(
+    [
+        ["💠 Руна дня", QUESTION_BUTTON],
+        ["🔮 Расклад", HUMAN_READING_BUTTON],
+        [WEEKLY_RUNE_BUTTON, SETTINGS_BUTTON],
+        ["ℹ️ Помощь"],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
+
+
+def get_main_keyboard(db_path: str, user_id: int) -> ReplyKeyboardMarkup:
+    from premium_subscription import is_premium_active
+    if is_premium_active(db_path, user_id):
+        return PREMIUM_KEYBOARD
+    return bot.MAIN_KEYBOARD
 
 bot.ONBOARDING_QUESTIONS = [
     {"text": "Ты входишь в незнакомое пространство. Что считываешь первым?", "a": "Атмосферу, свет, воздух, внутреннее ощущение", "b": "Границы, правила, риски и кто управляет ситуацией"},

@@ -50,16 +50,21 @@ def is_premium_active(db_path: str, user_id: int) -> bool:
 
 
 def activate_premium(db_path: str, user_id: int) -> None:
-    from database import set_premium_expires, reset_premium_readings
+    from database import set_premium_expires, reset_premium_readings, set_broadcast_enabled
     expires_at = (date.today() + timedelta(days=31)).isoformat()
     set_premium_expires(db_path, user_id, expires_at)
     reset_premium_readings(db_path, user_id)
-    # Also set palette to premium
+    # Auto-set palette to premium
     try:
         from database import set_user_palette
         set_user_palette(db_path, user_id, "premium")
     except Exception:
         _bot.logger.exception("Failed to set premium palette on activation")
+    # Auto-enable daily broadcast
+    try:
+        set_broadcast_enabled(db_path, user_id, True)
+    except Exception:
+        _bot.logger.exception("Failed to enable broadcast on premium activation")
 
 
 def get_free_readings_left(db_path: str, user_id: int) -> int:
