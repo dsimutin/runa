@@ -22,3 +22,25 @@ services:
       - key: WEBHOOK_PATH
         value: webhook
 
+  # ── Healthyz symptom bot (@healthyz_bot) ────────────────────────────────────
+  - type: web
+    name: healthyz-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python symptom_bot.py
+    envVars:
+      - key: SYMPTOM_BOT_TOKEN
+        value: "8612652867:AAFaoodd22CDIxGidaHHLOH7sZbXf6kjrb8"
+      - key: SYMPTOM_ADMIN_CHAT_ID
+        value: "352086154"
+      - key: SYMPTOM_ADMIN_USERNAME
+        value: "@healthyz_admin"
+      - key: SYMPTOM_DB_PATH
+        value: symptom_bot.db
+      - key: PORT
+        value: "10001"
+      - key: SYMPTOM_WEBHOOK_URL
+        sync: false
+      - key: GOOGLE_CREDS_JSON
+        sync: false
