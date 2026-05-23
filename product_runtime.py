@@ -24,8 +24,20 @@ PALETTE_NAMES = {"light": "Светлая", "dark": "Тёмная", "premium": "
 
 bot.DECK_DIRS = {"light": "light", "dark": "dark", "premium": "premium"}
 
+PAIR_BUTTON = "👫 Пара"
+BIRTH_RUNE_BUTTON = "🌟 Руна жизни"
+MONTH_RASKLAD_BUTTON = "📅 Расклад на месяц"
+CELTIC_CROSS_BUTTON = "✝️ Кельтский крест"
+INTENTION_BUTTON = "🌿 Намерение"
+REFERRAL_BUTTON = "👥 Пригласить друга"
+
 bot.MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [["🌞 Руна дня", QUESTION_BUTTON], ["🔮 Расклад", HUMAN_READING_BUTTON], [SETTINGS_BUTTON, "💠 Премиум"], ["ℹ️ Помощь"]],
+    [
+        ["🌞 Руна дня", QUESTION_BUTTON],
+        ["🔮 Расклад", HUMAN_READING_BUTTON],
+        [PAIR_BUTTON, SETTINGS_BUTTON],
+        ["💠 Премиум", "ℹ️ Помощь"],
+    ],
     resize_keyboard=True,
     is_persistent=True,
 )
@@ -34,8 +46,10 @@ PREMIUM_KEYBOARD = ReplyKeyboardMarkup(
     [
         ["💠 Руна дня", QUESTION_BUTTON],
         ["🔮 Расклад", HUMAN_READING_BUTTON],
-        [WEEKLY_RUNE_BUTTON, SETTINGS_BUTTON],
-        ["ℹ️ Помощь"],
+        [MONTH_RASKLAD_BUTTON, CELTIC_CROSS_BUTTON],
+        [WEEKLY_RUNE_BUTTON, INTENTION_BUTTON],
+        [BIRTH_RUNE_BUTTON, PAIR_BUTTON],
+        [SETTINGS_BUTTON, "ℹ️ Помощь"],
     ],
     resize_keyboard=True,
     is_persistent=True,

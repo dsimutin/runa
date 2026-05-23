@@ -64,11 +64,27 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
         palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
         orientation_label = "перевёрнутое" if orientation == "rev" else "прямое"
         moon = moon_phase_today()
+
+        # Append intention for premium users
+        intention_line = ""
+        try:
+            from premium_subscription import is_premium_active
+            if is_premium_active(_bot.DB_PATH, user_id):
+                with get_connection(_bot.DB_PATH) as _conn:
+                    _row = _conn.execute(
+                        "SELECT intention_text FROM users WHERE user_id = ?", (user_id,)
+                    ).fetchone()
+                    if _row and _row[0]:
+                        intention_line = f"\n\n🌿 <i>Намерение: {_row[0]}</i>"
+        except Exception:
+            pass
+
         text = (
             f"{palette_icon} <b>{name}, руна дня</b>\n\n"
             f"<b>{rune['name']}</b> · {orientation_label}\n\n"
             f"{day_text}\n\n"
             f"{moon['emoji']} {moon['phase_name']} — {moon['description']}"
+            f"{intention_line}"
         )
 
         try:
@@ -290,6 +306,50 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
             errors += 1
 
     logger.info("Monthly rune done: sent=%d errors=%d", sent, errors)
+
+
+async def send_streak_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Job callback: remind users who haven't drawn a rune in 2 days."""
+    from datetime import date as _date, timedelta as _timedelta
+    yesterday = (_date.today() - _timedelta(days=1)).isoformat()
+    day_before = (_date.today() - _timedelta(days=2)).isoformat()
+
+    try:
+        with get_connection(_bot.DB_PATH) as conn:
+            # Users who drew a rune 2 days ago but NOT yesterday and NOT today
+            rows = conn.execute(
+                """
+                SELECT DISTINCT u.user_id, u.preferred_name
+                FROM users u
+                JOIN daily_runes dr ON dr.user_id = u.user_id AND dr.date = ?
+                WHERE u.broadcast_enabled = 1
+                  AND u.palette IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM daily_runes dr2
+                    WHERE dr2.user_id = u.user_id AND dr2.date >= ?
+                  )
+                """,
+                (day_before, yesterday),
+            ).fetchall()
+    except Exception:
+        logger.exception("Failed to query streak reminder users")
+        return
+
+    logger.info("Streak reminders: sending to %d users", len(rows))
+    for user_id, name in rows:
+        name = name or "друг"
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    f"🔥 <b>{name}, твой стрик под угрозой!</b>\n\n"
+                    "Ты не вытягивала руну уже 2 дня. Загляни сегодня — займёт меньше минуты."
+                ),
+                parse_mode="HTML",
+                reply_markup=_bot.MAIN_KEYBOARD,
+            )
+        except Exception:
+            pass
 
 
 async def subscribe_command(update, context: ContextTypes.DEFAULT_TYPE) -> None:

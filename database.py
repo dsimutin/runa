@@ -54,6 +54,11 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "premium_expires_at": "ALTER TABLE users ADD COLUMN premium_expires_at TEXT",
         "premium_readings_used": "ALTER TABLE users ADD COLUMN premium_readings_used INTEGER NOT NULL DEFAULT 0",
         "weekly_question_day": "ALTER TABLE users ADD COLUMN weekly_question_day INTEGER NOT NULL DEFAULT 6",
+        "birth_date": "ALTER TABLE users ADD COLUMN birth_date TEXT",
+        "trial_used": "ALTER TABLE users ADD COLUMN trial_used INTEGER NOT NULL DEFAULT 0",
+        "trial_expires_at": "ALTER TABLE users ADD COLUMN trial_expires_at TEXT",
+        "intention_text": "ALTER TABLE users ADD COLUMN intention_text TEXT",
+        "intention_set_at": "ALTER TABLE users ADD COLUMN intention_set_at TEXT",
     }
     for column, sql in migrations.items():
         if column not in columns:

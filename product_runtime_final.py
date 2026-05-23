@@ -14,6 +14,7 @@ from daily_broadcast import (
     send_weekly_question,
     send_premium_expiry_warnings,
     send_monthly_rune,
+    send_streak_reminders,
     subscribe_command,
     unsubscribe_command,
 )
@@ -33,13 +34,27 @@ from premium_subscription import (
     get_premium_keyboard,
     is_premium_active,
     activate_premium,
+    activate_trial,
+    has_used_trial,
     get_free_readings_left,
     use_free_reading,
     PREMIUM_PRICE_STARS,
     PREMIUM_PRICE_RUB,
+    PREMIUM_ANNUAL_RUB,
+    PREMIUM_ANNUAL_STARS,
     PAYMENT_PROVIDER_TOKEN,
 )
-from product_runtime import PREMIUM_KEYBOARD, get_main_keyboard, WEEKLY_RUNE_BUTTON
+from product_runtime import (
+    PREMIUM_KEYBOARD,
+    get_main_keyboard,
+    WEEKLY_RUNE_BUTTON,
+    PAIR_BUTTON,
+    BIRTH_RUNE_BUTTON,
+    MONTH_RASKLAD_BUTTON,
+    CELTIC_CROSS_BUTTON,
+    INTENTION_BUTTON,
+    REFERRAL_BUTTON,
+)
 from support_requests import (
     SupportRequestError,
     claim_request,
@@ -51,7 +66,23 @@ from support_requests import (
     register_operator,
 )
 
-VERSION_MARKER = "RUNA FINAL 2026-05-07-6"
+from birth_rune import (
+    STATE_WAITING_BIRTH_DATE,
+    birth_rune_command,
+    birth_rune_callback,
+    handle_birth_date_input,
+)
+from referral import referral_command, store_referral, reward_referrer
+from month_rasklad import month_rasklad_command
+from celtic_cross import celtic_cross_command
+from intention import (
+    STATE_WAITING_INTENTION,
+    intention_command,
+    intention_callback,
+    handle_intention_input,
+)
+
+VERSION_MARKER = "RUNA FINAL 2026-05-23-1"
 ALLOWED_OPERATOR_USERNAMES = {"mrgrief", "richstewardess"}
 PREMIUM_DIR_CANDIDATES = ["premium", "Premium", "Премиум", "премиум"]
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"]
@@ -131,19 +162,39 @@ async def final_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not bot.is_private(update):
         await update.effective_message.reply_text("Чтобы открыть меню, напиши мне в личку.", reply_markup=bot.private_link_markup(context))
         return
+
+    user_id = update.effective_user.id
+
+    # Handle referral link: /start ref_<referrer_id>
+    args = context.args or []
+    referrer_id = None
+    if args and args[0].startswith("ref_"):
+        try:
+            referrer_id = int(args[0][4:])
+        except ValueError:
+            pass
+
     name = bot.user_name(update)
     try:
-        bot.ensure_user(bot.DB_PATH, update.effective_user.id, name)
-        profile = bot.get_user_profile(bot.DB_PATH, update.effective_user.id)
-        if not profile or not profile.get("palette"):
-            bot.start_onboarding(bot.DB_PATH, update.effective_user.id)
+        bot.ensure_user(bot.DB_PATH, user_id, name)
+        profile = bot.get_user_profile(bot.DB_PATH, user_id)
+        is_new = not profile or not profile.get("palette")
+
+        if referrer_id and is_new:
+            try:
+                store_referral(bot.DB_PATH, referrer_id, user_id)
+            except Exception:
+                bot.logger.exception("Failed to store referral")
+
+        if is_new:
+            bot.start_onboarding(bot.DB_PATH, user_id)
             await update.effective_message.reply_text(product_runtime.build_onboarding_question(1, name), reply_markup=product_runtime.onboarding_keyboard(1))
             return
     except bot.DatabaseError:
         bot.logger.exception("Failed to start final onboarding")
         await update.effective_message.reply_text("Что-то пошло не так. Попробуй ещё раз через минуту.", reply_markup=bot.MAIN_KEYBOARD)
         return
-    keyboard = get_main_keyboard(bot.DB_PATH, update.effective_user.id)
+    keyboard = get_main_keyboard(bot.DB_PATH, user_id)
     await update.effective_message.reply_text(f"{name}, всё готово. С чего начнём?", reply_markup=keyboard)
 
 
@@ -161,6 +212,11 @@ async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text("Ответ не сохранился. Нажми /start и попробуем заново.")
         return
     if result.get("completed"):
+        # Reward referrer if this user was invited
+        try:
+            reward_referrer(bot.DB_PATH, update.effective_user.id)
+        except Exception:
+            bot.logger.exception("Failed to reward referrer")
         await query.edit_message_text(product_runtime.onboarding_result_text(result["palette"]))
         await context.bot.send_message(
             chat_id=update.effective_user.id,
@@ -404,6 +460,28 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if text == "ℹ️ Помощь":
         await product_runtime.bot.help_command(update, context)
         return
+    if text == PAIR_BUTTON:
+        await update.effective_message.reply_text(
+            "👫 Напиши имя партнёра для расклада пары:",
+            reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else None,
+        )
+        context.user_data["state"] = "waiting_pair_name"
+        return
+    if text == BIRTH_RUNE_BUTTON:
+        await birth_rune_command(update, context)
+        return
+    if text == MONTH_RASKLAD_BUTTON:
+        await month_rasklad_command(update, context)
+        return
+    if text == CELTIC_CROSS_BUTTON:
+        await celtic_cross_command(update, context)
+        return
+    if text == INTENTION_BUTTON:
+        await intention_command(update, context)
+        return
+    if text == REFERRAL_BUTTON:
+        await referral_command(update, context)
+        return
     if state == product_runtime.STATE_WAITING_HUMAN:
         context.user_data.pop("state", None)
         await handle_human_request(update, context, text)
@@ -415,6 +493,16 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if state == bot.STATE_WAITING_RASKLAD:
         context.user_data.pop("state", None)
         await product_runtime.bot.send_rasklad(update, context, text)
+        return
+    if state == STATE_WAITING_BIRTH_DATE:
+        await handle_birth_date_input(update, context)
+        return
+    if state == STATE_WAITING_INTENTION:
+        await handle_intention_input(update, context)
+        return
+    if state == "waiting_pair_name":
+        context.user_data.pop("state", None)
+        await pair_rasklad_command(update, context)
         return
     await update.effective_message.reply_text("Выбери действие на клавиатуре. Или напиши /help, если потерялся.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else bot.private_link_markup(context))
 
@@ -627,6 +715,89 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
         return
 
+    if data == "premium:buy:stars_annual":
+        try:
+            await context.bot.send_invoice(
+                chat_id=user.id,
+                title="Премиум-подписка на год",
+                description="Всё включено — экономия ~30% по сравнению с месячной оплатой",
+                payload="premium_stars_1year",
+                currency="XTR",
+                prices=[LabeledPrice("Премиум 1 год", PREMIUM_ANNUAL_STARS)],
+            )
+        except TelegramError:
+            bot.logger.exception("Failed to send annual Stars invoice")
+            await context.bot.send_message(
+                chat_id=user.id,
+                text="Не удалось создать счёт. Попробуй чуть позже.",
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+        return
+
+    if data == "premium:buy:card_annual":
+        if PAYMENT_PROVIDER_TOKEN:
+            try:
+                await context.bot.send_invoice(
+                    chat_id=user.id,
+                    title="Премиум-подписка на год",
+                    description="Всё включено — экономия ~30% по сравнению с месячной оплатой",
+                    payload="premium_card_1year",
+                    provider_token=PAYMENT_PROVIDER_TOKEN,
+                    currency="RUB",
+                    prices=[LabeledPrice("Премиум 1 год", PREMIUM_ANNUAL_RUB * 100)],
+                )
+            except TelegramError:
+                bot.logger.exception("Failed to send annual card invoice")
+                await context.bot.send_message(
+                    chat_id=user.id,
+                    text="Не удалось создать счёт. Попробуй чуть позже.",
+                    reply_markup=bot.MAIN_KEYBOARD,
+                )
+        else:
+            from human_reading import PAYMENT_CARD, PAYMENT_PHONE
+            manual_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Я оплатил", callback_data="premium:paid:card_annual")],
+                [InlineKeyboardButton("✖ Отмена", callback_data="premium:close")],
+            ])
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=(
+                    f"💳 <b>Оплата премиума на год — {PREMIUM_ANNUAL_RUB} ₽</b>\n\n"
+                    f"Карта (нажми чтобы скопировать):\n<pre>{PAYMENT_CARD}</pre>\n"
+                    f"СБП по номеру:\n<pre>{PAYMENT_PHONE}</pre>\n"
+                    f"Сумма точно: <b>{PREMIUM_ANNUAL_RUB} ₽</b>\n\n"
+                    "После оплаты нажми «Я оплатил» — оператор проверит и активирует подписку на год."
+                ),
+                parse_mode=ParseMode.HTML,
+                reply_markup=manual_kb,
+            )
+        return
+
+    if data == "premium:trial":
+        if is_premium_active(bot.DB_PATH, user.id):
+            await query.answer("У тебя уже активен Премиум!", show_alert=True)
+            return
+        if has_used_trial(bot.DB_PATH, user.id):
+            await query.answer("Пробный период уже был использован.", show_alert=True)
+            return
+        activate_trial(bot.DB_PATH, user.id)
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=(
+                "🎁 <b>Пробный период активирован на 3 дня!</b>\n\n"
+                "Все возможности Премиума доступны прямо сейчас:\n"
+                "💠 Премиум-колода\n"
+                "📅 Расклад на месяц\n"
+                "✝️ Кельтский крест\n"
+                "🌿 Руна-намерение\n"
+                "🪬 Руна недели\n\n"
+                "Меню обновилось — нажми любую кнопку!"
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=PREMIUM_KEYBOARD,
+        )
+        return
+
     if data == "premium:paid:card":
         # Manual payment claimed — notify operators with one-tap activation button
         sender = f"@{user.username}" if user.username else (user.first_name or str(user.id))
@@ -651,6 +822,30 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return
 
+    if data == "premium:paid:card_annual":
+        sender = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+        note = (
+            f"💠 Заявка на премиум ГОДОВОЙ (карта)\n\n"
+            f"От: {sender}\nUser ID: {user.id}\n"
+            f"Сумма: {PREMIUM_ANNUAL_RUB} ₽\n\n"
+            "ПРОВЕРЬ ПОСТУПЛЕНИЕ и активируй на 365 дней:\n"
+            f"/activatepremium {user.id} 365"
+        )
+        activate_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Активировать на год", callback_data=f"admin:activate:{user.id}:365")
+        ]])
+        for admin_id in bot.ADMIN_IDS:
+            try:
+                await context.bot.send_message(chat_id=admin_id, text=note, reply_markup=activate_kb)
+            except TelegramError:
+                pass
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="✅ Заявка на годовой премиум получена. После проверки оплаты подписка будет активирована на год.",
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+        return
+
 
 async def precheckout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.pre_checkout_query.answer(ok=True)
@@ -659,14 +854,19 @@ async def precheckout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     payment = update.message.successful_payment
     if payment.invoice_payload.startswith("premium_"):
-        activate_premium(bot.DB_PATH, update.effective_user.id)
+        is_annual = "1year" in payment.invoice_payload
+        days = 365 if is_annual else 31
+        activate_premium(bot.DB_PATH, update.effective_user.id, days=days)
+        period_label = "на 365 дней (1 год)" if is_annual else "на 31 день"
         await update.message.reply_text(
-            "💠 <b>Премиум активирован на 31 день!</b>\n\n"
+            f"💠 <b>Премиум активирован {period_label}!</b>\n\n"
             "Что теперь доступно:\n"
             "💠 Премиум-колода — уже подключена\n"
-            "🪬 Руна недели — кнопка появилась в меню\n"
-            "🕯 3 личных расклада в месяц бесплатно\n"
-            "🌞 Руна дня — рассылка включена автоматически\n\n"
+            "📅 Расклад на месяц\n"
+            "✝️ Кельтский крест\n"
+            "🪬 Руна недели\n"
+            "🌿 Руна-намерение\n"
+            "🕯 3 личных расклада в месяц бесплатно\n\n"
             "Меню обновилось — нажми любую кнопку!",
             parse_mode=ParseMode.HTML,
             reply_markup=PREMIUM_KEYBOARD,
@@ -887,6 +1087,11 @@ def final_build_application():
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("premium", premium_command))
     app.add_handler(CommandHandler("weekday", weekly_day_command))
+    app.add_handler(CommandHandler("birth_rune", birth_rune_command))
+    app.add_handler(CommandHandler("month_rasklad", month_rasklad_command))
+    app.add_handler(CommandHandler("celtic", celtic_cross_command))
+    app.add_handler(CommandHandler("intention", intention_command))
+    app.add_handler(CommandHandler("ref", referral_command))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
     app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))
@@ -894,23 +1099,19 @@ def final_build_application():
     app.add_handler(CallbackQueryHandler(human_reading_payment_callback, pattern=r"^human_reading:"))
     app.add_handler(CallbackQueryHandler(premium_callback, pattern=r"^premium:"))
     app.add_handler(CallbackQueryHandler(admin_activate_callback, pattern=r"^admin:activate:"))
+    app.add_handler(CallbackQueryHandler(birth_rune_callback, pattern=r"^birth_rune:"))
+    app.add_handler(CallbackQueryHandler(intention_callback, pattern=r"^intention:"))
     app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
     app.add_handler(MessageHandler((filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, operator_media_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, final_text_router))
     app.add_error_handler(bot.error_handler)
-    # Daily broadcast job — 09:00 Moscow time every day
-    app.job_queue.run_daily(send_daily_rune, time=BROADCAST_TIME, name="daily_rune_broadcast")
-    # Weekly reflection question — runs daily at 07:00 UTC, filters by user's preferred day
     from datetime import time as dtime, timezone
-    weekly_time = dtime(7, 0, tzinfo=timezone.utc)
-    app.job_queue.run_daily(send_weekly_question, time=weekly_time, name="weekly_question")
-    # Premium expiry warnings — check daily at 08:00 Moscow (05:00 UTC)
-    expiry_time = dtime(5, 0, tzinfo=timezone.utc)
-    app.job_queue.run_daily(send_premium_expiry_warnings, time=expiry_time, name="premium_expiry_warnings")
-    # Monthly rune — runs daily at 07:00 UTC, acts only on day==1
-    monthly_time = dtime(7, 0, tzinfo=timezone.utc)
-    app.job_queue.run_daily(send_monthly_rune, time=monthly_time, name="monthly_rune")
+    app.job_queue.run_daily(send_daily_rune, time=BROADCAST_TIME, name="daily_rune_broadcast")
+    app.job_queue.run_daily(send_weekly_question, time=dtime(7, 0, tzinfo=timezone.utc), name="weekly_question")
+    app.job_queue.run_daily(send_premium_expiry_warnings, time=dtime(5, 0, tzinfo=timezone.utc), name="premium_expiry_warnings")
+    app.job_queue.run_daily(send_monthly_rune, time=dtime(7, 0, tzinfo=timezone.utc), name="monthly_rune")
+    app.job_queue.run_daily(send_streak_reminders, time=dtime(18, 0, tzinfo=timezone.utc), name="streak_reminders")
     return app
 
 
