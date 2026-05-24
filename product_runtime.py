@@ -155,7 +155,7 @@ def get_user_palette(update: Update) -> str:
     if not user:
         return "light"
     try:
-        profile = bot.get_user_profile(bot.DB_PATH, user.id)
+        profile = bot.get_user_profile(user.id)
         if profile and profile.get("palette") in {"light", "dark", "premium"}:
             return profile["palette"]
     except bot.DatabaseError:
@@ -267,10 +267,10 @@ async def product_start_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
     name = bot.user_name(update)
     try:
-        bot.ensure_user(bot.DB_PATH, update.effective_user.id, name)
-        profile = bot.get_user_profile(bot.DB_PATH, update.effective_user.id)
+        bot.ensure_user(update.effective_user.id, name)
+        profile = bot.get_user_profile(update.effective_user.id)
         if not profile or not profile.get("palette"):
-            bot.start_onboarding(bot.DB_PATH, update.effective_user.id)
+            bot.start_onboarding(update.effective_user.id)
             await update.effective_message.reply_text(bot.build_onboarding_question(1, name), reply_markup=bot.onboarding_keyboard(1))
             return
     except bot.DatabaseError:
@@ -292,7 +292,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         asyncio.create_task(context.bot.send_chat_action(chat_id=chat.id, action=ChatAction.TYPING))
     today = date.today().isoformat()
     try:
-        rune_name, orientation = bot.get_or_create_daily_card(bot.DB_PATH, update.effective_user.id, today, RUNES)
+        rune_name, orientation = bot.get_or_create_daily_card(update.effective_user.id, today, RUNES)
     except bot.DatabaseError:
         bot.logger.exception("Failed to get daily rune")
         await bot.send_private_or_group(update, context, "Не получилось достать руну дня. Попробуй позже.")
@@ -319,7 +319,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         moon_line = ""
     try:
         from database import get_streak
-        streak = get_streak(bot.DB_PATH, update.effective_user.id)
+        streak = get_streak(update.effective_user.id)
         if streak >= 2:
             streak_word = "день" if streak == 1 else "дня" if 2 <= streak <= 4 else "дней"
             streak_line = f"\n\n🔥 {streak} {streak_word} подряд"
@@ -386,7 +386,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     palette = parts[2]
     if palette == "premium":
         from premium_subscription import is_premium_active
-        if not is_premium_active(bot.DB_PATH, update.effective_user.id):
+        if not is_premium_active(update.effective_user.id):
             await query.answer("Премиум-колода доступна только по подписке 💠", show_alert=True)
             await context.bot.send_message(
                 chat_id=update.effective_user.id,
@@ -395,7 +395,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             return
     try:
-        set_user_palette(bot.DB_PATH, update.effective_user.id, palette)
+        set_user_palette(update.effective_user.id, palette)
     except bot.DatabaseError:
         await query.edit_message_text("Не получилось сменить колоду. Попробуй позже.")
         return

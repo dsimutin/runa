@@ -133,10 +133,10 @@ async def final_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     name = bot.user_name(update)
     try:
-        bot.ensure_user(bot.DB_PATH, update.effective_user.id, name)
-        profile = bot.get_user_profile(bot.DB_PATH, update.effective_user.id)
+        bot.ensure_user(update.effective_user.id, name)
+        profile = bot.get_user_profile(update.effective_user.id)
         if not profile or not profile.get("palette"):
-            bot.start_onboarding(bot.DB_PATH, update.effective_user.id)
+            bot.start_onboarding(update.effective_user.id)
             await update.effective_message.reply_text(product_runtime.build_onboarding_question(1, name), reply_markup=product_runtime.onboarding_keyboard(1))
             return
     except bot.DatabaseError:
@@ -154,7 +154,7 @@ async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAUL
     try:
         _, step_raw, answer = query.data.split(":", 2)
         int(step_raw)
-        result = bot.save_onboarding_answer(bot.DB_PATH, update.effective_user.id, answer, len(bot.ONBOARDING_QUESTIONS))
+        result = bot.save_onboarding_answer(update.effective_user.id, answer, len(bot.ONBOARDING_QUESTIONS))
     except Exception:
         bot.logger.exception("Final onboarding failed")
         await query.edit_message_text("Ответ не сохранился. Нажми /start и попробуем заново.")
@@ -196,8 +196,8 @@ async def human_reading_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     # Premium users with free readings go straight to question input
-    if is_premium_active(bot.DB_PATH, update.effective_user.id):
-        free_left = get_free_readings_left(bot.DB_PATH, update.effective_user.id)
+    if is_premium_active(update.effective_user.id):
+        free_left = get_free_readings_left(update.effective_user.id)
         if free_left > 0:
             context.user_data["state"] = product_runtime.STATE_WAITING_HUMAN
             context.user_data["human_reading_is_free"] = True
@@ -264,9 +264,9 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     palette = bot.get_user_palette(update)
     try:
-        init_support_db(bot.DB_PATH)
-        request_id = create_request(bot.DB_PATH, user.id, text, palette)
-        registered_operator_ids = list_operator_ids(bot.DB_PATH, ALLOWED_OPERATOR_USERNAMES)
+        init_support_db()
+        request_id = create_request(user.id, text, palette)
+        registered_operator_ids = list_operator_ids(ALLOWED_OPERATOR_USERNAMES)
     except SupportRequestError:
         bot.logger.exception("Failed to create human reading request")
         await bot.send_private_or_group(update, context, "Не получилось создать заявку. Попробуй чуть позже.")
@@ -278,8 +278,8 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
     is_free = context.user_data.pop("human_reading_is_free", False)
     context.user_data.pop("human_reading_payment_pending", None)
     if is_free:
-        use_free_reading(bot.DB_PATH, user.id)
-        free_left = get_free_readings_left(bot.DB_PATH, user.id)
+        use_free_reading(user.id)
+        free_left = get_free_readings_left(user.id)
         payment_line = f"💠 Премиум — бесплатный расклад (осталось после этого: {free_left})"
     elif payment_claimed:
         payment_line = f"💳 Оплата: пользователь подтвердил перевод {PAYMENT_AMOUNT} ₽. ПРОВЕРЬ ПОСТУПЛЕНИЕ перед ответом."
@@ -318,7 +318,7 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
         await message.reply_text("Чтобы ответ ушёл пользователю, нажми «Ответить» на сообщение заявки и пришли текст или фото.")
         return
     try:
-        request = get_request(bot.DB_PATH, request_id)
+        request = get_request(request_id)
     except SupportRequestError:
         bot.logger.exception("Failed to load request from operator reply")
         await message.reply_text("Не получилось найти заявку.")
@@ -357,7 +357,7 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await message.reply_text("Поддерживаются текст, фото и документ. Пришли реплаем на заявку.")
             return
-        close_request(bot.DB_PATH, request_id)
+        close_request(request_id)
     except (TelegramError, SupportRequestError):
         bot.logger.exception("Failed to send operator reply to user")
         await message.reply_text("Не получилось отправить ответ пользователю.")
@@ -425,8 +425,8 @@ async def operator_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.effective_message.reply_text("Эта команда доступна только операторам.")
         return
     try:
-        init_support_db(bot.DB_PATH)
-        register_operator(bot.DB_PATH, user.id, username)
+        init_support_db()
+        register_operator(user.id, username)
     except SupportRequestError:
         await update.effective_message.reply_text("Не получилось зарегистрировать оператора.")
         return
@@ -443,7 +443,7 @@ async def activatepremium_command(update: Update, context: ContextTypes.DEFAULT_
         return
     target_id = int(context.args[0])
     try:
-        activate_premium(bot.DB_PATH, target_id)
+        activate_premium(target_id)
     except Exception:
         bot.logger.exception("Failed to activate premium for user_id=%s", target_id)
         await update.effective_message.reply_text("Не удалось активировать. Проверь user_id.")
@@ -451,7 +451,7 @@ async def activatepremium_command(update: Update, context: ContextTypes.DEFAULT_
     await update.effective_message.reply_text(f"✅ Премиум активирован для user_id={target_id} на 31 день.")
     try:
         from database import get_premium_status
-        status = get_premium_status(bot.DB_PATH, target_id)
+        status = get_premium_status(target_id)
         await context.bot.send_message(
             chat_id=target_id,
             text=(
@@ -489,7 +489,7 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     request_id = int(context.args[0])
     answer_text = " ".join(context.args[1:]).strip()
     try:
-        request = get_request(bot.DB_PATH, request_id)
+        request = get_request(request_id)
     except SupportRequestError:
         await update.effective_message.reply_text("Не получилось найти заявку.")
         return
@@ -501,7 +501,7 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     try:
         await context.bot.send_message(chat_id=request["user_id"], text=answer_text, reply_markup=bot.MAIN_KEYBOARD)
-        close_request(bot.DB_PATH, request_id)
+        close_request(request_id)
     except (TelegramError, SupportRequestError):
         await update.effective_message.reply_text("Не получилось отправить ответ пользователю.")
         return
@@ -518,9 +518,9 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not message:
         return
     name = bot.user_name(update)
-    if is_premium_active(bot.DB_PATH, user.id):
+    if is_premium_active(user.id):
         from database import get_premium_status
-        status = get_premium_status(bot.DB_PATH, user.id)
+        status = get_premium_status(user.id)
         expires_str = status.get("expires_at", "")
         try:
             from datetime import date as _date
@@ -528,7 +528,7 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             exp_formatted = exp_date.strftime("%d.%m.%Y")
         except (ValueError, TypeError):
             exp_formatted = expires_str or "неизвестно"
-        free_left = get_free_readings_left(bot.DB_PATH, user.id)
+        free_left = get_free_readings_left(user.id)
         await message.reply_text(
             f"💠 <b>Премиум активен до {exp_formatted}</b>\n\n"
             f"Осталось бесплатных личных раскладов: <b>{free_left}</b>",
@@ -539,7 +539,7 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await message.reply_text(
         get_premium_info_text(name),
         parse_mode=ParseMode.HTML,
-        reply_markup=get_premium_keyboard(bot.DB_PATH, user.id),
+        reply_markup=get_premium_keyboard(user.id),
     )
 
 
@@ -560,11 +560,11 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "premium:trial":
         from premium_subscription import is_trial_used
-        if is_trial_used(bot.DB_PATH, user.id):
+        if is_trial_used(user.id):
             await query.answer("Пробный период уже был использован.", show_alert=True)
             return
         try:
-            expires_at = activate_trial(bot.DB_PATH, user.id)
+            expires_at = activate_trial(user.id)
         except Exception:
             bot.logger.exception("Failed to activate trial for user_id=%s", user.id)
             await context.bot.send_message(
@@ -678,7 +678,7 @@ async def precheckout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     payment = update.message.successful_payment
     if payment.invoice_payload.startswith("premium_"):
-        activate_premium(bot.DB_PATH, update.effective_user.id)
+        activate_premium(update.effective_user.id)
         await update.message.reply_text(
             "💠 Премиум активирован на 30 дней!\n\n"
             "Теперь доступна премиум-колода и 3 бесплатных личных расклада в месяц.",
@@ -717,7 +717,7 @@ async def weekly_day_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         day = int(query.data.split(":")[1])
         from database import set_weekly_question_day
-        set_weekly_question_day(bot.DB_PATH, update.effective_user.id, day)
+        set_weekly_question_day(update.effective_user.id, day)
     except Exception:
         bot.logger.exception("Failed to set weekly_question_day")
         await query.edit_message_text("Не получилось сохранить. Попробуй ещё раз.")
@@ -759,8 +759,8 @@ async def weekly_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_
 def final_build_application():
     if not bot.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Add it in environment variables.")
-    bot.init_db(bot.DB_PATH)
-    init_support_db(bot.DB_PATH)
+    bot.init_db()
+    init_support_db()
     app = bot.Application.builder().token(bot.BOT_TOKEN).post_init(bot.post_init).build()
     app.add_handler(CommandHandler("start", final_start_command))
     app.add_handler(CommandHandler("help", product_runtime.bot.help_command))

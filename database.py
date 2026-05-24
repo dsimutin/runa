@@ -101,7 +101,7 @@ def ensure_schema(conn) -> None:
     _schema_initialized = True
 
 
-def init_db(db_path: str) -> None:
+def init_db() -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -110,7 +110,7 @@ def init_db(db_path: str) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def ensure_user(db_path: str, user_id: int, preferred_name: str) -> None:
+def ensure_user(user_id: int, preferred_name: str) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -127,7 +127,7 @@ def ensure_user(db_path: str, user_id: int, preferred_name: str) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def get_user_profile(db_path: str, user_id: int) -> Dict[str, Any] | None:
+def get_user_profile(user_id: int) -> Dict[str, Any] | None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -157,7 +157,7 @@ def get_user_profile(db_path: str, user_id: int) -> Dict[str, Any] | None:
         raise DatabaseError(str(exc)) from exc
 
 
-def start_onboarding(db_path: str, user_id: int) -> None:
+def start_onboarding(user_id: int) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -198,7 +198,7 @@ def _winning_palette(light_score: int, dark_score: int, premium_score: int) -> s
     return "dark"
 
 
-def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questions: int) -> Dict[str, Any]:
+def save_onboarding_answer(user_id: int, answer: str, total_questions: int) -> Dict[str, Any]:
     if answer not in {"light", "dark"}:
         raise DatabaseError("Invalid onboarding answer")
 
@@ -279,7 +279,7 @@ def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questi
         raise DatabaseError(str(exc)) from exc
 
 
-def set_user_palette(db_path: str, user_id: int, palette: str) -> None:
+def set_user_palette(user_id: int, palette: str) -> None:
     if palette not in VALID_PALETTES:
         raise DatabaseError("Invalid palette")
     try:
@@ -300,7 +300,7 @@ def _random_orientation_for_rune(rune: Dict[str, Any]) -> str:
     return random.choice(["up", "rev"])
 
 
-def get_or_create_daily_card(db_path: str, user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
+def get_or_create_daily_card(user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
     """Return one daily rune and its orientation (up/rev)."""
     try:
         with _db() as conn:
@@ -342,12 +342,12 @@ def get_or_create_daily_card(db_path: str, user_id: int, day: str, runes: List[D
         raise DatabaseError(str(exc)) from exc
 
 
-def get_or_create_daily_runes(db_path: str, user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
+def get_or_create_daily_runes(user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
     """Backward compatible wrapper."""
     return get_or_create_daily_card(db_path, user_id, day, runes)
 
 
-def get_preferred_name(db_path: str, user_id: int) -> str | None:
+def get_preferred_name(user_id: int) -> str | None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -359,11 +359,11 @@ def get_preferred_name(db_path: str, user_id: int) -> str | None:
         raise DatabaseError(str(exc)) from exc
 
 
-def set_preferred_name(db_path: str, user_id: int, preferred_name: str) -> None:
+def set_preferred_name(user_id: int, preferred_name: str) -> None:
     ensure_user(db_path, user_id, preferred_name)
 
 
-def get_broadcast_users(db_path: str) -> List[Dict[str, Any]]:
+def get_broadcast_users() -> List[Dict[str, Any]]:
     """Return all users with a chosen palette who have broadcast enabled."""
     try:
         with _db() as conn:
@@ -390,7 +390,7 @@ def get_broadcast_users(db_path: str) -> List[Dict[str, Any]]:
         raise DatabaseError(str(exc)) from exc
 
 
-def set_broadcast_enabled(db_path: str, user_id: int, enabled: bool) -> None:
+def set_broadcast_enabled(user_id: int, enabled: bool) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -403,7 +403,7 @@ def set_broadcast_enabled(db_path: str, user_id: int, enabled: bool) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def set_weekly_question_day(db_path: str, user_id: int, day: int) -> None:
+def set_weekly_question_day(user_id: int, day: int) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -416,7 +416,7 @@ def set_weekly_question_day(db_path: str, user_id: int, day: int) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def get_rune_history(db_path: str, user_id: int, days: int = 7) -> List[Dict[str, Any]]:
+def get_rune_history(user_id: int, days: int = 7) -> List[Dict[str, Any]]:
     from datetime import date, timedelta
 
     cutoff = (date.today() - timedelta(days=days - 1)).isoformat()
@@ -446,7 +446,7 @@ def get_rune_history(db_path: str, user_id: int, days: int = 7) -> List[Dict[str
         raise DatabaseError(str(exc)) from exc
 
 
-def get_streak(db_path: str, user_id: int) -> int:
+def get_streak(user_id: int) -> int:
     from datetime import date, timedelta
 
     try:
@@ -469,7 +469,7 @@ def get_streak(db_path: str, user_id: int) -> int:
         raise DatabaseError(str(exc)) from exc
 
 
-def get_premium_status(db_path: str, user_id: int) -> dict:
+def get_premium_status(user_id: int) -> dict:
     """Return {"expires_at": str|None, "readings_used": int, "trial_expires_at": str|None}."""
     try:
         with _db() as conn:
@@ -491,7 +491,7 @@ def get_premium_status(db_path: str, user_id: int) -> dict:
         raise DatabaseError(str(exc)) from exc
 
 
-def set_premium_expires(db_path: str, user_id: int, expires_at: str) -> None:
+def set_premium_expires(user_id: int, expires_at: str) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -504,7 +504,7 @@ def set_premium_expires(db_path: str, user_id: int, expires_at: str) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def set_trial_expires(db_path: str, user_id: int, expires_at: str) -> None:
+def set_trial_expires(user_id: int, expires_at: str) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -517,7 +517,7 @@ def set_trial_expires(db_path: str, user_id: int, expires_at: str) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def increment_premium_readings(db_path: str, user_id: int) -> None:
+def increment_premium_readings(user_id: int) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -530,7 +530,7 @@ def increment_premium_readings(db_path: str, user_id: int) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def reset_premium_readings(db_path: str, user_id: int) -> None:
+def reset_premium_readings(user_id: int) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -543,7 +543,7 @@ def reset_premium_readings(db_path: str, user_id: int) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def get_expiring_premium_users(db_path: str, dates: List[str]) -> List[Dict[str, Any]]:
+def get_expiring_premium_users(dates: List[str]) -> List[Dict[str, Any]]:
     if not dates:
         return []
     placeholders = ",".join(["%s"] * len(dates))

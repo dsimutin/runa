@@ -38,7 +38,7 @@ def _ensure_support_schema(conn) -> None:
         )
 
 
-def init_support_db(db_path: str) -> None:
+def init_support_db() -> None:
     try:
         with _db() as conn:
             _ensure_support_schema(conn)
@@ -46,7 +46,7 @@ def init_support_db(db_path: str) -> None:
         raise SupportRequestError(str(exc)) from exc
 
 
-def register_operator(db_path: str, user_id: int, username: str) -> None:
+def register_operator(user_id: int, username: str) -> None:
     now = datetime.utcnow().isoformat(timespec="seconds")
     try:
         with _db() as conn:
@@ -64,7 +64,7 @@ def register_operator(db_path: str, user_id: int, username: str) -> None:
         raise SupportRequestError(str(exc)) from exc
 
 
-def list_operator_ids(db_path: str, allowed_usernames: set) -> List[int]:
+def list_operator_ids(allowed_usernames: set) -> List[int]:
     try:
         with _db() as conn:
             _ensure_support_schema(conn)
@@ -76,7 +76,7 @@ def list_operator_ids(db_path: str, allowed_usernames: set) -> List[int]:
         raise SupportRequestError(str(exc)) from exc
 
 
-def create_request(db_path: str, user_id: int, question: str, palette: str) -> int:
+def create_request(user_id: int, question: str, palette: str) -> int:
     now = datetime.utcnow().isoformat(timespec="seconds")
     try:
         with _db() as conn:
@@ -95,7 +95,7 @@ def create_request(db_path: str, user_id: int, question: str, palette: str) -> i
         raise SupportRequestError(str(exc)) from exc
 
 
-def get_request(db_path: str, request_id: int) -> Dict[str, Any] | None:
+def get_request(request_id: int) -> Dict[str, Any] | None:
     try:
         with _db() as conn:
             _ensure_support_schema(conn)
@@ -127,7 +127,7 @@ def get_request(db_path: str, request_id: int) -> Dict[str, Any] | None:
         raise SupportRequestError(str(exc)) from exc
 
 
-def get_latest_open_request(db_path: str) -> Dict[str, Any] | None:
+def get_latest_open_request() -> Dict[str, Any] | None:
     try:
         with _db() as conn:
             _ensure_support_schema(conn)
@@ -148,7 +148,7 @@ def get_latest_open_request(db_path: str) -> Dict[str, Any] | None:
         raise SupportRequestError(str(exc)) from exc
 
 
-def claim_request(db_path: str, request_id: int, operator_id: int, operator_username: str) -> Dict[str, Any] | None:
+def claim_request(request_id: int, operator_id: int, operator_username: str) -> Dict[str, Any] | None:
     now = datetime.utcnow().isoformat(timespec="seconds")
     try:
         with _db() as conn:
@@ -167,7 +167,7 @@ def claim_request(db_path: str, request_id: int, operator_id: int, operator_user
         raise SupportRequestError(str(exc)) from exc
 
 
-def close_request(db_path: str, request_id: int) -> None:
+def close_request(request_id: int) -> None:
     now = datetime.utcnow().isoformat(timespec="seconds")
     try:
         with _db() as conn:
