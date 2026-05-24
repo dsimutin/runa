@@ -351,7 +351,7 @@ def get_or_create_daily_card(user_id: int, day: str, runes: List[Dict[str, Any]]
 
 def get_or_create_daily_runes(user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
     """Backward compatible wrapper."""
-    return get_or_create_daily_card(db_path, user_id, day, runes)
+    return get_or_create_daily_card(user_id, day, runes)
 
 
 def get_preferred_name(user_id: int) -> str | None:
@@ -367,7 +367,7 @@ def get_preferred_name(user_id: int) -> str | None:
 
 
 def set_preferred_name(user_id: int, preferred_name: str) -> None:
-    ensure_user(db_path, user_id, preferred_name)
+    ensure_user(user_id, preferred_name)
 
 
 def get_broadcast_users() -> List[Dict[str, Any]]:
@@ -569,7 +569,6 @@ def get_expiring_premium_users(dates: List[str]) -> List[Dict[str, Any]]:
 
 
 def get_pair_rasklad_runes(
-    db_path: str,
     user_id: int,
     partner_name: str,
     day: str,

@@ -143,7 +143,7 @@ def get_latest_open_request() -> Dict[str, Any] | None:
                 row = cur.fetchone()
                 if not row:
                     return None
-        return get_request(db_path, int(row[0]))
+        return get_request(int(row[0]))
     except psycopg2.Error as exc:
         raise SupportRequestError(str(exc)) from exc
 
@@ -162,7 +162,7 @@ def claim_request(request_id: int, operator_id: int, operator_username: str) -> 
                     """,
                     (operator_id, operator_username, now, request_id),
                 )
-        return get_request(db_path, request_id)
+        return get_request(request_id)
     except psycopg2.Error as exc:
         raise SupportRequestError(str(exc)) from exc
 
