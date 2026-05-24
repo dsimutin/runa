@@ -19,6 +19,7 @@ from daily_broadcast import (
 )
 from history_command import history_command
 from pair_rasklad import pair_rasklad_command
+from year_rasklad import send_year_rasklad
 from human_reading import (
     HUMAN_READING_BUTTON,
     HUMAN_READING_CANCEL_TEXT,
@@ -195,7 +196,18 @@ async def human_reading_command(update: Update, context: ContextTypes.DEFAULT_TY
     if not message or not update.effective_user:
         return
 
-    # Premium users with free readings go straight to question input
+    # Trial users cannot use personal readings
+    if is_trial_active(update.effective_user.id):
+        await message.reply_text(
+            "🕯 <b>Личный расклад</b>\n\n"
+            "В пробном периоде личные расклады недоступны.\n"
+            "Оформи полный премиум — нажми 💠 Премиум в меню.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+        return
+
+    # Paid premium users with free readings go straight to question input
     if is_premium_active(update.effective_user.id):
         free_left = get_free_readings_left(update.effective_user.id)
         if free_left > 0:
@@ -295,10 +307,14 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
         "Нажми «Ответить» на это сообщение и напиши текст ответа.\n"
         "Бот отправит пользователю именно то, что ты напишешь."
     )
+    operator_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Взять заявку", callback_data=f"op:claim:{request_id}")],
+        [InlineKeyboardButton("❌ Отклонить", callback_data=f"op:decline:{request_id}")],
+    ])
     delivered_to = []
     for chat_id in target_ids:
         try:
-            await context.bot.send_message(chat_id=chat_id, text=admin_note)
+            await context.bot.send_message(chat_id=chat_id, text=admin_note, reply_markup=operator_kb)
             delivered_to.append(chat_id)
         except TelegramError:
             bot.logger.exception("Failed to notify personal reading operator chat_id=%s", chat_id)
@@ -404,6 +420,11 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data.pop("state", None)
         await handle_human_request(update, context, text)
         return
+    if state == "waiting_pair_name":
+        context.user_data.pop("state", None)
+        from pair_rasklad import pair_name_received
+        await pair_name_received(update, context, text)
+        return
     if state == bot.STATE_WAITING_ASK:
         context.user_data.pop("state", None)
         await product_runtime.product_send_one_rune_answer(update, context, text)
@@ -508,6 +529,20 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.effective_message.reply_text(f"Ответ по заявке #{request_id} отправлен.")
 
 
+def _premium_features_keyboard(on_trial: bool) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton("🗓 Расклад на год", callback_data="premium:year")],
+    ]
+    if not on_trial:
+        buttons.append([InlineKeyboardButton("✌️ Расклад на пару", callback_data="premium:pair")])
+        buttons.append([InlineKeyboardButton("📅 Настройка дня недели", callback_data="premium:weekday_menu")])
+    else:
+        buttons.append([InlineKeyboardButton("💳 Оформить полный премиум", callback_data="premium:buy:stars")])
+        buttons.append([InlineKeyboardButton("💳 Оплатить картой", callback_data="premium:buy:card")])
+    buttons.append([InlineKeyboardButton("✖ Закрыть", callback_data="premium:close")])
+    return InlineKeyboardMarkup(buttons)
+
+
 async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await bot.ensure_profile_ready(update, context):
         return
@@ -520,10 +555,9 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     name = bot.user_name(update)
     if is_premium_active(user.id):
         from database import get_premium_status
-        from premium_subscription import is_trial_active as _is_trial_active
         status = get_premium_status(user.id)
         expires_str = status.get("expires_at") or status.get("trial_expires_at", "")
-        on_trial = _is_trial_active(user.id)
+        on_trial = is_trial_active(user.id)
         try:
             from datetime import date as _date
             exp_date = _date.fromisoformat(expires_str)
@@ -534,9 +568,10 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         label = "Пробный период активен до" if on_trial else "Премиум активен до"
         await message.reply_text(
             f"💠 <b>{label} {exp_formatted}</b>\n\n"
-            f"Осталось бесплатных личных раскладов: <b>{free_left}</b>",
+            + (f"Осталось бесплатных личных раскладов: <b>{free_left}</b>\n\n" if not on_trial else "")
+            + "Выбери функцию:",
             parse_mode=ParseMode.HTML,
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=_premium_features_keyboard(on_trial),
         )
         return
     await message.reply_text(
@@ -584,13 +619,19 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             chat_id=user.id,
             text=(
                 f"🎁 <b>Пробный период активирован на {TRIAL_DAYS} дней!</b>\n\n"
-                f"Доступна премиум-колода и еженедельный вопрос для рефлексии.\n"
                 f"Подписка действует до {expires_at}.\n\n"
-                "Личные расклады в пробном периоде недоступны — только в платном премиуме.\n\n"
-                "Чтобы оформить полный премиум — нажми 💠 Премиум в меню."
+                "✅ Доступно в пробном периоде:\n"
+                "• Премиум-колода\n"
+                "• Руна дня\n"
+                "• Расклад на год\n\n"
+                "❌ Только в платном премиуме:\n"
+                "• Расклад на пару\n"
+                "• 3 личных расклада в месяц\n"
+                "• Настройка дня еженедельной руны\n\n"
+                "Нажми 💠 Премиум в меню чтобы открыть функции."
             ),
             parse_mode=ParseMode.HTML,
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=_premium_features_keyboard(on_trial=True),
         )
         return
 
@@ -653,17 +694,20 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     if data == "premium:paid:card":
-        # Manual payment claimed — notify operators
         sender = f"@{user.username}" if user.username else (user.first_name or str(user.id))
         note = (
             f"💠 Заявка на премиум (карта)\n\n"
             f"От: {sender}\nUser ID: {user.id}\n"
             f"Сумма: {PREMIUM_PRICE_RUB} ₽\n\n"
-            "ПРОВЕРЬ ПОСТУПЛЕНИЕ. Чтобы активировать, используй /activatepremium <user_id>"
+            "ПРОВЕРЬ ПОСТУПЛЕНИЕ."
         )
+        confirm_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Подтвердить оплату", callback_data=f"op:premium_confirm:{user.id}")],
+            [InlineKeyboardButton("❌ Отклонить", callback_data=f"op:premium_decline:{user.id}")],
+        ])
         for admin_id in bot.ADMIN_IDS:
             try:
-                await context.bot.send_message(chat_id=admin_id, text=note)
+                await context.bot.send_message(chat_id=admin_id, text=note, reply_markup=confirm_kb)
             except TelegramError:
                 bot.logger.exception("Failed to notify admin about premium payment chat_id=%s", admin_id)
         await context.bot.send_message(
@@ -671,6 +715,41 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             text="✅ Заявка на премиум получена. После проверки оплаты подписка будет активирована.",
             reply_markup=bot.MAIN_KEYBOARD,
         )
+        return
+
+    if data == "premium:year":
+        try:
+            await query.delete_message()
+        except TelegramError:
+            pass
+        await send_year_rasklad(update, context)
+        return
+
+    if data == "premium:pair":
+        if is_trial_active(user.id):
+            await query.answer("Расклад на пару доступен только в платном премиуме.", show_alert=True)
+            return
+        try:
+            await query.delete_message()
+        except TelegramError:
+            pass
+        context.user_data["state"] = "waiting_pair_name"
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="✌️ Напиши имя человека для расклада на пару:",
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+        return
+
+    if data == "premium:weekday_menu":
+        if is_trial_active(user.id):
+            await query.answer("Настройка дня доступна только в платном премиуме.", show_alert=True)
+            return
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(d, callback_data=f"weekly_day:{i}")]
+            for i, d in enumerate(["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"])
+        ])
+        await query.edit_message_text("📅 Выбери день для еженедельной руны:", reply_markup=kb)
         return
 
 
@@ -683,10 +762,87 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
     if payment.invoice_payload.startswith("premium_"):
         activate_premium(update.effective_user.id)
         await update.message.reply_text(
-            "💠 Премиум активирован на 30 дней!\n\n"
-            "Теперь доступна премиум-колода и 3 бесплатных личных расклада в месяц.",
+            "💠 <b>Премиум активирован на 30 дней!</b>\n\n"
+            "✅ Доступно:\n"
+            "• Премиум-колода\n"
+            "• Расклад на год\n"
+            "• Расклад на пару\n"
+            "• 3 личных расклада в месяц\n"
+            "• Настройка дня еженедельной руны\n\n"
+            "Нажми 💠 Премиум чтобы открыть функции.",
+            parse_mode=ParseMode.HTML,
             reply_markup=bot.MAIN_KEYBOARD,
         )
+
+
+async def operator_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+    data = query.data or ""
+
+    if data.startswith("op:claim:"):
+        request_id = int(data.split(":")[2])
+        op = update.effective_user
+        try:
+            claim_request(request_id, op.id, op.username or str(op.id))
+            await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Взято в работу", callback_data="op:noop")]
+            ]))
+        except Exception:
+            await query.answer("Не удалось взять заявку.", show_alert=True)
+        return
+
+    if data.startswith("op:decline:"):
+        request_id = int(data.split(":")[2])
+        try:
+            req = get_request(request_id)
+            close_request(request_id)
+            if req:
+                await context.bot.send_message(
+                    chat_id=req["user_id"],
+                    text="🕯 Заявка на личный расклад отклонена оператором. Попробуй позже.",
+                    reply_markup=bot.MAIN_KEYBOARD,
+                )
+            await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Отклонено", callback_data="op:noop")]
+            ]))
+        except Exception:
+            await query.answer("Не удалось отклонить заявку.", show_alert=True)
+        return
+
+    if data.startswith("op:premium_confirm:"):
+        target_id = int(data.split(":")[2])
+        try:
+            activate_premium(target_id)
+            await context.bot.send_message(
+                chat_id=target_id,
+                text="💠 <b>Премиум активирован!</b>\n\nОплата подтверждена. Нажми 💠 Премиум чтобы открыть функции.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+            await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Премиум активирован", callback_data="op:noop")]
+            ]))
+        except Exception:
+            await query.answer("Не удалось активировать.", show_alert=True)
+        return
+
+    if data.startswith("op:premium_decline:"):
+        target_id = int(data.split(":")[2])
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text="❌ Оплата не подтверждена. Проверь реквизиты и попробуй снова.",
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+            await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Отклонено", callback_data="op:noop")]
+            ]))
+        except Exception:
+            await query.answer("Ошибка.", show_alert=True)
+        return
 
 
 _WEEKDAY_NAMES = {0: "Понедельник", 1: "Вторник", 2: "Среда",
@@ -789,6 +945,7 @@ def final_build_application():
     app.add_handler(CallbackQueryHandler(weekly_rasklad_callback, pattern=r"^weekly_rasklad:"))
     app.add_handler(CallbackQueryHandler(human_reading_payment_callback, pattern=r"^human_reading:"))
     app.add_handler(CallbackQueryHandler(premium_callback, pattern=r"^premium:"))
+    app.add_handler(CallbackQueryHandler(operator_action_callback, pattern=r"^op:"))
     app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
     app.add_handler(MessageHandler((filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, operator_media_router))
