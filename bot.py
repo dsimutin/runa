@@ -223,7 +223,7 @@ def get_user_palette(update: Update) -> str:
     if not user:
         return "light"
     try:
-        profile = get_user_profile(DB_PATH, user.id)
+        profile = get_user_profile(user.id)
         if profile and profile.get("palette") in {"light", "dark", "premium"}:
             return profile["palette"]
     except DatabaseError:
@@ -319,13 +319,13 @@ async def ensure_profile_ready(update: Update, context: ContextTypes.DEFAULT_TYP
     if not is_private(update):
         return True
     try:
-        ensure_user(DB_PATH, user.id, user_name(update))
-        profile = get_user_profile(DB_PATH, user.id)
+        ensure_user(user.id, user_name(update))
+        profile = get_user_profile(user.id)
         if profile and profile.get("palette"):
             return True
         step = profile.get("onboarding_step", 0) if profile else 0
         if step <= 0:
-            start_onboarding(DB_PATH, user.id)
+            start_onboarding(user.id)
             step = 1
         await message.reply_text(build_onboarding_question(step, user_name(update)), reply_markup=onboarding_keyboard(step))
         return False
@@ -438,10 +438,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     try:
-        ensure_user(DB_PATH, update.effective_user.id, name)
-        profile = get_user_profile(DB_PATH, update.effective_user.id)
+        ensure_user(update.effective_user.id, name)
+        profile = get_user_profile(update.effective_user.id)
         if not profile or not profile.get("palette"):
-            start_onboarding(DB_PATH, update.effective_user.id)
+            start_onboarding(update.effective_user.id)
             await update.effective_message.reply_text(build_onboarding_question(1, name), reply_markup=onboarding_keyboard(1))
             return
     except DatabaseError:
@@ -466,7 +466,7 @@ async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     try:
-        result = save_onboarding_answer(DB_PATH, update.effective_user.id, answer, len(ONBOARDING_QUESTIONS))
+        result = save_onboarding_answer(update.effective_user.id, answer, len(ONBOARDING_QUESTIONS))
     except DatabaseError:
         logger.exception("Failed to save onboarding answer")
         await query.edit_message_text("Не получилось сохранить ответ. Попробуй позже.")
@@ -553,7 +553,7 @@ async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     today = date.today().isoformat()
     try:
-        rune_name, orientation = get_or_create_daily_card(DB_PATH, update.effective_user.id, today, RUNES)
+        rune_name, orientation = get_or_create_daily_card(update.effective_user.id, today, RUNES)
     except DatabaseError:
         logger.exception("Failed to get daily card")
         await send_private_or_group(update, context, "Сейчас не получается достать карту дня. Попробуй чуть позже.")
@@ -724,7 +724,7 @@ def build_application() -> Application:
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Add it in environment variables.")
 
-    init_db(DB_PATH)
+    init_db()
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
