@@ -5,7 +5,6 @@ from datetime import date, timedelta
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 import bot as _bot
-from database import get_connection, ensure_schema
 
 PREMIUM_PRICE_STARS = 99
 PREMIUM_PRICE_RUB = 299

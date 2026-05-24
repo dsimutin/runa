@@ -357,14 +357,22 @@ def get_broadcast_users(db_path: str) -> List[Dict[str, Any]]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT user_id, preferred_name, palette
+                    SELECT user_id, preferred_name, palette, weekly_question_day
                     FROM users
                     WHERE palette IS NOT NULL
                       AND broadcast_enabled = 1
                     """
                 )
                 rows = cur.fetchall()
-                return [{"user_id": row[0], "preferred_name": row[1], "palette": row[2]} for row in rows]
+                return [
+                    {
+                        "user_id": row[0],
+                        "preferred_name": row[1],
+                        "palette": row[2],
+                        "weekly_question_day": row[3] if row[3] is not None else 6,
+                    }
+                    for row in rows
+                ]
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
@@ -491,6 +499,25 @@ def increment_premium_readings(db_path: str, user_id: int) -> None:
                     "UPDATE users SET premium_readings_used = COALESCE(premium_readings_used, 0) + 1 WHERE user_id = %s",
                     (user_id,),
                 )
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def get_expiring_premium_users(db_path: str, dates: List[str]) -> List[Dict[str, Any]]:
+    """Return users whose premium_expires_at is in the given list of ISO date strings."""
+    if not dates:
+        return []
+    placeholders = ",".join(["%s"] * len(dates))
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT user_id, preferred_name, premium_expires_at FROM users WHERE premium_expires_at IN ({placeholders})",
+                    dates,
+                )
+                rows = cur.fetchall()
+                return [{"user_id": row[0], "preferred_name": row[1], "premium_expires_at": row[2]} for row in rows]
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
 

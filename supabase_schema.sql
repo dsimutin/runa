@@ -26,3 +26,21 @@ CREATE TABLE IF NOT EXISTS daily_runes (
     aux_rune  TEXT  NOT NULL,
     PRIMARY KEY (user_id, date)
 );
+
+CREATE TABLE IF NOT EXISTS human_requests (
+    id                BIGSERIAL PRIMARY KEY,
+    user_id           BIGINT    NOT NULL,
+    question          TEXT      NOT NULL,
+    palette           TEXT      NOT NULL DEFAULT 'light',
+    status            TEXT      NOT NULL DEFAULT 'new',
+    operator_id       BIGINT,
+    operator_username TEXT,
+    created_at        TEXT      NOT NULL,
+    updated_at        TEXT      NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS operators (
+    user_id       BIGINT PRIMARY KEY,
+    username      TEXT   NOT NULL,
+    registered_at TEXT   NOT NULL
+);

@@ -16,8 +16,8 @@ import bot as _bot
 from database import (
     DatabaseError,
     get_broadcast_users,
+    get_expiring_premium_users,
     get_or_create_daily_card,
-    get_connection,
     set_broadcast_enabled,
 )
 from lunar_calendar import moon_phase_today
@@ -112,7 +112,7 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
     Runs daily; each user has a preferred weekday (weekly_question_day, 0=Mon…6=Sun).
     Only sends to users whose preferred day matches today.
     """
-    from database import get_premium_status, get_connection
+    from database import get_premium_status
     from datetime import date as _date
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     from runes_data import RUNES
@@ -140,13 +140,7 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
             expires_at = status.get("expires_at") or ""
             if not (expires_at and expires_at > today_str):
                 continue
-            # Check preferred day (default 6 = Sunday)
-            with get_connection(_bot.DB_PATH) as conn:
-                row = conn.execute(
-                    "SELECT weekly_question_day FROM users WHERE user_id = ?",
-                    (user["user_id"],)
-                ).fetchone()
-            preferred_day = row[0] if row and row[0] is not None else 6
+            preferred_day = user.get("weekly_question_day", 6)
             if preferred_day == today_weekday:
                 eligible.append(user)
         except Exception:
@@ -205,18 +199,13 @@ async def send_premium_expiry_warnings(context: ContextTypes.DEFAULT_TYPE) -> No
     today = date.today()
     warn_dates = [(today + timedelta(days=d)).isoformat() for d in (1, 2, 3)]
     try:
-        with get_connection(_bot.DB_PATH) as conn:
-            rows = conn.execute(
-                "SELECT user_id, preferred_name, premium_expires_at FROM users "
-                "WHERE premium_expires_at IN (?, ?, ?)",
-                warn_dates,
-            ).fetchall()
+        rows = get_expiring_premium_users(_bot.DB_PATH, warn_dates)
     except Exception:
         logger.exception("Failed to query expiring premium users")
         return
 
     for row in rows:
-        user_id, name, expires_at = row
+        user_id, name, expires_at = row["user_id"], row["preferred_name"], row["premium_expires_at"]
         name = name or "друг"
         try:
             exp_date = date.fromisoformat(expires_at)
