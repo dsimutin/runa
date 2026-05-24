@@ -360,6 +360,11 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
         }
     text = format_one_rune_answer(bot.user_name(update), question, rune, sphere_data)
     await bot.send_private_or_group(update, context, text, image_path=image_path)
+    try:
+        from database import save_spread
+        save_spread(bot.DB_PATH, update.effective_user.id, "yes_no", question, rune["name"])
+    except Exception:
+        bot.logger.exception("Failed to save yes/no spread to history")
 
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

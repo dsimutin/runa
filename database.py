@@ -54,10 +54,27 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "premium_expires_at": "ALTER TABLE users ADD COLUMN premium_expires_at TEXT",
         "premium_readings_used": "ALTER TABLE users ADD COLUMN premium_readings_used INTEGER NOT NULL DEFAULT 0",
         "weekly_question_day": "ALTER TABLE users ADD COLUMN weekly_question_day INTEGER NOT NULL DEFAULT 6",
+        "birth_date": "ALTER TABLE users ADD COLUMN birth_date TEXT",
     }
     for column, sql in migrations.items():
         if column not in columns:
             conn.execute(sql)
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_spreads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            spread_type TEXT NOT NULL,
+            question TEXT,
+            rune_names TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_spreads_user ON user_spreads(user_id, created_at DESC)"
+    )
 
 
 def init_db(db_path: str) -> None:
@@ -538,3 +555,51 @@ def get_pair_rasklad_runes(
             break
 
     return runes[indices[0]]["name"], runes[indices[1]]["name"], runes[indices[2]]["name"]
+
+
+def get_birth_date(db_path: str, user_id: int) -> str | None:
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            row = conn.execute("SELECT birth_date FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            return row[0] if row else None
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def set_birth_date(db_path: str, user_id: int, birth_date: str) -> None:
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            conn.execute("UPDATE users SET birth_date = ? WHERE user_id = ?", (birth_date, user_id))
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def save_spread(db_path: str, user_id: int, spread_type: str, question: str | None, rune_names: str) -> None:
+    from datetime import datetime
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            conn.execute(
+                "INSERT INTO user_spreads (user_id, spread_type, question, rune_names, created_at) VALUES (?, ?, ?, ?, ?)",
+                (user_id, spread_type, question, rune_names, datetime.utcnow().strftime("%Y-%m-%d %H:%M")),
+            )
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def get_spread_history(db_path: str, user_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            rows = conn.execute(
+                "SELECT spread_type, question, rune_names, created_at FROM user_spreads WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+            return [
+                {"spread_type": r[0], "question": r[1], "rune_names": r[2], "created_at": r[3]}
+                for r in rows
+            ]
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc

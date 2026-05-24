@@ -664,6 +664,13 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
         return
 
     await send_private_or_group(update, context, text, image_path=image_path)
+    if update.effective_user:
+        try:
+            from database import save_spread
+            names = ", ".join(r[0]["name"] for r in rune_draws)
+            save_spread(DB_PATH, update.effective_user.id, "three_card", question, names)
+        except Exception:
+            logger.exception("Failed to save spread to history")
 
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -19,6 +19,8 @@ from daily_broadcast import (
 )
 from history_command import history_command
 from pair_rasklad import pair_rasklad_command
+from year_spread import format_year_spread
+from rune_profile import life_rune_index, year_rune_index, parse_birth_date
 from human_reading import (
     HUMAN_READING_BUTTON,
     HUMAN_READING_CANCEL_TEXT,
@@ -409,6 +411,19 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data.pop("state", None)
         await product_runtime.bot.send_rasklad(update, context, text)
         return
+    if state == STATE_WAITING_BIRTH_DATE:
+        context.user_data.pop("state", None)
+        birth_date = parse_birth_date(text)
+        if not birth_date:
+            await update.effective_message.reply_text(
+                "Не понял дату. Напиши в формате ДД.ММ.ГГГГ, например: 15.03.1990",
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+            return
+        from database import set_birth_date
+        set_birth_date(bot.DB_PATH, update.effective_user.id, birth_date.isoformat())
+        await _send_rune_profile(update, context, birth_date.isoformat())
+        return
     await update.effective_message.reply_text("Выбери действие на клавиатуре. Или напиши /help, если потерялся.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else bot.private_link_markup(context))
 
 
@@ -528,9 +543,10 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         free_left = get_free_readings_left(bot.DB_PATH, user.id)
         await message.reply_text(
             f"💠 <b>Премиум активен до {exp_formatted}</b>\n\n"
-            f"Осталось бесплатных личных раскладов: <b>{free_left}</b>",
+            f"Осталось бесплатных личных раскладов: <b>{free_left}</b>\n\n"
+            f"Что хочешь открыть?",
             parse_mode=ParseMode.HTML,
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=_premium_features_keyboard(),
         )
         return
     await message.reply_text(
@@ -720,6 +736,127 @@ async def weekly_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_
     await product_runtime.bot.send_rasklad(update, context, question)
 
 
+STATE_WAITING_BIRTH_DATE = "waiting_birth_date"
+
+
+def _premium_features_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗓 Расклад на год", callback_data="premium_feat:year")],
+        [InlineKeyboardButton("🔮 Мой рунический профиль", callback_data="premium_feat:profile")],
+        [InlineKeyboardButton("📜 История раскладов", callback_data="premium_feat:history")],
+    ])
+
+
+async def year_spread_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not update.effective_message:
+        return
+    if not await bot.ensure_profile_ready(update, context):
+        return
+    if not is_premium_active(bot.DB_PATH, update.effective_user.id):
+        await update.effective_message.reply_text(
+            "🗓 Расклад на год доступен только с премиум-подпиской.\n\nНажми 💠 Премиум в меню, чтобы оформить.",
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+        return
+    palette = bot.get_user_palette(update)
+    name = bot.user_name(update)
+    text = format_year_spread(update.effective_user.id, palette, name)
+    await update.effective_message.reply_text(text, parse_mode="HTML", reply_markup=bot.MAIN_KEYBOARD)
+
+
+async def rune_profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not update.effective_message:
+        return
+    if not await bot.ensure_profile_ready(update, context):
+        return
+    if not is_premium_active(bot.DB_PATH, update.effective_user.id):
+        await update.effective_message.reply_text(
+            "🔮 Рунический профиль доступен только с премиум-подпиской.\n\nНажми 💠 Премиум в меню, чтобы оформить.",
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+        return
+    from database import get_birth_date
+    birth_date_str = get_birth_date(bot.DB_PATH, update.effective_user.id)
+    if birth_date_str:
+        await _send_rune_profile(update, context, birth_date_str)
+    else:
+        context.user_data["state"] = STATE_WAITING_BIRTH_DATE
+        await update.effective_message.reply_text(
+            "🔮 <b>Рунический профиль</b>\n\nВведи дату рождения в формате ДД.ММ.ГГГГ\nНапример: 15.03.1990",
+            parse_mode="HTML",
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
+
+
+async def _send_rune_profile(update: Update, context: ContextTypes.DEFAULT_TYPE, birth_date_str: str) -> None:
+    from datetime import date as _date
+    try:
+        birth_date = _date.fromisoformat(birth_date_str)
+    except ValueError:
+        if update.effective_message:
+            await update.effective_message.reply_text("Не удалось прочитать дату. Попробуй снова через /profile", reply_markup=bot.MAIN_KEYBOARD)
+        return
+
+    from runes_data import RUNES
+    palette = bot.get_user_palette(update)
+    name = bot.user_name(update)
+
+    life_idx = life_rune_index(birth_date) - 1
+    year_idx = year_rune_index(birth_date) - 1
+    life_rune = RUNES[life_idx % len(RUNES)]
+    yr_rune = RUNES[year_idx % len(RUNES)]
+
+    from rune_text_repository import get_daily_text
+    try:
+        life_text = get_daily_text(life_rune["key"], palette, "up")
+    except KeyError:
+        life_text = ""
+    try:
+        year_text = get_daily_text(yr_rune["key"], palette, "up")
+    except KeyError:
+        year_text = ""
+
+    current_year = _date.today().year
+    text = (
+        f"🔮 <b>{name}, твой рунический профиль</b>\n\n"
+        f"<b>Руна жизни — {life_rune['name']}</b>\n"
+        f"<i>Постоянная энергия, которая ведёт тебя.</i>\n"
+        f"{life_text}\n\n"
+        f"<b>Руна {current_year} года — {yr_rune['name']}</b>\n"
+        f"<i>Главная тема этого года.</i>\n"
+        f"{year_text}"
+    )
+    if update.effective_message:
+        await update.effective_message.reply_text(text, parse_mode="HTML", reply_markup=bot.MAIN_KEYBOARD)
+
+
+async def premium_feature_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+    action = (query.data or "").split(":")[1] if ":" in (query.data or "") else ""
+
+    if action == "year":
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except TelegramError:
+            pass
+        await year_spread_command(update, context)
+    elif action == "profile":
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except TelegramError:
+            pass
+        await rune_profile_command(update, context)
+    elif action == "history":
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except TelegramError:
+            pass
+        await history_command(update, context)
+
+
 def final_build_application():
     if not bot.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Add it in environment variables.")
@@ -743,6 +880,8 @@ def final_build_application():
     app.add_handler(CommandHandler("pair", pair_rasklad_command))
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("premium", premium_command))
+    app.add_handler(CommandHandler("year", year_spread_command))
+    app.add_handler(CommandHandler("profile_rune", rune_profile_command))
     app.add_handler(CommandHandler("weekday", weekly_day_command))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
@@ -750,6 +889,7 @@ def final_build_application():
     app.add_handler(CallbackQueryHandler(weekly_rasklad_callback, pattern=r"^weekly_rasklad:"))
     app.add_handler(CallbackQueryHandler(human_reading_payment_callback, pattern=r"^human_reading:"))
     app.add_handler(CallbackQueryHandler(premium_callback, pattern=r"^premium:"))
+    app.add_handler(CallbackQueryHandler(premium_feature_callback, pattern=r"^premium_feat:"))
     app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
     app.add_handler(MessageHandler((filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, operator_media_router))
