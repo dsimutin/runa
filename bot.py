@@ -430,6 +430,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     context.user_data.clear()
     name = user_name(update)
 
+    if not update.effective_message:
+        return
+
     if not is_private(update):
         await update.effective_message.reply_text(
             "Раскладам нужна личка. Открой со мной личный чат и нажми /start — там и продолжим.",

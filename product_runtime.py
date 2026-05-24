@@ -229,8 +229,8 @@ def product_rune_day_full_text(name: str, main: dict, palette: str) -> str:
 
 
 def product_daily_text(name: str, main: dict, main_text: dict, aux: dict, aux_text: dict, palette: str, main_alt: bool, aux_alt: bool) -> str:
-    key = palette if palette in HUMAN_DAILY_OPENINGS else "light"
-    opening = stable_pick(HUMAN_DAILY_OPENINGS[key], name, main["key"], aux["key"], date.today().isoformat()).format(name=name)
+    opening = _daily_opening(palette, name)
+    key = palette if palette in HUMAN_DAILY_CLOSINGS else "light"
     closing = stable_pick(HUMAN_DAILY_CLOSINGS[key], name, main["key"], aux["key"], "closing", date.today().isoformat())
     main_desc = alt_meaning(main, palette) if main_alt else main_text["short_desc"]
     aux_desc = alt_meaning(aux, palette) if aux_alt else aux_text["short_desc"]
