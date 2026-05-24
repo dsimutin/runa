@@ -1,8 +1,10 @@
+import os
+
 HUMAN_READING_BUTTON = "🕯 Личный расклад"
 
-PAYMENT_PHONE = "+79992218689"
-PAYMENT_CARD = "5536914130694684"
-PAYMENT_AMOUNT = "100"
+PAYMENT_PHONE = os.getenv("PAYMENT_PHONE", "")
+PAYMENT_CARD = os.getenv("PAYMENT_CARD", "")
+PAYMENT_AMOUNT = os.getenv("PAYMENT_AMOUNT", "100")
 
 HUMAN_READING_TEXT = (
     "🕯 <b>Личный расклад</b>\n\n"
@@ -15,7 +17,7 @@ HUMAN_READING_TEXT = (
     f"Карта: <code>{PAYMENT_CARD}</code>\n"
     f"СБП по номеру телефона: <code>{PAYMENT_PHONE}</code>\n\n"
     "Любой банк → перевод по номеру карты или по номеру телефона через СБП. "
-    "Сумма ровно 100 ₽.\n\n"
+    f"Сумма ровно {PAYMENT_AMOUNT} ₽.\n\n"
     "После оплаты нажмите кнопку «Я оплатил» и пришлите вопрос следующим сообщением."
 )
 

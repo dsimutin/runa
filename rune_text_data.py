@@ -1359,7 +1359,8 @@ _PREFIX_MAP = {
 
 def _parse_card_of_day_txt(path: str) -> Dict[str, Any]:
     """Parse card_of_day_short.txt into the rune_day_texts dict format."""
-    txt = open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as _f:
+        txt = _f.read()
     section_re = _re.compile(r"={30,}\n([A-Z]+)\s*—.*?\n={30,}", _re.MULTILINE)
     sections = section_re.split(txt)
     result: Dict[str, Any] = {}

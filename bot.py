@@ -41,7 +41,7 @@ except Exception:
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-DB_PATH = os.getenv("DB_PATH", "rune_bot.db")
+DB_PATH = os.getenv("DB_PATH", "/data/rune_bot.db")
 PORT = int(os.getenv("PORT", "10000"))
 WEBHOOK_URL = (os.getenv("WEBHOOK_URL") or os.getenv("RENDER_EXTERNAL_URL", "")).strip().rstrip("/")
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "webhook").strip().strip("/") or "webhook"

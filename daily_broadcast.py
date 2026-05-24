@@ -73,13 +73,14 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         try:
             if image_path:
-                await context.bot.send_photo(
-                    chat_id=user_id,
-                    photo=open(image_path, "rb"),
-                    caption=text,
-                    parse_mode="HTML",
-                    reply_markup=_bot.MAIN_KEYBOARD,
-                )
+                with open(image_path, "rb") as photo_file:
+                    await context.bot.send_photo(
+                        chat_id=user_id,
+                        photo=photo_file,
+                        caption=text,
+                        parse_mode="HTML",
+                        reply_markup=_bot.MAIN_KEYBOARD,
+                    )
             else:
                 await context.bot.send_message(
                     chat_id=user_id,
@@ -172,13 +173,14 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
         ]])
         try:
             if image_path:
-                await context.bot.send_photo(
-                    chat_id=user_id,
-                    photo=open(image_path, "rb"),
-                    caption=text,
-                    parse_mode="HTML",
-                    reply_markup=kb,
-                )
+                with open(image_path, "rb") as photo_file:
+                    await context.bot.send_photo(
+                        chat_id=user_id,
+                        photo=photo_file,
+                        caption=text,
+                        parse_mode="HTML",
+                        reply_markup=kb,
+                    )
             else:
                 await context.bot.send_message(
                     chat_id=user_id,
@@ -275,10 +277,11 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"<i>Эта руна задаёт тон месяца. Держи её в уме при важных решениях.</i>"
             )
             if image_path:
-                await context.bot.send_photo(
-                    chat_id=user_id, photo=open(image_path, "rb"),
-                    caption=text, parse_mode="HTML", reply_markup=_bot.MAIN_KEYBOARD,
-                )
+                with open(image_path, "rb") as photo_file:
+                    await context.bot.send_photo(
+                        chat_id=user_id, photo=photo_file,
+                        caption=text, parse_mode="HTML", reply_markup=_bot.MAIN_KEYBOARD,
+                    )
             else:
                 await context.bot.send_message(
                     chat_id=user_id, text=text, parse_mode="HTML",
