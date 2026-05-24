@@ -11,7 +11,7 @@ services:
       - key: OPENAI_MODEL
         value: gpt-3.5-turbo
       - key: DB_PATH
-        value: rune_bot.db
+        value: /data/rune_bot.db
       - key: PORT
         value: 10000
       - key: BOT_TOKEN
@@ -20,3 +20,7 @@ services:
         sync: false
       - key: WEBHOOK_PATH
         value: webhook
+    disk:
+      name: runa-data
+      mountPath: /data
+      sizeGB: 1
