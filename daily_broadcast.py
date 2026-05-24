@@ -36,7 +36,7 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Job callback: send today's rune to all subscribed users."""
     today = date.today().isoformat()
     try:
-        users = get_broadcast_users(_bot.DB_PATH)
+        users = get_broadcast_users()
     except DatabaseError:
         logger.exception("Failed to load broadcast users")
         return
@@ -51,7 +51,7 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         try:
             rune_name, orientation = get_or_create_daily_card(
-                _bot.DB_PATH, user_id, today, RUNES
+                user_id, today, RUNES
             )
             rune = get_rune_by_name(rune_name)
             image_path = _bot.get_rune_image_path(rune, palette)
@@ -123,7 +123,7 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
     week = today.isocalendar()[1]
 
     try:
-        users = get_broadcast_users(_bot.DB_PATH)
+        users = get_broadcast_users()
     except DatabaseError:
         logger.exception("Failed to load broadcast users for weekly question")
         return
@@ -230,7 +230,7 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
     if today.day != 1:
         return  # Job runs daily, only acts on 1st
     try:
-        users = get_broadcast_users(_bot.DB_PATH)
+        users = get_broadcast_users()
     except DatabaseError:
         logger.exception("Failed to load users for monthly rune")
         return

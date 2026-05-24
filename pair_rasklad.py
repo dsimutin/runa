@@ -18,7 +18,7 @@ async def _build_pair_text(update, context, partner_name: str) -> None:
     today = date.today().isoformat()
 
     rune1_name, rune2_name, rune3_name = get_pair_rasklad_runes(
-        _bot.DB_PATH, user_id, partner_name, today, RUNES
+        user_id, partner_name, today, RUNES
     )
 
     rune1 = get_rune_by_name(rune1_name)

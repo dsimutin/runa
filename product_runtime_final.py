@@ -520,8 +520,10 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     name = bot.user_name(update)
     if is_premium_active(user.id):
         from database import get_premium_status
+        from premium_subscription import is_trial_active as _is_trial_active
         status = get_premium_status(user.id)
-        expires_str = status.get("expires_at", "")
+        expires_str = status.get("expires_at") or status.get("trial_expires_at", "")
+        on_trial = _is_trial_active(user.id)
         try:
             from datetime import date as _date
             exp_date = _date.fromisoformat(expires_str)
@@ -529,8 +531,9 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except (ValueError, TypeError):
             exp_formatted = expires_str or "неизвестно"
         free_left = get_free_readings_left(user.id)
+        label = "Пробный период активен до" if on_trial else "Премиум активен до"
         await message.reply_text(
-            f"💠 <b>Премиум активен до {exp_formatted}</b>\n\n"
+            f"💠 <b>{label} {exp_formatted}</b>\n\n"
             f"Осталось бесплатных личных раскладов: <b>{free_left}</b>",
             parse_mode=ParseMode.HTML,
             reply_markup=bot.MAIN_KEYBOARD,
