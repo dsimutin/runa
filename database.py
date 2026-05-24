@@ -6,13 +6,14 @@ from typing import Any, Dict, List, Tuple
 
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
-# Schema is created once per process — avoids repeated CREATE TABLE on every call
 _schema_initialized = False
+_pool: psycopg2.pool.ThreadedConnectionPool | None = None
 
 
 class DatabaseError(Exception):
@@ -27,18 +28,24 @@ def _conn_url() -> str:
     if not DATABASE_URL:
         raise DatabaseError("DATABASE_URL env var is not set")
     url = DATABASE_URL
-    # Supabase requires SSL; add sslmode=require if not already present
     if "sslmode=" not in url:
         sep = "&" if "?" in url else "?"
         url = f"{url}{sep}sslmode=require"
     return url
 
 
+def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
+    global _pool
+    if _pool is None or _pool.closed:
+        _pool = psycopg2.pool.ThreadedConnectionPool(1, 5, dsn=_conn_url())
+    return _pool
+
+
 @contextmanager
 def _db():
-    """Open a PostgreSQL connection, commit on success, rollback on any error."""
+    """Borrow a connection from the pool, commit on success, rollback on error."""
     try:
-        conn = psycopg2.connect(_conn_url())
+        conn = _get_pool().getconn()
     except psycopg2.Error as exc:
         logger.error("DB connection failed: %s", exc)
         raise DatabaseError(f"Connection failed: {exc}") from exc
@@ -53,7 +60,7 @@ def _db():
         raise
     finally:
         try:
-            conn.close()
+            _get_pool().putconn(conn)
         except Exception:
             pass
 
