@@ -1,3 +1,4 @@
+import logging
 import os
 import random
 from contextlib import contextmanager
@@ -6,7 +7,12 @@ from typing import Any, Dict, List, Tuple
 import psycopg2
 import psycopg2.extras
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+logger = logging.getLogger(__name__)
+
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+# Schema is created once per process — avoids repeated CREATE TABLE on every call
+_schema_initialized = False
 
 
 class DatabaseError(Exception):
@@ -17,39 +23,69 @@ VALID_PALETTES = {"light", "dark", "premium"}
 DAILY_ORIENTATIONS = {"up", "rev"}
 
 
+def _conn_url() -> str:
+    if not DATABASE_URL:
+        raise DatabaseError("DATABASE_URL env var is not set")
+    url = DATABASE_URL
+    # Supabase requires SSL; add sslmode=require if not already present
+    if "sslmode=" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}sslmode=require"
+    return url
+
+
 @contextmanager
 def _db():
-    conn = psycopg2.connect(DATABASE_URL)
+    """Open a PostgreSQL connection, commit on success, rollback on any error."""
+    try:
+        conn = psycopg2.connect(_conn_url())
+    except psycopg2.Error as exc:
+        logger.error("DB connection failed: %s", exc)
+        raise DatabaseError(f"Connection failed: {exc}") from exc
     try:
         yield conn
         conn.commit()
-    except psycopg2.Error:
-        conn.rollback()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def ensure_schema(conn) -> None:
-    """Create all required tables. Safe to run repeatedly."""
+    """Create all required tables. Runs once per process."""
+    global _schema_initialized
+    if _schema_initialized:
+        return
     with conn.cursor() as cur:
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
-                user_id             BIGINT  PRIMARY KEY,
-                preferred_name      TEXT    NOT NULL DEFAULT 'друг',
-                palette             TEXT,
-                psychotype          TEXT,
-                onboarding_step     INTEGER NOT NULL DEFAULT 0,
+                user_id                   BIGINT  PRIMARY KEY,
+                preferred_name            TEXT    NOT NULL DEFAULT 'друг',
+                palette                   TEXT,
+                psychotype                TEXT,
+                onboarding_step           INTEGER NOT NULL DEFAULT 0,
                 onboarding_score_light    INTEGER NOT NULL DEFAULT 0,
                 onboarding_score_dark     INTEGER NOT NULL DEFAULT 0,
                 onboarding_score_premium  INTEGER NOT NULL DEFAULT 0,
-                broadcast_enabled   INTEGER NOT NULL DEFAULT 1,
-                premium_expires_at  TEXT,
+                broadcast_enabled         INTEGER NOT NULL DEFAULT 1,
+                premium_expires_at        TEXT,
                 premium_readings_used     INTEGER NOT NULL DEFAULT 0,
-                weekly_question_day INTEGER NOT NULL DEFAULT 6
+                weekly_question_day       INTEGER NOT NULL DEFAULT 6,
+                trial_expires_at          TEXT
             )
             """
+        )
+        # Migrate existing tables: add trial_expires_at if missing
+        cur.execute(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_expires_at TEXT"
         )
         cur.execute(
             """
@@ -62,12 +98,14 @@ def ensure_schema(conn) -> None:
             )
             """
         )
+    _schema_initialized = True
 
 
 def init_db(db_path: str) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
+        logger.info("Database schema ready (Supabase PostgreSQL)")
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
@@ -179,10 +217,7 @@ def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questi
                 row = cur.fetchone()
                 if not row:
                     cur.execute(
-                        """
-                        INSERT INTO users (user_id, preferred_name, onboarding_step)
-                        VALUES (%s, 'друг', 1)
-                        """,
+                        "INSERT INTO users (user_id, preferred_name, onboarding_step) VALUES (%s, 'друг', 1)",
                         (user_id,),
                     )
                     row = (1, 0, 0, 0)
@@ -194,10 +229,8 @@ def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questi
 
                 if answer == "light":
                     light_score += 1
-                elif answer == "dark":
-                    dark_score += 1
                 else:
-                    premium_score += 1
+                    dark_score += 1
 
                 if step >= total_questions:
                     palette = _winning_palette(light_score, dark_score, premium_score)
@@ -254,11 +287,7 @@ def set_user_palette(db_path: str, user_id: int, palette: str) -> None:
             ensure_schema(conn)
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    UPDATE users
-                    SET palette = %s, psychotype = %s
-                    WHERE user_id = %s
-                    """,
+                    "UPDATE users SET palette = %s, psychotype = %s WHERE user_id = %s",
                     (palette, _psychotype_for_palette(palette), user_id),
                 )
     except psycopg2.Error as exc:
@@ -278,11 +307,7 @@ def get_or_create_daily_card(db_path: str, user_id: int, day: str, runes: List[D
             ensure_schema(conn)
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    SELECT main_rune, aux_rune
-                    FROM daily_runes
-                    WHERE user_id = %s AND date = %s
-                    """,
+                    "SELECT main_rune, aux_rune FROM daily_runes WHERE user_id = %s AND date = %s",
                     (user_id, day),
                 )
                 row = cur.fetchone()
@@ -291,25 +316,17 @@ def get_or_create_daily_card(db_path: str, user_id: int, day: str, runes: List[D
                     orientation = "up" if row[0] == "Пустая руна" else row[1]
                     if orientation != row[1]:
                         cur.execute(
-                            """
-                            UPDATE daily_runes
-                            SET aux_rune = %s
-                            WHERE user_id = %s AND date = %s
-                            """,
+                            "UPDATE daily_runes SET aux_rune = %s WHERE user_id = %s AND date = %s",
                             (orientation, user_id, day),
                         )
                     return row[0], orientation
 
                 if row:
                     rune_name = row[0]
-                    rune = next((item for item in runes if item["name"] == rune_name), random.choice(runes))
+                    rune = next((r for r in runes if r["name"] == rune_name), random.choice(runes))
                     orientation = _random_orientation_for_rune(rune)
                     cur.execute(
-                        """
-                        UPDATE daily_runes
-                        SET aux_rune = %s
-                        WHERE user_id = %s AND date = %s
-                        """,
+                        "UPDATE daily_runes SET aux_rune = %s WHERE user_id = %s AND date = %s",
                         (orientation, user_id, day),
                     )
                     return rune["name"], orientation
@@ -317,10 +334,7 @@ def get_or_create_daily_card(db_path: str, user_id: int, day: str, runes: List[D
                 rune = random.choice(runes)
                 orientation = _random_orientation_for_rune(rune)
                 cur.execute(
-                    """
-                    INSERT INTO daily_runes (user_id, date, main_rune, aux_rune)
-                    VALUES (%s, %s, %s, %s)
-                    """,
+                    "INSERT INTO daily_runes (user_id, date, main_rune, aux_rune) VALUES (%s, %s, %s, %s)",
                     (user_id, day, rune["name"], orientation),
                 )
                 return rune["name"], orientation
@@ -359,8 +373,7 @@ def get_broadcast_users(db_path: str) -> List[Dict[str, Any]]:
                     """
                     SELECT user_id, preferred_name, palette, weekly_question_day
                     FROM users
-                    WHERE palette IS NOT NULL
-                      AND broadcast_enabled = 1
+                    WHERE palette IS NOT NULL AND broadcast_enabled = 1
                     """
                 )
                 rows = cur.fetchall()
@@ -404,7 +417,6 @@ def set_weekly_question_day(db_path: str, user_id: int, day: int) -> None:
 
 
 def get_rune_history(db_path: str, user_id: int, days: int = 7) -> List[Dict[str, Any]]:
-    """Return rune history for the last N days, newest first."""
     from datetime import date, timedelta
 
     cutoff = (date.today() - timedelta(days=days - 1)).isoformat()
@@ -435,7 +447,6 @@ def get_rune_history(db_path: str, user_id: int, days: int = 7) -> List[Dict[str
 
 
 def get_streak(db_path: str, user_id: int) -> int:
-    """Count consecutive days the user has opened the rune of the day."""
     from datetime import date, timedelta
 
     try:
@@ -447,7 +458,6 @@ def get_streak(db_path: str, user_id: int) -> int:
                     (user_id,),
                 )
                 rows = cur.fetchall()
-
         dates = {row[0] for row in rows}
         streak = 0
         current = date.today()
@@ -460,19 +470,23 @@ def get_streak(db_path: str, user_id: int) -> int:
 
 
 def get_premium_status(db_path: str, user_id: int) -> dict:
-    """Return {"expires_at": str|None, "readings_used": int}."""
+    """Return {"expires_at": str|None, "readings_used": int, "trial_expires_at": str|None}."""
     try:
         with _db() as conn:
             ensure_schema(conn)
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT premium_expires_at, premium_readings_used FROM users WHERE user_id = %s",
+                    "SELECT premium_expires_at, premium_readings_used, trial_expires_at FROM users WHERE user_id = %s",
                     (user_id,),
                 )
                 row = cur.fetchone()
                 if not row:
-                    return {"expires_at": None, "readings_used": 0}
-                return {"expires_at": row[0], "readings_used": row[1] or 0}
+                    return {"expires_at": None, "readings_used": 0, "trial_expires_at": None}
+                return {
+                    "expires_at": row[0],
+                    "readings_used": row[1] or 0,
+                    "trial_expires_at": row[2],
+                }
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
@@ -484,6 +498,19 @@ def set_premium_expires(db_path: str, user_id: int, expires_at: str) -> None:
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE users SET premium_expires_at = %s WHERE user_id = %s",
+                    (expires_at, user_id),
+                )
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def set_trial_expires(db_path: str, user_id: int, expires_at: str) -> None:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE users SET trial_expires_at = %s WHERE user_id = %s",
                     (expires_at, user_id),
                 )
     except psycopg2.Error as exc:
@@ -503,8 +530,20 @@ def increment_premium_readings(db_path: str, user_id: int) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
+def reset_premium_readings(db_path: str, user_id: int) -> None:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE users SET premium_readings_used = 0 WHERE user_id = %s",
+                    (user_id,),
+                )
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
 def get_expiring_premium_users(db_path: str, dates: List[str]) -> List[Dict[str, Any]]:
-    """Return users whose premium_expires_at is in the given list of ISO date strings."""
     if not dates:
         return []
     placeholders = ",".join(["%s"] * len(dates))
@@ -522,19 +561,6 @@ def get_expiring_premium_users(db_path: str, dates: List[str]) -> List[Dict[str,
         raise DatabaseError(str(exc)) from exc
 
 
-def reset_premium_readings(db_path: str, user_id: int) -> None:
-    try:
-        with _db() as conn:
-            ensure_schema(conn)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE users SET premium_readings_used = 0 WHERE user_id = %s",
-                    (user_id,),
-                )
-    except psycopg2.Error as exc:
-        raise DatabaseError(str(exc)) from exc
-
-
 def get_pair_rasklad_runes(
     db_path: str,
     user_id: int,
@@ -542,7 +568,6 @@ def get_pair_rasklad_runes(
     day: str,
     runes: List[Dict[str, Any]],
 ) -> Tuple[str, str, str]:
-    """Return a deterministic triple of rune names for a pair reading."""
     import hashlib
 
     seed = hashlib.md5(f"{user_id}:{partner_name.lower()}:{day}".encode()).hexdigest()

@@ -32,11 +32,14 @@ from premium_subscription import (
     get_premium_info_text,
     get_premium_keyboard,
     is_premium_active,
+    is_trial_active,
     activate_premium,
+    activate_trial,
     get_free_readings_left,
     use_free_reading,
     PREMIUM_PRICE_STARS,
     PREMIUM_PRICE_RUB,
+    TRIAL_DAYS,
     PAYMENT_PROVIDER_TOKEN,
 )
 from support_requests import (
@@ -536,7 +539,7 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await message.reply_text(
         get_premium_info_text(name),
         parse_mode=ParseMode.HTML,
-        reply_markup=get_premium_keyboard(),
+        reply_markup=get_premium_keyboard(bot.DB_PATH, user.id),
     )
 
 
@@ -553,6 +556,39 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await query.delete_message()
         except TelegramError:
             pass
+        return
+
+    if data == "premium:trial":
+        from premium_subscription import is_trial_used
+        if is_trial_used(bot.DB_PATH, user.id):
+            await query.answer("Пробный период уже был использован.", show_alert=True)
+            return
+        try:
+            expires_at = activate_trial(bot.DB_PATH, user.id)
+        except Exception:
+            bot.logger.exception("Failed to activate trial for user_id=%s", user.id)
+            await context.bot.send_message(
+                chat_id=user.id,
+                text="Не удалось активировать пробный период. Попробуй позже.",
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+            return
+        try:
+            await query.delete_message()
+        except TelegramError:
+            pass
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=(
+                f"🎁 <b>Пробный период активирован на {TRIAL_DAYS} дней!</b>\n\n"
+                f"Доступна премиум-колода и еженедельный вопрос для рефлексии.\n"
+                f"Подписка действует до {expires_at}.\n\n"
+                "Личные расклады в пробном периоде недоступны — только в платном премиуме.\n\n"
+                "Чтобы оформить полный премиум — нажми 💠 Премиум в меню."
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=bot.MAIN_KEYBOARD,
+        )
         return
 
     if data == "premium:buy:stars":

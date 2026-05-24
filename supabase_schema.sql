@@ -16,8 +16,12 @@ CREATE TABLE IF NOT EXISTS users (
     broadcast_enabled   INTEGER NOT NULL DEFAULT 1,
     premium_expires_at  TEXT,
     premium_readings_used     INTEGER NOT NULL DEFAULT 0,
-    weekly_question_day INTEGER NOT NULL DEFAULT 6
+    weekly_question_day INTEGER NOT NULL DEFAULT 6,
+    trial_expires_at    TEXT
 );
+
+-- Migration for existing installs: add trial column if missing
+ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_expires_at TEXT;
 
 CREATE TABLE IF NOT EXISTS daily_runes (
     user_id  BIGINT NOT NULL,
