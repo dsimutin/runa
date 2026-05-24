@@ -55,6 +55,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "premium_readings_used": "ALTER TABLE users ADD COLUMN premium_readings_used INTEGER NOT NULL DEFAULT 0",
         "weekly_question_day": "ALTER TABLE users ADD COLUMN weekly_question_day INTEGER NOT NULL DEFAULT 6",
         "birth_date": "ALTER TABLE users ADD COLUMN birth_date TEXT",
+        "premium_is_trial": "ALTER TABLE users ADD COLUMN premium_is_trial INTEGER NOT NULL DEFAULT 0",
     }
     for column, sql in migrations.items():
         if column not in columns:
@@ -601,5 +602,24 @@ def get_spread_history(db_path: str, user_id: int, limit: int = 10) -> List[Dict
                 {"spread_type": r[0], "question": r[1], "rune_names": r[2], "created_at": r[3]}
                 for r in rows
             ]
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def set_premium_trial(db_path: str, user_id: int, is_trial: bool) -> None:
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            conn.execute("UPDATE users SET premium_is_trial = ? WHERE user_id = ?", (1 if is_trial else 0, user_id))
+    except sqlite3.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def is_premium_trial(db_path: str, user_id: int) -> bool:
+    try:
+        with get_connection(db_path) as conn:
+            ensure_schema(conn)
+            row = conn.execute("SELECT premium_is_trial FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            return bool(row and row[0])
     except sqlite3.Error as exc:
         raise DatabaseError(str(exc)) from exc

@@ -142,6 +142,28 @@ async def final_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         bot.logger.exception("Failed to start final onboarding")
         await update.effective_message.reply_text("Что-то пошло не так. Попробуй ещё раз через минуту.", reply_markup=bot.MAIN_KEYBOARD)
         return
+
+    # Check if trial premium just expired
+    from database import is_premium_trial, get_premium_status
+    if not is_premium_active(bot.DB_PATH, update.effective_user.id):
+        status = get_premium_status(bot.DB_PATH, update.effective_user.id)
+        if status.get("expires_at") and is_premium_trial(bot.DB_PATH, update.effective_user.id):
+            await update.effective_message.reply_text(
+                "⏰ <b>Пробный период премиума закончился</b>\n\n"
+                f"Ты потерял доступ к:\n"
+                f"🗓 Расклад на год\n"
+                f"🔮 Рунический профиль\n"
+                f"📜 История раскладов\n"
+                f"🪬 Еженедельные вопросы\n"
+                f"🕯 Личные расклады от человека\n\n"
+                f"💠 Хочешь вернуть всё это? Оплати полный премиум — "
+                f"<b>99 ⭐ или 299 ₽ в месяц</b>.\n\n"
+                f"Нажми <b>💠 Премиум</b> в меню, чтобы оформить подписку.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+            return
+
     await update.effective_message.reply_text(f"{name}, всё готово. С чего начнём?", reply_markup=bot.MAIN_KEYBOARD)
 
 
@@ -196,6 +218,16 @@ async def human_reading_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Premium users with free readings go straight to question input
     if is_premium_active(bot.DB_PATH, update.effective_user.id):
+        from database import is_premium_trial
+        if is_premium_trial(bot.DB_PATH, update.effective_user.id):
+            await message.reply_text(
+                "🕯 <b>Личные расклады</b> не доступны в пробном периоде.\n\n"
+                "Это только для оплачивающих подписчиков. "
+                "Попробуй расклады и вопросы выше — они работают в пробном периоде.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+            return
         free_left = get_free_readings_left(bot.DB_PATH, update.effective_user.id)
         if free_left > 0:
             context.user_data["state"] = product_runtime.STATE_WAITING_HUMAN
@@ -571,6 +603,14 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             pass
         return
 
+    if data == "premium:trial":
+        try:
+            await query.delete_message()
+        except TelegramError:
+            pass
+        await trial_command(update, context)
+        return
+
     if data == "premium:buy:stars":
         try:
             await context.bot.send_invoice(
@@ -857,6 +897,52 @@ async def premium_feature_callback(update: Update, context: ContextTypes.DEFAULT
         await history_command(update, context)
 
 
+async def trial_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not update.effective_message:
+        return
+    if not await bot.ensure_profile_ready(update, context):
+        return
+
+    from database import is_premium_trial
+    if is_premium_active(bot.DB_PATH, update.effective_user.id):
+        if is_premium_trial(bot.DB_PATH, update.effective_user.id):
+            await update.effective_message.reply_text(
+                "✨ У тебя уже активен пробный период премиума (7 дней).\n\n"
+                "Наслаждайся расcкладами на год, рунническим профилем и еженедельными вопросами!",
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+        else:
+            await update.effective_message.reply_text(
+                "💠 У тебя уже оплачена полная подписка на премиум.",
+                reply_markup=bot.MAIN_KEYBOARD,
+            )
+        return
+
+    from premium_subscription import activate_premium
+    try:
+        activate_premium(bot.DB_PATH, update.effective_user.id, is_trial=True)
+    except Exception:
+        bot.logger.exception("Failed to activate trial")
+        await update.effective_message.reply_text("Не удалось активировать пробный период.", reply_markup=bot.MAIN_KEYBOARD)
+        return
+
+    name = bot.user_name(update)
+    await update.effective_message.reply_text(
+        f"✨ <b>{name}, пробный период активирован!</b>\n\n"
+        f"<b>7 дней премиума:</b>\n"
+        f"🗓 Расклад на год (/year)\n"
+        f"🔮 Рунический профиль (/profile_rune)\n"
+        f"📜 История раскладов (/history)\n"
+        f"🪬 Еженедельные вопросы\n\n"
+        f"<b>Недоступно в пробном периоде:</b>\n"
+        f"🕯 Личные расклады от человека\n\n"
+        f"<i>Через 7 дней пробный период закончится. "
+        f"После этого сможешь оплатить полный премиум со всеми функциями.</i>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=bot.MAIN_KEYBOARD,
+    )
+
+
 def final_build_application():
     if not bot.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Add it in environment variables.")
@@ -880,6 +966,7 @@ def final_build_application():
     app.add_handler(CommandHandler("pair", pair_rasklad_command))
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("premium", premium_command))
+    app.add_handler(CommandHandler("trial", trial_command))
     app.add_handler(CommandHandler("year", year_spread_command))
     app.add_handler(CommandHandler("profile_rune", rune_profile_command))
     app.add_handler(CommandHandler("weekday", weekly_day_command))

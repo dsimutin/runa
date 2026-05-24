@@ -34,6 +34,7 @@ def get_premium_info_text(name: str) -> str:
 
 def get_premium_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✨ Попробовать 7 дней бесплатно", callback_data="premium:trial")],
         [InlineKeyboardButton(f"⭐ Оплатить {PREMIUM_PRICE_STARS} Stars", callback_data="premium:buy:stars")],
         [InlineKeyboardButton(f"💳 Оплатить {PREMIUM_PRICE_RUB} ₽", callback_data="premium:buy:card")],
         [InlineKeyboardButton("✖ Закрыть", callback_data="premium:close")],
@@ -52,11 +53,13 @@ def is_premium_active(db_path: str, user_id: int) -> bool:
         return False
 
 
-def activate_premium(db_path: str, user_id: int) -> None:
-    from database import set_premium_expires, reset_premium_readings
-    expires_at = (date.today() + timedelta(days=31)).isoformat()
+def activate_premium(db_path: str, user_id: int, is_trial: bool = False) -> None:
+    from database import set_premium_expires, reset_premium_readings, set_premium_trial
+    days = 7 if is_trial else 31
+    expires_at = (date.today() + timedelta(days=days)).isoformat()
     set_premium_expires(db_path, user_id, expires_at)
     reset_premium_readings(db_path, user_id)
+    set_premium_trial(db_path, user_id, is_trial)
     # Also set palette to premium
     try:
         from database import set_user_palette
