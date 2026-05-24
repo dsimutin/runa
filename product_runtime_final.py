@@ -611,6 +611,44 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await trial_command(update, context)
         return
 
+    # Admin activation of manual card payment
+    if data.startswith("premium_activate:"):
+        if not is_authorized_operator(update):
+            await query.answer("Только операторы могут это делать", show_alert=True)
+            return
+        try:
+            target_id = int(data.split(":")[1])
+        except (ValueError, IndexError):
+            await query.answer("Ошибка: неверный ID", show_alert=True)
+            return
+        try:
+            from premium_subscription import activate_premium
+            activate_premium(bot.DB_PATH, target_id)
+            await query.edit_message_text(
+                f"✅ Премиум активирован для user_id={target_id} на 31 день.",
+                parse_mode=ParseMode.HTML,
+            )
+            try:
+                await context.bot.send_message(
+                    chat_id=target_id,
+                    text="💠 <b>Премиум активирован!</b>\n\nТеперь доступна премиум-колода и 3 бесплатных личных расклада в месяц.",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=bot.MAIN_KEYBOARD,
+                )
+            except TelegramError:
+                bot.logger.exception("Failed to notify user about premium activation")
+        except Exception:
+            bot.logger.exception("Failed to activate premium")
+            await query.edit_message_text("❌ Ошибка при активации премиума")
+        return
+
+    if data == "premium_reject":
+        if not is_authorized_operator(update):
+            await query.answer("Только операторы могут это делать", show_alert=True)
+            return
+        await query.edit_message_text("❌ Заявка отклонена")
+        return
+
     if data == "premium:buy:stars":
         try:
             await context.bot.send_invoice(
@@ -670,17 +708,22 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     if data == "premium:paid:card":
-        # Manual payment claimed — notify operators
+        # Manual payment claimed — notify operators with activation button
         sender = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+        admin_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Активировать премиум", callback_data=f"premium_activate:{user.id}")],
+            [InlineKeyboardButton("❌ Отклонить", callback_data="premium_reject")],
+        ])
         note = (
-            f"💠 Заявка на премиум (карта)\n\n"
-            f"От: {sender}\nUser ID: {user.id}\n"
+            f"💠 <b>Заявка на премиум (карта)</b>\n\n"
+            f"От: {sender}\n"
+            f"User ID: <code>{user.id}</code>\n"
             f"Сумма: {PREMIUM_PRICE_RUB} ₽\n\n"
-            "ПРОВЕРЬ ПОСТУПЛЕНИЕ. Чтобы активировать, используй /activatepremium <user_id>"
+            f"<b>ПРОВЕРЬ ПОСТУПЛЕНИЕ</b> и нажми кнопку ниже:"
         )
         for admin_id in bot.ADMIN_IDS:
             try:
-                await context.bot.send_message(chat_id=admin_id, text=note)
+                await context.bot.send_message(chat_id=admin_id, text=note, parse_mode=ParseMode.HTML, reply_markup=admin_kb)
             except TelegramError:
                 bot.logger.exception("Failed to notify admin about premium payment chat_id=%s", admin_id)
         await context.bot.send_message(
@@ -975,7 +1018,7 @@ def final_build_application():
     app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))
     app.add_handler(CallbackQueryHandler(weekly_rasklad_callback, pattern=r"^weekly_rasklad:"))
     app.add_handler(CallbackQueryHandler(human_reading_payment_callback, pattern=r"^human_reading:"))
-    app.add_handler(CallbackQueryHandler(premium_callback, pattern=r"^premium:"))
+    app.add_handler(CallbackQueryHandler(premium_callback, pattern=r"^premium"))
     app.add_handler(CallbackQueryHandler(premium_feature_callback, pattern=r"^premium_feat:"))
     app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
