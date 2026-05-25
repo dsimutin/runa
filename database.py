@@ -32,8 +32,15 @@ def _conn_url() -> str:
     if "sslmode=" not in url:
         extra.append("sslmode=require")
     if "connect_timeout=" not in url:
-        # 10-second connection timeout prevents the event loop from blocking indefinitely
+        # 10-second connection timeout prevents hanging on new connections
         extra.append("connect_timeout=10")
+    if "keepalives=" not in url:
+        # TCP keepalives detect half-open connections (remote dropped, local unaware)
+        # Without these, conn.commit() can hang for MINUTES, freezing the event loop
+        extra.append("keepalives=1")
+        extra.append("keepalives_idle=10")
+        extra.append("keepalives_interval=5")
+        extra.append("keepalives_count=3")
     if extra:
         sep = "&" if "?" in url else "?"
         url += sep + "&".join(extra)
