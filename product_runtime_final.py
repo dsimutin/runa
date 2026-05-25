@@ -970,6 +970,15 @@ async def weekly_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_
     await product_runtime.bot.send_rasklad(update, context, question)
 
 
+async def show_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not update.effective_message:
+        return
+    await update.effective_message.reply_text(
+        "Меню открыто.",
+        reply_markup=build_main_keyboard(update.effective_user.id),
+    )
+
+
 def final_build_application():
     if not bot.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Add it in environment variables.")
@@ -994,7 +1003,7 @@ def final_build_application():
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("premium", premium_command))
     app.add_handler(CommandHandler("weekday", weekly_day_command))
-    app.add_handler(CommandHandler("menu", lambda u, c: u.effective_message.reply_text("Меню открыто.", reply_markup=build_main_keyboard(u.effective_user.id))))
+    app.add_handler(CommandHandler("menu", show_menu_command))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
     app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))
