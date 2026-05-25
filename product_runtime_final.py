@@ -593,15 +593,18 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 def _premium_features_keyboard(on_trial: bool) -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton("🗓 Расклад на год", callback_data="premium:year")],
-    ]
-    if not on_trial:
-        buttons.append([InlineKeyboardButton("✌️ Расклад на пару", callback_data="premium:pair")])
-        buttons.append([InlineKeyboardButton("📅 Настройка дня недели", callback_data="premium:weekday_menu")])
+    if on_trial:
+        # Trial: year reading is in main keyboard, but pair/weekday need upgrade
+        buttons = [
+            [InlineKeyboardButton("💳 Оформить полный премиум (Stars)", callback_data="premium:buy:stars")],
+            [InlineKeyboardButton("💳 Оплатить картой", callback_data="premium:buy:card")],
+        ]
     else:
-        buttons.append([InlineKeyboardButton("💳 Оформить полный премиум", callback_data="premium:buy:stars")])
-        buttons.append([InlineKeyboardButton("💳 Оплатить картой", callback_data="premium:buy:card")])
+        # Paid: year reading and pair are already in the main keyboard —
+        # only show weekday setting here (it has no dedicated button in main keyboard)
+        buttons = [
+            [InlineKeyboardButton("📅 Настройка дня руны недели", callback_data="premium:weekday_menu")],
+        ]
     buttons.append([InlineKeyboardButton("✖ Закрыть", callback_data="premium:close")])
     return InlineKeyboardMarkup(buttons)
 
@@ -628,11 +631,21 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except (ValueError, TypeError):
             exp_formatted = expires_str or "неизвестно"
         free_left = get_free_readings_left(user.id)
-        label = "Пробный период активен до" if on_trial else "Премиум активен до"
+        if on_trial:
+            body = (
+                f"💠 <b>Пробный период активен до {exp_formatted}</b>\n\n"
+                "✅ Доступно: премиум-колода, расклад на год\n"
+                "❌ Только в платном: расклад на пару, личные расклады, настройка дня недели\n\n"
+                "Хочешь всё — оформи полный премиум:"
+            )
+        else:
+            body = (
+                f"💠 <b>Премиум активен до {exp_formatted}</b>\n\n"
+                f"Бесплатных личных раскладов в этом месяце: <b>{free_left}</b>\n\n"
+                "Расклад на год и расклад на пару — в кнопках меню ниже."
+            )
         await message.reply_text(
-            f"💠 <b>{label} {exp_formatted}</b>\n\n"
-            + (f"Осталось бесплатных личных раскладов: <b>{free_left}</b>\n\n" if not on_trial else "")
-            + "Выбери функцию:",
+            body,
             parse_mode=ParseMode.HTML,
             reply_markup=_premium_features_keyboard(on_trial),
         )
