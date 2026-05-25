@@ -28,9 +28,15 @@ def _conn_url() -> str:
     if not DATABASE_URL:
         raise DatabaseError("DATABASE_URL env var is not set")
     url = DATABASE_URL
+    extra: list = []
     if "sslmode=" not in url:
+        extra.append("sslmode=require")
+    if "connect_timeout=" not in url:
+        # 10-second connection timeout prevents the event loop from blocking indefinitely
+        extra.append("connect_timeout=10")
+    if extra:
         sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}sslmode=require"
+        url += sep + "&".join(extra)
     return url
 
 
@@ -43,15 +49,25 @@ def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
 
 @contextmanager
 def _db():
-    """Borrow a connection from the pool, commit on success, rollback on error."""
+    """Borrow a connection from the pool, commit on success, rollback/discard on error."""
+    global _pool
     try:
         conn = _get_pool().getconn()
     except psycopg2.Error as exc:
         logger.error("DB connection failed: %s", exc)
         raise DatabaseError(f"Connection failed: {exc}") from exc
+    is_broken = False
     try:
         yield conn
         conn.commit()
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        # Connection-level error — mark for discard so it is not reused
+        is_broken = True
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     except Exception:
         try:
             conn.rollback()
@@ -60,9 +76,16 @@ def _db():
         raise
     finally:
         try:
-            _get_pool().putconn(conn)
+            if is_broken:
+                # Remove broken connection from pool; next getconn() creates a fresh one
+                _get_pool().putconn(conn, close=True)
+            else:
+                _get_pool().putconn(conn)
         except Exception:
-            pass
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def ensure_schema(conn) -> None:
