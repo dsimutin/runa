@@ -6,13 +6,14 @@ from typing import Any, Dict, List, Tuple
 
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
-# Schema is created once per process — avoids repeated CREATE TABLE on every call
 _schema_initialized = False
+_pool: psycopg2.pool.ThreadedConnectionPool | None = None
 
 
 class DatabaseError(Exception):
@@ -27,24 +28,46 @@ def _conn_url() -> str:
     if not DATABASE_URL:
         raise DatabaseError("DATABASE_URL env var is not set")
     url = DATABASE_URL
-    # Supabase requires SSL; add sslmode=require if not already present
+    extra: list = []
     if "sslmode=" not in url:
+        extra.append("sslmode=require")
+    if "connect_timeout=" not in url:
+        # 10-second connection timeout prevents the event loop from blocking indefinitely
+        extra.append("connect_timeout=10")
+    if extra:
         sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}sslmode=require"
+        url += sep + "&".join(extra)
     return url
+
+
+def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
+    global _pool
+    if _pool is None or _pool.closed:
+        _pool = psycopg2.pool.ThreadedConnectionPool(1, 5, dsn=_conn_url())
+    return _pool
 
 
 @contextmanager
 def _db():
-    """Open a PostgreSQL connection, commit on success, rollback on any error."""
+    """Borrow a connection from the pool, commit on success, rollback/discard on error."""
+    global _pool
     try:
-        conn = psycopg2.connect(_conn_url())
+        conn = _get_pool().getconn()
     except psycopg2.Error as exc:
         logger.error("DB connection failed: %s", exc)
         raise DatabaseError(f"Connection failed: {exc}") from exc
+    is_broken = False
     try:
         yield conn
         conn.commit()
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        # Connection-level error — mark for discard so it's not reused
+        is_broken = True
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     except Exception:
         try:
             conn.rollback()
@@ -53,9 +76,17 @@ def _db():
         raise
     finally:
         try:
-            conn.close()
+            if is_broken:
+                # Remove broken connection from pool; next getconn() creates a fresh one
+                _get_pool().putconn(conn, close=True)
+            else:
+                _get_pool().putconn(conn)
         except Exception:
-            pass
+            # If pool is gone, just close the connection directly
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def ensure_schema(conn) -> None:
@@ -101,7 +132,7 @@ def ensure_schema(conn) -> None:
     _schema_initialized = True
 
 
-def init_db(db_path: str) -> None:
+def init_db() -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -110,7 +141,7 @@ def init_db(db_path: str) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def ensure_user(db_path: str, user_id: int, preferred_name: str) -> None:
+def ensure_user(user_id: int, preferred_name: str) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -127,7 +158,7 @@ def ensure_user(db_path: str, user_id: int, preferred_name: str) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def get_user_profile(db_path: str, user_id: int) -> Dict[str, Any] | None:
+def get_user_profile(user_id: int) -> Dict[str, Any] | None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -157,7 +188,7 @@ def get_user_profile(db_path: str, user_id: int) -> Dict[str, Any] | None:
         raise DatabaseError(str(exc)) from exc
 
 
-def start_onboarding(db_path: str, user_id: int) -> None:
+def start_onboarding(user_id: int) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -198,7 +229,7 @@ def _winning_palette(light_score: int, dark_score: int, premium_score: int) -> s
     return "dark"
 
 
-def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questions: int) -> Dict[str, Any]:
+def save_onboarding_answer(user_id: int, answer: str, total_questions: int) -> Dict[str, Any]:
     if answer not in {"light", "dark"}:
         raise DatabaseError("Invalid onboarding answer")
 
@@ -279,7 +310,7 @@ def save_onboarding_answer(db_path: str, user_id: int, answer: str, total_questi
         raise DatabaseError(str(exc)) from exc
 
 
-def set_user_palette(db_path: str, user_id: int, palette: str) -> None:
+def set_user_palette(user_id: int, palette: str) -> None:
     if palette not in VALID_PALETTES:
         raise DatabaseError("Invalid palette")
     try:
@@ -300,7 +331,7 @@ def _random_orientation_for_rune(rune: Dict[str, Any]) -> str:
     return random.choice(["up", "rev"])
 
 
-def get_or_create_daily_card(db_path: str, user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
+def get_or_create_daily_card(user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
     """Return one daily rune and its orientation (up/rev)."""
     try:
         with _db() as conn:
@@ -342,12 +373,12 @@ def get_or_create_daily_card(db_path: str, user_id: int, day: str, runes: List[D
         raise DatabaseError(str(exc)) from exc
 
 
-def get_or_create_daily_runes(db_path: str, user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
+def get_or_create_daily_runes(user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
     """Backward compatible wrapper."""
-    return get_or_create_daily_card(db_path, user_id, day, runes)
+    return get_or_create_daily_card(user_id, day, runes)
 
 
-def get_preferred_name(db_path: str, user_id: int) -> str | None:
+def get_preferred_name(user_id: int) -> str | None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -359,11 +390,11 @@ def get_preferred_name(db_path: str, user_id: int) -> str | None:
         raise DatabaseError(str(exc)) from exc
 
 
-def set_preferred_name(db_path: str, user_id: int, preferred_name: str) -> None:
-    ensure_user(db_path, user_id, preferred_name)
+def set_preferred_name(user_id: int, preferred_name: str) -> None:
+    ensure_user(user_id, preferred_name)
 
 
-def get_broadcast_users(db_path: str) -> List[Dict[str, Any]]:
+def get_broadcast_users() -> List[Dict[str, Any]]:
     """Return all users with a chosen palette who have broadcast enabled."""
     try:
         with _db() as conn:
@@ -390,7 +421,7 @@ def get_broadcast_users(db_path: str) -> List[Dict[str, Any]]:
         raise DatabaseError(str(exc)) from exc
 
 
-def set_broadcast_enabled(db_path: str, user_id: int, enabled: bool) -> None:
+def set_broadcast_enabled(user_id: int, enabled: bool) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -403,7 +434,7 @@ def set_broadcast_enabled(db_path: str, user_id: int, enabled: bool) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def set_weekly_question_day(db_path: str, user_id: int, day: int) -> None:
+def set_weekly_question_day(user_id: int, day: int) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -416,7 +447,7 @@ def set_weekly_question_day(db_path: str, user_id: int, day: int) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def get_rune_history(db_path: str, user_id: int, days: int = 7) -> List[Dict[str, Any]]:
+def get_rune_history(user_id: int, days: int = 7) -> List[Dict[str, Any]]:
     from datetime import date, timedelta
 
     cutoff = (date.today() - timedelta(days=days - 1)).isoformat()
@@ -446,7 +477,7 @@ def get_rune_history(db_path: str, user_id: int, days: int = 7) -> List[Dict[str
         raise DatabaseError(str(exc)) from exc
 
 
-def get_streak(db_path: str, user_id: int) -> int:
+def get_streak(user_id: int) -> int:
     from datetime import date, timedelta
 
     try:
@@ -469,7 +500,7 @@ def get_streak(db_path: str, user_id: int) -> int:
         raise DatabaseError(str(exc)) from exc
 
 
-def get_premium_status(db_path: str, user_id: int) -> dict:
+def get_premium_status(user_id: int) -> dict:
     """Return {"expires_at": str|None, "readings_used": int, "trial_expires_at": str|None}."""
     try:
         with _db() as conn:
@@ -491,7 +522,7 @@ def get_premium_status(db_path: str, user_id: int) -> dict:
         raise DatabaseError(str(exc)) from exc
 
 
-def set_premium_expires(db_path: str, user_id: int, expires_at: str) -> None:
+def set_premium_expires(user_id: int, expires_at: str) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -504,7 +535,7 @@ def set_premium_expires(db_path: str, user_id: int, expires_at: str) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def set_trial_expires(db_path: str, user_id: int, expires_at: str) -> None:
+def set_trial_expires(user_id: int, expires_at: str) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -517,7 +548,7 @@ def set_trial_expires(db_path: str, user_id: int, expires_at: str) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def increment_premium_readings(db_path: str, user_id: int) -> None:
+def increment_premium_readings(user_id: int) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -530,7 +561,7 @@ def increment_premium_readings(db_path: str, user_id: int) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def reset_premium_readings(db_path: str, user_id: int) -> None:
+def reset_premium_readings(user_id: int) -> None:
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -543,7 +574,7 @@ def reset_premium_readings(db_path: str, user_id: int) -> None:
         raise DatabaseError(str(exc)) from exc
 
 
-def get_expiring_premium_users(db_path: str, dates: List[str]) -> List[Dict[str, Any]]:
+def get_expiring_premium_users(dates: List[str]) -> List[Dict[str, Any]]:
     if not dates:
         return []
     placeholders = ",".join(["%s"] * len(dates))
@@ -562,7 +593,6 @@ def get_expiring_premium_users(db_path: str, dates: List[str]) -> List[Dict[str,
 
 
 def get_pair_rasklad_runes(
-    db_path: str,
     user_id: int,
     partner_name: str,
     day: str,
