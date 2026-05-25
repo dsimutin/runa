@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, PreCheckoutQueryHandler, filters
@@ -55,6 +55,30 @@ from support_requests import (
 )
 
 VERSION_MARKER = "RUNA FINAL 2026-05-07-6"
+
+HIDE_KEYBOARD_BUTTON = "🙈 Скрыть меню"
+
+
+def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    """Возвращает клавиатуру с учётом premium статуса пользователя."""
+    from premium_subscription import is_premium_active, is_trial_active
+    base = [
+        ["🌞 Руна дня", "❓ Вопрос (да/нет)"],
+        ["🔮 Расклад", "🕯 Личный расклад"],
+    ]
+    try:
+        if is_premium_active(user_id):
+            if is_trial_active(user_id):
+                base.append(["🗓 Расклад на год", "💠 Премиум"])
+            else:
+                base.append(["🗓 Расклад на год", "✌️ Расклад на пару"])
+                base.append(["💠 Премиум", "⚙️ Настройки"])
+        else:
+            base.append(["💠 Премиум", "⚙️ Настройки"])
+    except Exception:
+        base.append(["💠 Премиум", "⚙️ Настройки"])
+    base.append(["ℹ️ Помощь", HIDE_KEYBOARD_BUTTON])
+    return ReplyKeyboardMarkup(base, resize_keyboard=True)
 ALLOWED_OPERATOR_USERNAMES = {"mrgrief", "richstewardess"}
 PREMIUM_DIR_CANDIDATES = ["premium", "Premium", "Премиум", "премиум"]
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"]
@@ -390,8 +414,20 @@ async def operator_media_router(update: Update, context: ContextTypes.DEFAULT_TY
 async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (update.effective_message.text or "").strip()
     state = context.user_data.get("state")
+    user_id = update.effective_user.id if update.effective_user else 0
     if is_operator_chat(update):
         await handle_operator_reply(update, context)
+        return
+    if text == HIDE_KEYBOARD_BUTTON:
+        await update.effective_message.reply_text(
+            "Меню скрыто. Напиши любое сообщение или /menu чтобы вернуть его.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+    if text == "/menu" or text == "📲 Показать меню":
+        await update.effective_message.reply_text(
+            "Меню открыто.", reply_markup=build_main_keyboard(user_id)
+        )
         return
     if text == "🌞 Руна дня":
         await product_runtime.product_runa_command(update, context)
@@ -412,6 +448,27 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if text == "💠 Премиум":
         await premium_command(update, context)
+        return
+    if text == "🗓 Расклад на год":
+        if not is_premium_active(user_id):
+            await update.effective_message.reply_text(
+                "🗓 Расклад на год доступен только в премиуме. Нажми 💠 Премиум.",
+                reply_markup=build_main_keyboard(user_id),
+            )
+            return
+        await send_year_rasklad(update, context)
+        return
+    if text == "✌️ Расклад на пару":
+        if is_trial_active(user_id):
+            await update.effective_message.reply_text(
+                "✌️ Расклад на пару доступен только в платном премиуме.",
+                reply_markup=build_main_keyboard(user_id),
+            )
+            return
+        context.user_data["state"] = "waiting_pair_name"
+        await update.effective_message.reply_text(
+            "✌️ Напиши имя человека:", reply_markup=build_main_keyboard(user_id)
+        )
         return
     if text == "ℹ️ Помощь":
         await product_runtime.bot.help_command(update, context)
@@ -627,11 +684,10 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 "❌ Только в платном премиуме:\n"
                 "• Расклад на пару\n"
                 "• 3 личных расклада в месяц\n"
-                "• Настройка дня еженедельной руны\n\n"
-                "Нажми 💠 Премиум в меню чтобы открыть функции."
+                "• Настройка дня еженедельной руны"
             ),
             parse_mode=ParseMode.HTML,
-            reply_markup=_premium_features_keyboard(on_trial=True),
+            reply_markup=build_main_keyboard(user.id),
         )
         return
 
@@ -768,10 +824,9 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
             "• Расклад на год\n"
             "• Расклад на пару\n"
             "• 3 личных расклада в месяц\n"
-            "• Настройка дня еженедельной руны\n\n"
-            "Нажми 💠 Премиум чтобы открыть функции.",
+            "• Настройка дня еженедельной руны",
             parse_mode=ParseMode.HTML,
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=build_main_keyboard(update.effective_user.id),
         )
 
 
@@ -818,9 +873,9 @@ async def operator_action_callback(update: Update, context: ContextTypes.DEFAULT
             activate_premium(target_id)
             await context.bot.send_message(
                 chat_id=target_id,
-                text="💠 <b>Премиум активирован!</b>\n\nОплата подтверждена. Нажми 💠 Премиум чтобы открыть функции.",
+                text="💠 <b>Премиум активирован!</b>\n\nОплата подтверждена.",
                 parse_mode=ParseMode.HTML,
-                reply_markup=bot.MAIN_KEYBOARD,
+                reply_markup=build_main_keyboard(target_id),
             )
             await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Премиум активирован", callback_data="op:noop")]
@@ -939,6 +994,7 @@ def final_build_application():
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("premium", premium_command))
     app.add_handler(CommandHandler("weekday", weekly_day_command))
+    app.add_handler(CommandHandler("menu", lambda u, c: u.effective_message.reply_text("Меню открыто.", reply_markup=build_main_keyboard(u.effective_user.id))))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
     app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))
