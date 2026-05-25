@@ -59,6 +59,12 @@ VERSION_MARKER = "RUNA FINAL 2026-05-07-6"
 HIDE_KEYBOARD_BUTTON = "🙈 Скрыть меню"
 
 
+def _kb(update: Update) -> ReplyKeyboardMarkup:
+    """Shortcut: dynamic keyboard for the current user."""
+    uid = update.effective_user.id if update.effective_user else 0
+    return build_main_keyboard(uid)
+
+
 def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     """Возвращает клавиатуру с учётом premium статуса пользователя."""
     from premium_subscription import is_premium_active, is_trial_active
@@ -166,9 +172,9 @@ async def final_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
     except bot.DatabaseError:
         bot.logger.exception("Failed to start final onboarding")
-        await update.effective_message.reply_text("Что-то пошло не так. Попробуй ещё раз через минуту.", reply_markup=bot.MAIN_KEYBOARD)
+        await update.effective_message.reply_text("Что-то пошло не так. Попробуй ещё раз через минуту.", reply_markup=_kb(update))
         return
-    await update.effective_message.reply_text(f"{name}, всё готово. С чего начнём?", reply_markup=bot.MAIN_KEYBOARD)
+    await update.effective_message.reply_text(f"{name}, всё готово. С чего начнём?", reply_markup=_kb(update))
 
 
 async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -197,7 +203,7 @@ async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAUL
                 "⚙️ <b>Настройки</b> — сменить колоду\n\n"
                 "Можно нажать кнопку ниже."
             ),
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=_kb(update),
             parse_mode="HTML",
         )
         return
@@ -227,7 +233,7 @@ async def human_reading_command(update: Update, context: ContextTypes.DEFAULT_TY
             "В пробном периоде личные расклады недоступны.\n"
             "Оформи полный премиум — нажми 💠 Премиум в меню.",
             parse_mode=ParseMode.HTML,
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=_kb(update),
         )
         return
 
@@ -242,7 +248,7 @@ async def human_reading_command(update: Update, context: ContextTypes.DEFAULT_TY
                 f"У тебя {free_left} бесплатных {'расклад' if free_left == 1 else 'расклада'} по премиуму.\n\n"
                 "Напиши вопрос одним сообщением — он уйдёт человеку для разбора.",
                 parse_mode=ParseMode.HTML,
-                reply_markup=bot.MAIN_KEYBOARD,
+                reply_markup=_kb(update),
             )
             return
 
@@ -270,7 +276,7 @@ async def human_reading_payment_callback(update: Update, context: ContextTypes.D
         await context.bot.send_message(
             chat_id=update.effective_user.id,
             text=HUMAN_READING_CANCEL_TEXT,
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=_kb(update),
         )
         return
     if query.data == PAYMENT_CONFIRM_CALLBACK:
@@ -278,7 +284,7 @@ async def human_reading_payment_callback(update: Update, context: ContextTypes.D
             await context.bot.send_message(
                 chat_id=update.effective_user.id,
                 text="Нажми «🕯 Личный расклад» в меню, чтобы оформить новую заявку.",
-                reply_markup=bot.MAIN_KEYBOARD,
+                reply_markup=_kb(update),
             )
             return
         context.user_data["human_reading_payment_claimed"] = True
@@ -290,7 +296,7 @@ async def human_reading_payment_callback(update: Update, context: ContextTypes.D
         await context.bot.send_message(
             chat_id=update.effective_user.id,
             text=HUMAN_READING_PAID_PROMPT,
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=_kb(update),
         )
 
 
@@ -378,7 +384,7 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
                 chat_id=user_id,
                 photo=photo_file_id,
                 caption=caption,
-                reply_markup=bot.MAIN_KEYBOARD,
+                reply_markup=_kb(update),
             )
         elif message.document:
             caption = (message.caption or "").strip() or None
@@ -386,13 +392,13 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
                 chat_id=user_id,
                 document=message.document.file_id,
                 caption=caption,
-                reply_markup=bot.MAIN_KEYBOARD,
+                reply_markup=_kb(update),
             )
         elif message.text:
             await context.bot.send_message(
                 chat_id=user_id,
                 text=message.text.strip(),
-                reply_markup=bot.MAIN_KEYBOARD,
+                reply_markup=_kb(update),
             )
         else:
             await message.reply_text("Поддерживаются текст, фото и документ. Пришли реплаем на заявку.")
@@ -434,11 +440,11 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if text in {"❓ Вопрос", "❓ Задать вопрос", "❓ Вопрос (да/нет)"}:
         context.user_data["state"] = bot.STATE_WAITING_ASK
-        await update.effective_message.reply_text("❓ Напиши свой вопрос — отвечу одной картой.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else None)
+        await update.effective_message.reply_text("❓ Напиши свой вопрос — отвечу одной картой.", reply_markup=_kb(update) if bot.is_private(update) else None)
         return
     if text == "🔮 Расклад":
         context.user_data["state"] = bot.STATE_WAITING_RASKLAD
-        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты на ситуацию.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else None)
+        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты на ситуацию.", reply_markup=_kb(update) if bot.is_private(update) else None)
         return
     if text == product_runtime.SETTINGS_BUTTON:
         await product_runtime.settings_command(update, context)
@@ -490,7 +496,7 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data.pop("state", None)
         await product_runtime.bot.send_rasklad(update, context, text)
         return
-    await update.effective_message.reply_text("Выбери действие на клавиатуре. Или напиши /help, если потерялся.", reply_markup=bot.MAIN_KEYBOARD if bot.is_private(update) else bot.private_link_markup(context))
+    await update.effective_message.reply_text("Выбери действие на клавиатуре. Или напиши /help, если потерялся.", reply_markup=_kb(update) if bot.is_private(update) else bot.private_link_markup(context))
 
 
 async def operator_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -539,7 +545,7 @@ async def activatepremium_command(update: Update, context: ContextTypes.DEFAULT_
                 "Напиши /premium чтобы проверить статус."
             ),
             parse_mode=ParseMode.HTML,
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=_kb(update),
         )
     except Exception:
         pass
@@ -578,7 +584,7 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.effective_message.reply_text("Эта заявка уже закрыта.")
         return
     try:
-        await context.bot.send_message(chat_id=request["user_id"], text=answer_text, reply_markup=bot.MAIN_KEYBOARD)
+        await context.bot.send_message(chat_id=request["user_id"], text=answer_text, reply_markup=build_main_keyboard(request["user_id"]))
         close_request(request_id)
     except (TelegramError, SupportRequestError):
         await update.effective_message.reply_text("Не получилось отправить ответ пользователю.")
@@ -665,7 +671,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await context.bot.send_message(
                 chat_id=user.id,
                 text="Не удалось активировать пробный период. Попробуй позже.",
-                reply_markup=bot.MAIN_KEYBOARD,
+                reply_markup=_kb(update),
             )
             return
         try:
@@ -706,7 +712,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await context.bot.send_message(
                 chat_id=user.id,
                 text="Не удалось создать счёт. Попробуй чуть позже.",
-                reply_markup=bot.MAIN_KEYBOARD,
+                reply_markup=_kb(update),
             )
         return
 
@@ -727,7 +733,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 await context.bot.send_message(
                     chat_id=user.id,
                     text="Не удалось создать счёт. Попробуй чуть позже.",
-                    reply_markup=bot.MAIN_KEYBOARD,
+                    reply_markup=_kb(update),
                 )
         else:
             from human_reading import PAYMENT_CARD, PAYMENT_PHONE
@@ -769,7 +775,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await context.bot.send_message(
             chat_id=user.id,
             text="✅ Заявка на премиум получена. После проверки оплаты подписка будет активирована.",
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=_kb(update),
         )
         return
 
@@ -793,7 +799,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await context.bot.send_message(
             chat_id=user.id,
             text="✌️ Напиши имя человека для расклада на пару:",
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=_kb(update),
         )
         return
 
@@ -858,7 +864,7 @@ async def operator_action_callback(update: Update, context: ContextTypes.DEFAULT
                 await context.bot.send_message(
                     chat_id=req["user_id"],
                     text="🕯 Заявка на личный расклад отклонена оператором. Попробуй позже.",
-                    reply_markup=bot.MAIN_KEYBOARD,
+                    reply_markup=_kb(update),
                 )
             await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("❌ Отклонено", callback_data="op:noop")]
@@ -890,7 +896,7 @@ async def operator_action_callback(update: Update, context: ContextTypes.DEFAULT
             await context.bot.send_message(
                 chat_id=target_id,
                 text="❌ Оплата не подтверждена. Проверь реквизиты и попробуй снова.",
-                reply_markup=bot.MAIN_KEYBOARD,
+                reply_markup=_kb(update),
             )
             await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("❌ Отклонено", callback_data="op:noop")]
@@ -960,7 +966,7 @@ async def weekly_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_
         await context.bot.send_message(
             chat_id=update.effective_user.id,
             text="Не получилось запустить расклад. Попробуй через меню 🔮 Расклад.",
-            reply_markup=bot.MAIN_KEYBOARD,
+            reply_markup=_kb(update),
         )
         return
     try:
