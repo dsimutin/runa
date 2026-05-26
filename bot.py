@@ -124,6 +124,9 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+# Shown after a rune reading so the phone keyboard doesn't pop up (ReplyKeyboardRemove triggers it)
+READING_KEYBOARD = ReplyKeyboardMarkup([["↩ Меню"]], resize_keyboard=True)
+
 
 def strip_html(text: str) -> str:
     return (
@@ -359,8 +362,7 @@ async def send_private_or_group(
     parse_mode = "HTML" if wants_html(text) else None
     plain_text = strip_html(text)
 
-    from telegram import ReplyKeyboardRemove
-    reply_markup = ReplyKeyboardRemove() if reading_mode else MAIN_KEYBOARD
+    reply_markup = READING_KEYBOARD if reading_mode else MAIN_KEYBOARD
 
     async def send_to_private(target_text: str, mode: str | None) -> None:
         if image_path:
@@ -672,6 +674,10 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     text = (update.effective_message.text or "").strip()
 
     if not await ensure_profile_ready(update, context):
+        return
+
+    if text == "↩ Меню":
+        await update.effective_message.reply_text("Меню открыто.", reply_markup=MAIN_KEYBOARD)
         return
 
     if text == "🌞 Руна дня":
