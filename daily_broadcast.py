@@ -272,15 +272,20 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"{rune_text}\n\n"
                 f"<i>Эта руна задаёт тон месяца. Держи её в уме при важных решениях.</i>"
             )
+            from telegram import ReplyKeyboardRemove
             if image_path:
                 await context.bot.send_photo(
                     chat_id=user_id, photo=open(image_path, "rb"),
-                    caption=text, parse_mode="HTML", reply_markup=_bot.MAIN_KEYBOARD,
+                    caption=f"<b>{monthly_rune['name']}</b>", parse_mode="HTML",
+                )
+                await context.bot.send_message(
+                    chat_id=user_id, text=text, parse_mode="HTML",
+                    reply_markup=ReplyKeyboardRemove(),
                 )
             else:
                 await context.bot.send_message(
                     chat_id=user_id, text=text, parse_mode="HTML",
-                    reply_markup=_bot.MAIN_KEYBOARD,
+                    reply_markup=ReplyKeyboardRemove(),
                 )
             sent += 1
         except Exception:
