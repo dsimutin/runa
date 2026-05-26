@@ -430,7 +430,7 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             reply_markup=ReplyKeyboardRemove(),
         )
         return
-    if text == "/menu" or text == "📲 Показать меню":
+    if text in {"/menu", "📲 Показать меню", "↩ Меню"}:
         await update.effective_message.reply_text(
             "Меню открыто.", reply_markup=build_main_keyboard(user_id)
         )
