@@ -83,7 +83,7 @@ def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
             base.append(["💠 Премиум", "⚙️ Настройки"])
     except Exception:
         base.append(["💠 Премиум", "⚙️ Настройки"])
-    base.append(["ℹ️ Помощь", HIDE_KEYBOARD_BUTTON])
+    base.append(["ℹ️ Помощь"])
     return ReplyKeyboardMarkup(base, resize_keyboard=True)
 ALLOWED_OPERATOR_USERNAMES = {"mrgrief", "richstewardess"}
 PREMIUM_DIR_CANDIDATES = ["premium", "Premium", "Премиум", "премиум"]
