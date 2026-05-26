@@ -57,4 +57,4 @@ async def send_year_rasklad(update, context) -> None:
 
     message_text = "\n".join(lines)
     image_path = _bot.get_rune_image_path(current_rune, palette)
-    await _bot.send_private_or_group(update, context, message_text, image_path=image_path)
+    await _bot.send_private_or_group(update, context, message_text, image_path=image_path, reading_mode=True)

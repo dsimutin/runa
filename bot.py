@@ -349,6 +349,7 @@ async def send_private_or_group(
     text: str,
     *,
     image_path: str | None = None,
+    reading_mode: bool = False,
 ) -> None:
     message = update.effective_message
     user = update.effective_user
@@ -358,16 +359,19 @@ async def send_private_or_group(
     parse_mode = "HTML" if wants_html(text) else None
     plain_text = strip_html(text)
 
+    from telegram import ReplyKeyboardRemove
+    reply_markup = ReplyKeyboardRemove() if reading_mode else MAIN_KEYBOARD
+
     async def send_to_private(target_text: str, mode: str | None) -> None:
         if image_path:
             with open(image_path, "rb") as image_file:
                 if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
-                    await message.reply_photo(photo=image_file, caption=target_text, reply_markup=MAIN_KEYBOARD, parse_mode=mode)
+                    await message.reply_photo(photo=image_file, caption=target_text, reply_markup=reply_markup, parse_mode=mode)
                 else:
-                    await message.reply_photo(photo=image_file, reply_markup=MAIN_KEYBOARD)
-                    await _send_text_message(message, target_text, reply_markup=MAIN_KEYBOARD, parse_mode=mode)
+                    await message.reply_photo(photo=image_file)
+                    await _send_text_message(message, target_text, reply_markup=reply_markup, parse_mode=mode)
         else:
-            await _send_text_message(message, target_text, reply_markup=MAIN_KEYBOARD, parse_mode=mode)
+            await _send_text_message(message, target_text, reply_markup=reply_markup, parse_mode=mode)
 
     async def send_to_group_private(target_text: str, mode: str | None) -> None:
         if image_path:
@@ -574,7 +578,7 @@ async def runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     text = format_daily_message(user_name(update), rune, palette, orientation, text_value)
-    await send_private_or_group(update, context, text, image_path=image_path)
+    await send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
 
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -618,7 +622,7 @@ async def send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     text = format_one_rune_answer(user_name(update), question, rune, text_data)
-    await send_private_or_group(update, context, text, image_path=image_path)
+    await send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
 
 
 async def rasklad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -660,7 +664,7 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
         await send_private_or_group(update, context, "Для одной из карт не найден текст расклада в загруженном файле.")
         return
 
-    await send_private_or_group(update, context, text, image_path=image_path)
+    await send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
 
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

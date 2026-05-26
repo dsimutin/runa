@@ -43,7 +43,7 @@ async def _build_pair_text(update, context, partner_name: str) -> None:
     )
 
     image_path = _bot.get_rune_image_path(rune3, palette)
-    await _bot.send_private_or_group(update, context, message_text, image_path=image_path)
+    await _bot.send_private_or_group(update, context, message_text, image_path=image_path, reading_mode=True)
 
 
 async def pair_rasklad_command(update, context):
