@@ -72,20 +72,29 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
         try:
+            from telegram import ReplyKeyboardRemove
             if image_path:
+                # Photo first — no caption, so it displays full-size without truncation
+                short_caption = f"<b>{rune['name']}</b> · {orientation_label}"
                 await context.bot.send_photo(
                     chat_id=user_id,
                     photo=open(image_path, "rb"),
-                    caption=text,
+                    caption=short_caption,
                     parse_mode="HTML",
-                    reply_markup=_bot.MAIN_KEYBOARD,
+                )
+                # Full text as a separate message; hide keyboard so chat stays clean
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=ReplyKeyboardRemove(),
                 )
             else:
                 await context.bot.send_message(
                     chat_id=user_id,
                     text=text,
                     parse_mode="HTML",
-                    reply_markup=_bot.MAIN_KEYBOARD,
+                    reply_markup=ReplyKeyboardRemove(),
                 )
             sent += 1
         except Forbidden:
