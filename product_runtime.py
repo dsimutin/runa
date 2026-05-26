@@ -328,7 +328,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception:
         streak_line = ""
     text = f"{opening}\n\n{day_text}\n\n{closing}{moon_line}{streak_line}"
-    await bot.send_private_or_group(update, context, text, image_path=image_path)
+    await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
 
 
 async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
@@ -359,7 +359,7 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
             "answer_label": "Да" if answer_kind == "yes" else "Нет",
         }
     text = format_one_rune_answer(bot.user_name(update), question, rune, sphere_data)
-    await bot.send_private_or_group(update, context, text, image_path=image_path)
+    await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
 
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
