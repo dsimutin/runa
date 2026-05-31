@@ -8,6 +8,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, Mes
 
 import bot
 import product_runtime
+from rune_text_repository import draw_yes_no_rune
 from daily_broadcast import (
     BROADCAST_TIME,
     send_daily_rune,
@@ -77,7 +78,7 @@ def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
             if is_trial_active(user_id):
                 base.append(["🗓 Расклад на год", "💠 Премиум"])
             else:
-                base.append(["🗓 Расклад на год", "💕 Взаимоотношения"])
+                base.append(["🗓 Расклад на год", "👥 Взаимоотношения"])
                 base.append(["💠 Премиум", "⚙️ Настройки"])
         else:
             base.append(["💠 Премиум", "⚙️ Настройки"])
@@ -477,23 +478,18 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return
         await send_year_rasklad(update, context)
         return
-    if text == "💕 Взаимоотношения":
+    if text == "👥 Взаимоотношения":
         if is_trial_active(user_id):
             await update.effective_message.reply_text(
-                "💕 Раскладаа на взаимоотношения доступны только в платном премиуме.",
+                "👥 Расклад на взаимоотношения доступен только в платном премиуме.",
                 reply_markup=build_main_keyboard(user_id),
             )
             return
         context.user_data["state"] = "waiting_relationship_name"
         await update.effective_message.reply_text(
-            "💕 <b>Раскладаа на взаимоотношения</b>\n\n"
-            "Три карты показывают энергию вас обоих и то, что между вами.\n\n"
-            "Напиши имя человека или его описание:\n\n"
-            "<i>Примеры:</i>\n"
-            "Анна\n"
-            "мой парень\n"
-            "коллега Маша\n"
-            "подруга",
+            "👥 <b>Расклад на взаимоотношения</b>\n\n"
+            "Три карты: твоя энергия, энергия другого человека и то, что между вами.\n\n"
+            "Напиши имя или описание человека:\n<i>Анна (подруга) · Андрей (коллега) · мой парень</i>",
             reply_markup=build_main_keyboard(user_id),
             parse_mode="HTML"
         )
@@ -501,20 +497,15 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if text == "✌️ Расклад на пару":  # Keep old name for backward compatibility
         if is_trial_active(user_id):
             await update.effective_message.reply_text(
-                "💕 Раскладаа на взаимоотношения доступны только в платном премиуме.",
+                "👥 Расклад на взаимоотношения доступен только в платном премиуме.",
                 reply_markup=build_main_keyboard(user_id),
             )
             return
         context.user_data["state"] = "waiting_relationship_name"
         await update.effective_message.reply_text(
-            "💕 <b>Раскладаа на взаимоотношения</b>\n\n"
-            "Три карты показывают энергию вас обоих и то, что между вами.\n\n"
-            "Напиши имя человека или его описание:\n\n"
-            "<i>Примеры:</i>\n"
-            "Анна\n"
-            "мой парень\n"
-            "коллега Маша\n"
-            "подруга",
+            "👥 <b>Расклад на взаимоотношения</b>\n\n"
+            "Три карты: твоя энергия, энергия другого человека и то, что между вами.\n\n"
+            "Напиши имя или описание человека:\n<i>Анна (подруга) · Андрей (коллега) · мой парень</i>",
             reply_markup=build_main_keyboard(user_id),
             parse_mode="HTML"
         )
@@ -683,14 +674,14 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             body = (
                 f"💠 <b>Пробный период активен до {exp_formatted}</b>\n\n"
                 "✅ Доступно: премиум-колода, расклад на год\n"
-                "❌ Только в платном: расклад на пару, личные расклады, настройка дня недели\n\n"
+                "❌ Только в платном: расклад на взаимоотношения, личные расклады, настройка дня недели\n\n"
                 "Хочешь всё — оформи полный премиум:"
             )
         else:
             body = (
                 f"💠 <b>Премиум активен до {exp_formatted}</b>\n\n"
                 f"Бесплатных личных раскладов в этом месяце: <b>{free_left}</b>\n\n"
-                "Расклад на год и расклад на пару — в кнопках меню ниже."
+                "Расклад на год и расклад на взаимоотношения — в кнопках меню ниже."
             )
         await message.reply_text(
             body,
@@ -749,7 +740,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 "• Руна дня\n"
                 "• Расклад на год\n\n"
                 "❌ Только в платном премиуме:\n"
-                "• Расклад на пару\n"
+                "• Расклад на взаимоотношения\n"
                 "• 3 личных расклада в месяц\n"
                 "• Настройка дня еженедельной руны"
             ),
@@ -848,18 +839,19 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await send_year_rasklad(update, context)
         return
 
-    if data == "premium:pair":
+    if data == "premium:relationship":
         if is_trial_active(user.id):
-            await query.answer("Расклад на пару доступен только в платном премиуме.", show_alert=True)
+            await query.answer("Расклад на взаимоотношения доступен только в платном премиуме.", show_alert=True)
             return
         try:
             await query.delete_message()
         except TelegramError:
             pass
-        context.user_data["state"] = "waiting_pair_name"
+        context.user_data["state"] = "waiting_relationship_name"
         await context.bot.send_message(
             chat_id=user.id,
-            text="✌️ Напиши имя человека для расклада на пару:",
+            text="👥 Напиши имя или описание человека:\n<i>Анна (подруга) · Андрей (коллега) · мой парень</i>",
+            parse_mode=ParseMode.HTML,
             reply_markup=_kb(update),
         )
         return
@@ -889,7 +881,7 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
             "✅ Доступно:\n"
             "• Премиум-колода\n"
             "• Расклад на год\n"
-            "• Расклад на пару\n"
+            "• Расклад на взаимоотношения\n"
             "• 3 личных расклада в месяц\n"
             "• Настройка дня еженедельной руны",
             parse_mode=ParseMode.HTML,
@@ -1082,7 +1074,7 @@ async def trigger_question_callback(update: Update, context: ContextTypes.DEFAUL
 
                 # Draw a rune to determine yes/no orientation
                 from runes_data import RUNES
-                rune = product_runtime.draw_yes_no_rune(RUNES)
+                rune = draw_yes_no_rune(RUNES)
                 palette = bot.get_user_palette(update)
                 image_path = bot.get_rune_image_path(rune, palette)
 
@@ -1094,7 +1086,8 @@ async def trigger_question_callback(update: Update, context: ContextTypes.DEFAUL
 
                 await query.edit_message_text(message_text, parse_mode="HTML")
                 if image_path:
-                    await context.bot.send_photo(chat_id=update.effective_user.id, photo=open(image_path, 'rb'))
+                    with open(image_path, 'rb') as image_file:
+                        await context.bot.send_photo(chat_id=update.effective_user.id, photo=image_file)
 
                 context.user_data.pop("state", None)
             else:
