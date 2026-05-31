@@ -989,6 +989,38 @@ async def weekly_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_
     await product_runtime.bot.send_rasklad(update, context, question)
 
 
+async def year_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle year rasklad interactions: viewing rune details and navigating between months."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+
+    try:
+        parts = query.data.split(":")
+        if parts[0] == "year_rune":
+            # Format: year_rune:user_id:year:month_num
+            user_id = int(parts[1])
+            year = int(parts[2])
+            month_num = int(parts[3])
+            if user_id != update.effective_user.id:
+                await query.answer("Это не твой расклад.", show_alert=True)
+                return
+            from year_rasklad import send_rune_year_details
+            await send_rune_year_details(update, context, user_id, year, month_num)
+        elif parts[0] == "year_rasklad_back":
+            # Format: year_rasklad_back:user_id:year
+            user_id = int(parts[1])
+            year = int(parts[2])
+            if user_id != update.effective_user.id:
+                await query.answer("Это не твой расклад.", show_alert=True)
+                return
+            from year_rasklad import send_year_rasklad_from_callback
+            await send_year_rasklad_from_callback(update, context, user_id, year)
+    except Exception:
+        bot.logger.exception("Failed to handle year rasklad callback")
+        await query.answer("Что-то пошло не так.", show_alert=True)
+
+
 async def show_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.effective_message:
         return
@@ -1039,6 +1071,7 @@ def final_build_application():
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
     app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))
     app.add_handler(CallbackQueryHandler(weekly_rasklad_callback, pattern=r"^weekly_rasklad:"))
+    app.add_handler(CallbackQueryHandler(year_rasklad_callback, pattern=r"^year_rune:|^year_rasklad_back:"))
     app.add_handler(CallbackQueryHandler(human_reading_payment_callback, pattern=r"^human_reading:"))
     app.add_handler(CallbackQueryHandler(premium_callback, pattern=r"^premium:"))
     app.add_handler(CallbackQueryHandler(operator_action_callback, pattern=r"^op:"))
