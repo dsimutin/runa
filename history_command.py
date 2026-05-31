@@ -10,8 +10,8 @@ async def history_command(update, context):
         return
 
     user_id = update.effective_user.id
-    history = get_rune_history(_bot.DB_PATH, user_id, 7)
-    streak = get_streak(_bot.DB_PATH, user_id)
+    history = get_rune_history(user_id, 7)
+    streak = get_streak(user_id)
 
     if not history:
         await update.effective_message.reply_text(

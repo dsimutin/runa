@@ -18,7 +18,7 @@ async def _build_pair_text(update, context, partner_name: str) -> None:
     today = date.today().isoformat()
 
     rune1_name, rune2_name, rune3_name = get_pair_rasklad_runes(
-        _bot.DB_PATH, user_id, partner_name, today, RUNES
+        user_id, partner_name, today, RUNES
     )
 
     rune1 = get_rune_by_name(rune1_name)
@@ -43,14 +43,20 @@ async def _build_pair_text(update, context, partner_name: str) -> None:
     )
 
     image_path = _bot.get_rune_image_path(rune3, palette)
-    await _bot.send_private_or_group(update, context, message_text, image_path=image_path)
+    await _bot.send_private_or_group(update, context, message_text, image_path=image_path, reading_mode=True)
 
 
 async def pair_rasklad_command(update, context):
     """Handler for /pair <name> — reading for two people."""
     if not context.args:
         await update.effective_message.reply_text(
-            "✌️ Напиши имя человека: /pair Анна",
+            "✌️ <b>Расклад на пару</b>\n\n"
+            "Три карты: ты, другой человек, то, что между вами.\n\n"
+            "Напиши имя человека или просто его описание (например, 'парень', 'мама', 'коллега').\n\n"
+            "Примеры:\n"
+            "/pair Анна\n"
+            "/pair мой парень\n"
+            "/pair подруга Маша",
             reply_markup=_bot.MAIN_KEYBOARD,
         )
         return

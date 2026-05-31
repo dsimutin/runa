@@ -155,7 +155,7 @@ def get_user_palette(update: Update) -> str:
     if not user:
         return "light"
     try:
-        profile = bot.get_user_profile(bot.DB_PATH, user.id)
+        profile = bot.get_user_profile(user.id)
         if profile and profile.get("palette") in {"light", "dark", "premium"}:
             return profile["palette"]
     except bot.DatabaseError:
@@ -267,10 +267,10 @@ async def product_start_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
     name = bot.user_name(update)
     try:
-        bot.ensure_user(bot.DB_PATH, update.effective_user.id, name)
-        profile = bot.get_user_profile(bot.DB_PATH, update.effective_user.id)
+        bot.ensure_user(update.effective_user.id, name)
+        profile = bot.get_user_profile(update.effective_user.id)
         if not profile or not profile.get("palette"):
-            bot.start_onboarding(bot.DB_PATH, update.effective_user.id)
+            bot.start_onboarding(update.effective_user.id)
             await update.effective_message.reply_text(bot.build_onboarding_question(1, name), reply_markup=bot.onboarding_keyboard(1))
             return
     except bot.DatabaseError:
@@ -286,24 +286,36 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     if not await bot.ensure_profile_ready(update, context):
         return
-    # Send typing indicator immediately without waiting
-    chat = update.effective_chat
-    if chat:
-        asyncio.create_task(context.bot.send_chat_action(chat_id=chat.id, action=ChatAction.TYPING))
+    message = update.effective_message
+    loading_msg = None
+    if message and bot.is_private(update):
+        try:
+            loading_msg = await message.reply_text("🌀 Перемешиваю руны...")
+        except Exception:
+            pass
     today = date.today().isoformat()
     try:
-        rune_name, orientation = bot.get_or_create_daily_card(bot.DB_PATH, update.effective_user.id, today, RUNES)
+        rune_name, orientation = bot.get_or_create_daily_card(update.effective_user.id, today, RUNES)
     except bot.DatabaseError:
         bot.logger.exception("Failed to get daily rune")
+        if loading_msg:
+            try:
+                await loading_msg.delete()
+            except Exception:
+                pass
         await bot.send_private_or_group(update, context, "Не получилось достать руну дня. Попробуй позже.")
         return
     palette = bot.get_user_palette(update)
     main = get_rune_by_name(rune_name)
     image_path = bot.get_rune_image_path(main, palette)
     if not image_path:
+        if loading_msg:
+            try:
+                await loading_msg.delete()
+            except Exception:
+                pass
         await bot.send_missing_image_error(update, context, main, palette)
         return
-    # Use the new card-of-day texts (card_of_day_short.txt via rune_text_repository)
     from rune_text_repository import get_daily_text
     try:
         day_text = get_daily_text(main["key"], palette, orientation)
@@ -319,7 +331,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         moon_line = ""
     try:
         from database import get_streak
-        streak = get_streak(bot.DB_PATH, update.effective_user.id)
+        streak = get_streak(update.effective_user.id)
         if streak >= 2:
             streak_word = "день" if streak == 1 else "дня" if 2 <= streak <= 4 else "дней"
             streak_line = f"\n\n🔥 {streak} {streak_word} подряд"
@@ -328,20 +340,36 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception:
         streak_line = ""
     text = f"{opening}\n\n{day_text}\n\n{closing}{moon_line}{streak_line}"
-    await bot.send_private_or_group(update, context, text, image_path=image_path)
+    if loading_msg:
+        try:
+            await loading_msg.delete()
+        except Exception:
+            pass
+    await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
 
 
 async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
     if not await bot.ensure_profile_ready(update, context):
         return
+    message = update.effective_message
+    loading_msg = None
+    if message and bot.is_private(update):
+        try:
+            loading_msg = await message.reply_text("🔮 Руны говорят...")
+        except Exception:
+            pass
     await reading_pause(update, context, 0.03)
     palette = bot.get_user_palette(update)
     rune = random.choice(RUNES)
     image_path = bot.get_rune_image_path(rune, palette)
     if not image_path:
+        if loading_msg:
+            try:
+                await loading_msg.delete()
+            except Exception:
+                pass
         await bot.send_missing_image_error(update, context, rune, palette)
         return
-    # Use new sphere-based да/нет texts (runes_spheres_all.txt via rune_text_repository)
     from rune_text_repository import detect_question_sphere, get_sphere_answer
     from bot import format_one_rune_answer
     sphere = detect_question_sphere(question)
@@ -359,7 +387,12 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
             "answer_label": "Да" if answer_kind == "yes" else "Нет",
         }
     text = format_one_rune_answer(bot.user_name(update), question, rune, sphere_data)
-    await bot.send_private_or_group(update, context, text, image_path=image_path)
+    if loading_msg:
+        try:
+            await loading_msg.delete()
+        except Exception:
+            pass
+    await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
 
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -386,7 +419,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     palette = parts[2]
     if palette == "premium":
         from premium_subscription import is_premium_active
-        if not is_premium_active(bot.DB_PATH, update.effective_user.id):
+        if not is_premium_active(update.effective_user.id):
             await query.answer("Премиум-колода доступна только по подписке 💠", show_alert=True)
             await context.bot.send_message(
                 chat_id=update.effective_user.id,
@@ -395,7 +428,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             return
     try:
-        set_user_palette(bot.DB_PATH, update.effective_user.id, palette)
+        set_user_palette(update.effective_user.id, palette)
     except bot.DatabaseError:
         await query.edit_message_text("Не получилось сменить колоду. Попробуй позже.")
         return

@@ -16,8 +16,8 @@ import bot as _bot
 from database import (
     DatabaseError,
     get_broadcast_users,
+    get_expiring_premium_users,
     get_or_create_daily_card,
-    get_connection,
     set_broadcast_enabled,
 )
 from lunar_calendar import moon_phase_today
@@ -36,7 +36,7 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Job callback: send today's rune to all subscribed users."""
     today = date.today().isoformat()
     try:
-        users = get_broadcast_users(_bot.DB_PATH)
+        users = get_broadcast_users()
     except DatabaseError:
         logger.exception("Failed to load broadcast users")
         return
@@ -51,7 +51,7 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         try:
             rune_name, orientation = get_or_create_daily_card(
-                _bot.DB_PATH, user_id, today, RUNES
+                user_id, today, RUNES
             )
             rune = get_rune_by_name(rune_name)
             image_path = _bot.get_rune_image_path(rune, palette)
@@ -72,27 +72,36 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
         try:
+            from telegram import ReplyKeyboardRemove
             if image_path:
+                # Photo first — no caption, so it displays full-size without truncation
+                short_caption = f"<b>{rune['name']}</b> · {orientation_label}"
                 await context.bot.send_photo(
                     chat_id=user_id,
                     photo=open(image_path, "rb"),
-                    caption=text,
+                    caption=short_caption,
                     parse_mode="HTML",
-                    reply_markup=_bot.MAIN_KEYBOARD,
+                )
+                # Full text as a separate message; hide keyboard so chat stays clean
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=ReplyKeyboardRemove(),
                 )
             else:
                 await context.bot.send_message(
                     chat_id=user_id,
                     text=text,
                     parse_mode="HTML",
-                    reply_markup=_bot.MAIN_KEYBOARD,
+                    reply_markup=ReplyKeyboardRemove(),
                 )
             sent += 1
         except Forbidden:
             # User blocked the bot — silently disable their broadcast
             logger.info("User %s blocked bot, disabling broadcast", user_id)
             try:
-                set_broadcast_enabled(_bot.DB_PATH, user_id, False)
+                set_broadcast_enabled(user_id, False)
             except DatabaseError:
                 pass
             blocked += 1
@@ -112,7 +121,7 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
     Runs daily; each user has a preferred weekday (weekly_question_day, 0=Mon…6=Sun).
     Only sends to users whose preferred day matches today.
     """
-    from database import get_premium_status, get_connection
+    from database import get_premium_status
     from datetime import date as _date
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     from runes_data import RUNES
@@ -123,7 +132,7 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
     week = today.isocalendar()[1]
 
     try:
-        users = get_broadcast_users(_bot.DB_PATH)
+        users = get_broadcast_users()
     except DatabaseError:
         logger.exception("Failed to load broadcast users for weekly question")
         return
@@ -136,17 +145,11 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
     eligible = []
     for user in users:
         try:
-            status = get_premium_status(_bot.DB_PATH, user["user_id"])
+            status = get_premium_status(user["user_id"])
             expires_at = status.get("expires_at") or ""
             if not (expires_at and expires_at > today_str):
                 continue
-            # Check preferred day (default 6 = Sunday)
-            with get_connection(_bot.DB_PATH) as conn:
-                row = conn.execute(
-                    "SELECT weekly_question_day FROM users WHERE user_id = ?",
-                    (user["user_id"],)
-                ).fetchone()
-            preferred_day = row[0] if row and row[0] is not None else 6
+            preferred_day = user.get("weekly_question_day", 6)
             if preferred_day == today_weekday:
                 eligible.append(user)
         except Exception:
@@ -189,7 +192,7 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
             sent += 1
         except Forbidden:
             try:
-                set_broadcast_enabled(_bot.DB_PATH, user_id, False)
+                set_broadcast_enabled(user_id, False)
             except DatabaseError:
                 pass
             blocked += 1
@@ -205,18 +208,13 @@ async def send_premium_expiry_warnings(context: ContextTypes.DEFAULT_TYPE) -> No
     today = date.today()
     warn_dates = [(today + timedelta(days=d)).isoformat() for d in (1, 2, 3)]
     try:
-        with get_connection(_bot.DB_PATH) as conn:
-            rows = conn.execute(
-                "SELECT user_id, preferred_name, premium_expires_at FROM users "
-                "WHERE premium_expires_at IN (?, ?, ?)",
-                warn_dates,
-            ).fetchall()
+        rows = get_expiring_premium_users(warn_dates)
     except Exception:
         logger.exception("Failed to query expiring premium users")
         return
 
     for row in rows:
-        user_id, name, expires_at = row
+        user_id, name, expires_at = row["user_id"], row["preferred_name"], row["premium_expires_at"]
         name = name or "друг"
         try:
             exp_date = date.fromisoformat(expires_at)
@@ -241,7 +239,7 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
     if today.day != 1:
         return  # Job runs daily, only acts on 1st
     try:
-        users = get_broadcast_users(_bot.DB_PATH)
+        users = get_broadcast_users()
     except DatabaseError:
         logger.exception("Failed to load users for monthly rune")
         return
@@ -274,15 +272,20 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"{rune_text}\n\n"
                 f"<i>Эта руна задаёт тон месяца. Держи её в уме при важных решениях.</i>"
             )
+            from telegram import ReplyKeyboardRemove
             if image_path:
                 await context.bot.send_photo(
                     chat_id=user_id, photo=open(image_path, "rb"),
-                    caption=text, parse_mode="HTML", reply_markup=_bot.MAIN_KEYBOARD,
+                    caption=f"<b>{monthly_rune['name']}</b>", parse_mode="HTML",
+                )
+                await context.bot.send_message(
+                    chat_id=user_id, text=text, parse_mode="HTML",
+                    reply_markup=ReplyKeyboardRemove(),
                 )
             else:
                 await context.bot.send_message(
                     chat_id=user_id, text=text, parse_mode="HTML",
-                    reply_markup=_bot.MAIN_KEYBOARD,
+                    reply_markup=ReplyKeyboardRemove(),
                 )
             sent += 1
         except Exception:
@@ -297,7 +300,7 @@ async def subscribe_command(update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.effective_message:
         return
     try:
-        set_broadcast_enabled(_bot.DB_PATH, update.effective_user.id, True)
+        set_broadcast_enabled(update.effective_user.id, True)
     except DatabaseError:
         await update.effective_message.reply_text(
             "Не получилось включить рассылку. Попробуй позже.",
@@ -315,7 +318,7 @@ async def unsubscribe_command(update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not update.effective_user or not update.effective_message:
         return
     try:
-        set_broadcast_enabled(_bot.DB_PATH, update.effective_user.id, False)
+        set_broadcast_enabled(update.effective_user.id, False)
     except DatabaseError:
         await update.effective_message.reply_text(
             "Не получилось отключить рассылку. Попробуй позже.",
