@@ -675,14 +675,14 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             body = (
                 f"💠 <b>Пробный период активен до {exp_formatted}</b>\n\n"
                 "✅ Доступно: премиум-колода, расклад на год\n"
-                "❌ Только в платном: расклад на пару, личные расклады, настройка дня недели\n\n"
+                "❌ Только в платном: расклад на взаимоотношения, личные расклады, еженедельный вопрос\n\n"
                 "Хочешь всё — оформи полный премиум:"
             )
         else:
             body = (
                 f"💠 <b>Премиум активен до {exp_formatted}</b>\n\n"
                 f"Бесплатных личных раскладов в этом месяце: <b>{free_left}</b>\n\n"
-                "Расклад на год и расклад на пару — в кнопках меню ниже."
+                "Расклад на год и расклад на взаимоотношения — в кнопках меню ниже."
             )
         await message.reply_text(
             body,
@@ -741,9 +741,9 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 "• Руна дня\n"
                 "• Расклад на год\n\n"
                 "❌ Только в платном премиуме:\n"
-                "• Расклад на пару\n"
+                "• Расклад на взаимоотношения\n"
                 "• 3 личных расклада в месяц\n"
-                "• Настройка дня еженедельной руны"
+                "• Еженедельный вопрос для рефлексии"
             ),
             parse_mode=ParseMode.HTML,
             reply_markup=build_main_keyboard(user.id),
@@ -842,7 +842,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "premium:pair":
         if is_trial_active(user.id):
-            await query.answer("Расклад на пару доступен только в платном премиуме.", show_alert=True)
+            await query.answer("Расклад на взаимоотношения доступен только в платном премиуме.", show_alert=True)
             return
         try:
             await query.delete_message()
@@ -881,9 +881,9 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
             "✅ Доступно:\n"
             "• Премиум-колода\n"
             "• Расклад на год\n"
-            "• Расклад на пару\n"
+            "• Расклад на взаимоотношения\n"
             "• 3 личных расклада в месяц\n"
-            "• Настройка дня еженедельной руны",
+            "• Еженедельный вопрос для рефлексии",
             parse_mode=ParseMode.HTML,
             reply_markup=build_main_keyboard(update.effective_user.id),
         )
