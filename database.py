@@ -135,6 +135,16 @@ def ensure_schema(conn) -> None:
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS year_runes (
+                user_id BIGINT  NOT NULL,
+                year    INTEGER NOT NULL,
+                runes   TEXT    NOT NULL,
+                PRIMARY KEY (user_id, year)
+            )
+            """
+        )
     _schema_initialized = True
 
 
@@ -629,3 +639,35 @@ def get_pair_rasklad_runes(
             break
 
     return runes[indices[0]]["name"], runes[indices[1]]["name"], runes[indices[2]]["name"]
+
+
+def get_or_create_year_runes(
+    user_id: int,
+    year: int,
+    generate_fn,
+) -> list:
+    """Return stored year runes for user+year, generating and saving if absent."""
+    import json as _json
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT runes FROM year_runes WHERE user_id = %s AND year = %s",
+                    (user_id, year),
+                )
+                row = cur.fetchone()
+                if row:
+                    return _json.loads(row[0])
+                rune_names = generate_fn()
+                cur.execute(
+                    """
+                    INSERT INTO year_runes (user_id, year, runes)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id, year) DO NOTHING
+                    """,
+                    (user_id, year, _json.dumps(rune_names)),
+                )
+                return rune_names
+    except Exception as exc:
+        raise DatabaseError(str(exc)) from exc
