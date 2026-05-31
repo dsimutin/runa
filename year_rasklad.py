@@ -69,14 +69,21 @@ async def send_year_rasklad(update, context) -> None:
 
     keyboard = InlineKeyboardMarkup(buttons)
     message = update.effective_message
+    user_id = update.effective_user.id
+
     if message and _bot.is_private(update):
+        # Send text with buttons first
+        await message.reply_text(message_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        # Send image separately if available
         if image_path:
             with open(image_path, "rb") as image_file:
-                await message.reply_photo(photo=image_file, caption=message_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-        else:
-            await message.reply_text(message_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+                await message.reply_photo(photo=image_file)
     else:
+        # For group chats, send to private chat
         await context.bot.send_message(chat_id=user_id, text=message_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        if image_path:
+            with open(image_path, "rb") as image_file:
+                await context.bot.send_photo(chat_id=user_id, photo=image_file)
 
 
 async def send_rune_year_details(update, context, user_id: int, year: int, month_num: int) -> None:
@@ -176,6 +183,11 @@ async def send_year_rasklad_from_callback(update, context, user_id: int, year: i
 
     keyboard = InlineKeyboardMarkup(buttons)
     if query and query.message:
+        # Edit existing message with buttons
         await query.edit_message_text(message_text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
     else:
+        # Send new message with buttons
         await context.bot.send_message(chat_id=user_id, text=message_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        if image_path:
+            with open(image_path, "rb") as image_file:
+                await context.bot.send_photo(chat_id=user_id, photo=image_file)
