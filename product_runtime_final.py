@@ -77,7 +77,7 @@ def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
             if is_trial_active(user_id):
                 base.append(["🗓 Расклад на год", "💠 Премиум"])
             else:
-                base.append(["🗓 Расклад на год", "✌️ Расклад на пару"])
+                base.append(["🗓 Расклад на год", "💕 Взаимоотношения"])
                 base.append(["💠 Премиум", "⚙️ Настройки"])
         else:
             base.append(["💠 Премиум", "⚙️ Настройки"])
@@ -477,22 +477,44 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return
         await send_year_rasklad(update, context)
         return
-    if text == "✌️ Расклад на пару":
+    if text == "💕 Взаимоотношения":
         if is_trial_active(user_id):
             await update.effective_message.reply_text(
-                "✌️ Расклад на пару доступен только в платном премиуме.",
+                "💕 Раскладаа на взаимоотношения доступны только в платном премиуме.",
                 reply_markup=build_main_keyboard(user_id),
             )
             return
-        context.user_data["state"] = "waiting_pair_name"
+        context.user_data["state"] = "waiting_relationship_name"
         await update.effective_message.reply_text(
-            "✌️ <b>Расклад на пару</b>\n\n"
-            "Три карты: ты, другой человек, ваши отношения.\n\n"
+            "💕 <b>Раскладаа на взаимоотношения</b>\n\n"
+            "Три карты показывают энергию вас обоих и то, что между вами.\n\n"
             "Напиши имя человека или его описание:\n\n"
-            "Примеры:\n"
+            "<i>Примеры:</i>\n"
             "Анна\n"
             "мой парень\n"
-            "коллега Маша",
+            "коллега Маша\n"
+            "подруга",
+            reply_markup=build_main_keyboard(user_id),
+            parse_mode="HTML"
+        )
+        return
+    if text == "✌️ Расклад на пару":  # Keep old name for backward compatibility
+        if is_trial_active(user_id):
+            await update.effective_message.reply_text(
+                "💕 Раскладаа на взаимоотношения доступны только в платном премиуме.",
+                reply_markup=build_main_keyboard(user_id),
+            )
+            return
+        context.user_data["state"] = "waiting_relationship_name"
+        await update.effective_message.reply_text(
+            "💕 <b>Раскладаа на взаимоотношения</b>\n\n"
+            "Три карты показывают энергию вас обоих и то, что между вами.\n\n"
+            "Напиши имя человека или его описание:\n\n"
+            "<i>Примеры:</i>\n"
+            "Анна\n"
+            "мой парень\n"
+            "коллега Маша\n"
+            "подруга",
             reply_markup=build_main_keyboard(user_id),
             parse_mode="HTML"
         )
@@ -508,6 +530,11 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data.pop("state", None)
         from pair_rasklad import pair_name_received
         await pair_name_received(update, context, text)
+        return
+    if state == "waiting_relationship_name":
+        context.user_data.pop("state", None)
+        from relationship_rasklad import send_relationship_type_choice
+        await send_relationship_type_choice(update, context, text)
         return
     if state == bot.STATE_WAITING_ASK:
         context.user_data.pop("state", None)
@@ -1010,6 +1037,28 @@ async def weekly_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_
     await product_runtime.bot.send_rasklad(update, context, question)
 
 
+async def relationship_type_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle relationship type selection (personal vs business)."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+
+    try:
+        parts = query.data.split(":", 2)
+        if parts[0] == "rel_type" and len(parts) == 3:
+            rel_type = parts[1]  # personal or business
+            person_name = parts[2]
+
+            await query.answer()
+            await query.edit_message_text(f"⏳ Выбираю карты для {person_name}...")
+
+            from relationship_rasklad import _build_relationship_text
+            await _build_relationship_text(update, context, person_name, rel_type)
+    except Exception:
+        bot.logger.exception("Failed to handle relationship type callback")
+        await query.answer("Что-то пошло не так.", show_alert=True)
+
+
 async def trigger_question_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle trigger question selection."""
     query = update.callback_query
@@ -1024,8 +1073,32 @@ async def trigger_question_callback(update: Update, context: ContextTypes.DEFAUL
                 await query.answer()
                 await query.edit_message_text("❓ Напиши свой вопрос — отвечу одной картой.")
                 context.user_data["state"] = bot.STATE_WAITING_ASK
+            elif question == "А ты говоришь правду?":
+                # Special handling for truth question - show philosophical answer
+                await query.answer()
+
+                from philosophical_answers import get_truth_answer
+                import random
+
+                # Draw a rune to determine yes/no orientation
+                from runes_data import RUNES
+                rune = product_runtime.draw_yes_no_rune(RUNES)
+                palette = bot.get_user_palette(update)
+                image_path = bot.get_rune_image_path(rune, palette)
+
+                # Determine if it's yes or no based on rune orientation
+                is_yes = random.random() < 0.5
+                philosophical_answer = get_truth_answer(is_yes)
+
+                message_text = f"❓ <b>{question}</b>\n\n{philosophical_answer}\n\n<i>Руна: {rune['name']}</i>"
+
+                await query.edit_message_text(message_text, parse_mode="HTML")
+                if image_path:
+                    await context.bot.send_photo(chat_id=update.effective_user.id, photo=open(image_path, 'rb'))
+
+                context.user_data.pop("state", None)
             else:
-                # Use trigger question
+                # Use regular trigger question
                 await query.answer()
                 await query.edit_message_text(f"❓ {question}\n\n⏳ Выбираю карту...", parse_mode="HTML")
                 context.user_data.pop("state", None)
@@ -1119,6 +1192,7 @@ def final_build_application():
     app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))
     app.add_handler(CallbackQueryHandler(weekly_rasklad_callback, pattern=r"^weekly_rasklad:"))
     app.add_handler(CallbackQueryHandler(year_rasklad_callback, pattern=r"^year_rune:|^year_rasklad_back:"))
+    app.add_handler(CallbackQueryHandler(relationship_type_callback, pattern=r"^rel_type:"))
     app.add_handler(CallbackQueryHandler(human_reading_payment_callback, pattern=r"^human_reading:"))
     app.add_handler(CallbackQueryHandler(premium_callback, pattern=r"^premium:"))
     app.add_handler(CallbackQueryHandler(operator_action_callback, pattern=r"^op:"))
