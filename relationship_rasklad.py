@@ -15,14 +15,14 @@ async def send_relationship_type_choice(update, context, person_name: str) -> No
     context.user_data["relationship_person"] = person_name
 
     buttons = [
-        [InlineKeyboardButton("💞 Личные отношения", callback_data=f"rel_type:personal:{person_name}")],
+        [InlineKeyboardButton("👥 Личные отношения", callback_data=f"rel_type:personal:{person_name}")],
         [InlineKeyboardButton("💼 Деловые отношения", callback_data=f"rel_type:business:{person_name}")],
     ]
     keyboard = InlineKeyboardMarkup(buttons)
 
     await update.effective_message.reply_text(
-        f"Какие отношения тебя интересуют с <b>{person_name}</b>?\n\n"
-        "💞 <i>Личные</i> — любовь, дружба, семья\n"
+        f"👥 Расклад для <b>{person_name}</b> — выбери тип:\n\n"
+        "👤 <i>Личные</i> — любовь, дружба, семья\n"
         "💼 <i>Деловые</i> — работа, партнёрство, сотрудничество",
         reply_markup=keyboard,
         parse_mode="HTML",
@@ -53,7 +53,7 @@ async def _build_relationship_text(update, context, person_name: str, rel_type: 
     result3 = get_rasklad_text(rune3["key"], palette, "up", "future")
 
     if rel_type == "personal":
-        rel_label = "💞 Личные отношения"
+        rel_label = "👥 Личные отношения"
         your_label = "Ты"
         their_label = "Они"
         between_label = "Между вами"

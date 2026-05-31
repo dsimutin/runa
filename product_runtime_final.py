@@ -77,7 +77,7 @@ def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
             if is_trial_active(user_id):
                 base.append(["🗓 Расклад на год", "💠 Премиум"])
             else:
-                base.append(["🗓 Расклад на год", "💕 Взаимоотношения"])
+                base.append(["🗓 Расклад на год", "👥 Взаимоотношения"])
                 base.append(["💠 Премиум", "⚙️ Настройки"])
         else:
             base.append(["💠 Премиум", "⚙️ Настройки"])
@@ -477,44 +477,36 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return
         await send_year_rasklad(update, context)
         return
-    if text == "💕 Взаимоотношения":
+    if text in {"👥 Взаимоотношения", "💕 Взаимоотношения"}:
         if is_trial_active(user_id):
             await update.effective_message.reply_text(
-                "💕 Раскладаа на взаимоотношения доступны только в платном премиуме.",
+                "👥 Расклады на взаимоотношения доступны только в платном премиуме.",
                 reply_markup=build_main_keyboard(user_id),
             )
             return
         context.user_data["state"] = "waiting_relationship_name"
         await update.effective_message.reply_text(
-            "💕 <b>Раскладаа на взаимоотношения</b>\n\n"
-            "Три карты показывают энергию вас обоих и то, что между вами.\n\n"
-            "Напиши имя человека или его описание:\n\n"
-            "<i>Примеры:</i>\n"
-            "Анна\n"
-            "мой парень\n"
-            "коллега Маша\n"
-            "подруга",
+            "👥 <b>Взаимоотношения</b>\n\n"
+            "Три карты: твоя энергия, энергия другого человека и то, что между вами.\n\n"
+            "Напиши имя или описание человека:\n"
+            "<i>Анна (подруга) · Андрей (коллега) · мой парень</i>",
             reply_markup=build_main_keyboard(user_id),
             parse_mode="HTML"
         )
         return
-    if text == "✌️ Расклад на пару":  # Keep old name for backward compatibility
+    if text == "✌️ Расклад на пару":  # backward compatibility
         if is_trial_active(user_id):
             await update.effective_message.reply_text(
-                "💕 Раскладаа на взаимоотношения доступны только в платном премиуме.",
+                "👥 Расклады на взаимоотношения доступны только в платном премиуме.",
                 reply_markup=build_main_keyboard(user_id),
             )
             return
         context.user_data["state"] = "waiting_relationship_name"
         await update.effective_message.reply_text(
-            "💕 <b>Раскладаа на взаимоотношения</b>\n\n"
-            "Три карты показывают энергию вас обоих и то, что между вами.\n\n"
-            "Напиши имя человека или его описание:\n\n"
-            "<i>Примеры:</i>\n"
-            "Анна\n"
-            "мой парень\n"
-            "коллега Маша\n"
-            "подруга",
+            "👥 <b>Взаимоотношения</b>\n\n"
+            "Три карты: твоя энергия, энергия другого человека и то, что между вами.\n\n"
+            "Напиши имя или описание человека:\n"
+            "<i>Анна (подруга) · Андрей (коллега) · мой парень</i>",
             reply_markup=build_main_keyboard(user_id),
             parse_mode="HTML"
         )
@@ -859,7 +851,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data["state"] = "waiting_pair_name"
         await context.bot.send_message(
             chat_id=user.id,
-            text="✌️ Напиши имя человека для расклада на пару:",
+            text="👥 Напиши имя или описание человека:\n<i>Анна (подруга) · Андрей (коллега) · мой парень</i>",
             reply_markup=_kb(update),
         )
         return
