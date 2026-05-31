@@ -50,7 +50,13 @@ async def pair_rasklad_command(update, context):
     """Handler for /pair <name> — reading for two people."""
     if not context.args:
         await update.effective_message.reply_text(
-            "✌️ Напиши имя человека: /pair Анна",
+            "✌️ <b>Расклад на пару</b>\n\n"
+            "Три карты: ты, другой человек, то, что между вами.\n\n"
+            "Напиши имя человека или просто его описание (например, 'парень', 'мама', 'коллега').\n\n"
+            "Примеры:\n"
+            "/pair Анна\n"
+            "/pair мой парень\n"
+            "/pair подруга Маша",
             reply_markup=_bot.MAIN_KEYBOARD,
         )
         return

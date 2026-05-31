@@ -439,8 +439,21 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await product_runtime.product_runa_command(update, context)
         return
     if text in {"❓ Вопрос", "❓ Задать вопрос", "❓ Вопрос (да/нет)"}:
+        from trigger_questions import TRIGGER_QUESTIONS
         context.user_data["state"] = bot.STATE_WAITING_ASK
-        await update.effective_message.reply_text("❓ Напиши свой вопрос — отвечу одной картой.", reply_markup=_kb(update) if bot.is_private(update) else None)
+
+        # Create inline buttons for trigger questions
+        buttons = []
+        for question in TRIGGER_QUESTIONS[:4]:  # First 4 questions in first row
+            buttons.append([InlineKeyboardButton(question, callback_data=f"trigger_q:{question}")])
+        buttons.append([InlineKeyboardButton("+ Свой вопрос", callback_data="trigger_q:own")])
+
+        keyboard = InlineKeyboardMarkup(buttons)
+        await update.effective_message.reply_text(
+            "❓ <b>Выбери вопрос или напиши свой:</b>",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
         return
     if text == "🔮 Расклад":
         context.user_data["state"] = bot.STATE_WAITING_RASKLAD
@@ -473,7 +486,15 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return
         context.user_data["state"] = "waiting_pair_name"
         await update.effective_message.reply_text(
-            "✌️ Напиши имя человека:", reply_markup=build_main_keyboard(user_id)
+            "✌️ <b>Расклад на пару</b>\n\n"
+            "Три карты: ты, другой человек, ваши отношения.\n\n"
+            "Напиши имя человека или его описание:\n\n"
+            "Примеры:\n"
+            "Анна\n"
+            "мой парень\n"
+            "коллега Маша",
+            reply_markup=build_main_keyboard(user_id),
+            parse_mode="HTML"
         )
         return
     if text == "ℹ️ Помощь":
@@ -989,6 +1010,31 @@ async def weekly_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_
     await product_runtime.bot.send_rasklad(update, context, question)
 
 
+async def trigger_question_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle trigger question selection."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+
+    try:
+        data = query.data
+        if data.startswith("trigger_q:"):
+            question = data.split(":", 1)[1]
+            if question == "own":
+                await query.answer()
+                await query.edit_message_text("❓ Напиши свой вопрос — отвечу одной картой.")
+                context.user_data["state"] = bot.STATE_WAITING_ASK
+            else:
+                # Use trigger question
+                await query.answer()
+                await query.edit_message_text(f"❓ {question}\n\n⏳ Выбираю карту...", parse_mode="HTML")
+                context.user_data.pop("state", None)
+                await product_runtime.product_send_one_rune_answer(update, context, question)
+    except Exception:
+        bot.logger.exception("Failed to handle trigger question callback")
+        await query.answer("Что-то пошло не так.", show_alert=True)
+
+
 async def year_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle year rasklad interactions: viewing rune details and navigating between months."""
     query = update.callback_query
@@ -1069,6 +1115,7 @@ def final_build_application():
     app.add_handler(CommandHandler("menu", show_menu_command))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
+    app.add_handler(CallbackQueryHandler(trigger_question_callback, pattern=r"^trigger_q:"))
     app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))
     app.add_handler(CallbackQueryHandler(weekly_rasklad_callback, pattern=r"^weekly_rasklad:"))
     app.add_handler(CallbackQueryHandler(year_rasklad_callback, pattern=r"^year_rune:|^year_rasklad_back:"))
