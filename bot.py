@@ -44,6 +44,7 @@ DB_PATH = os.getenv("DB_PATH", "rune_bot.db")
 PORT = int(os.getenv("PORT", "10000"))
 WEBHOOK_URL = (os.getenv("WEBHOOK_URL") or os.getenv("RENDER_EXTERNAL_URL", "")).strip().rstrip("/")
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "webhook").strip().strip("/") or "webhook"
+IS_CLOUD_RUN = bool(os.getenv("K_SERVICE"))
 
 
 def parse_admin_ids(raw_value: str) -> set[int]:
@@ -755,7 +756,7 @@ def main() -> None:
     logger.info("DB_PATH: %s", DB_PATH)
 
     app = build_application()
-    if WEBHOOK_URL:
+    if WEBHOOK_URL or IS_CLOUD_RUN:
         logger.info("Starting bot in webhook mode on port %s path /%s", PORT, WEBHOOK_PATH)
         asyncio.run(_run_webhook_with_health(app))
         return
@@ -790,12 +791,15 @@ async def _run_webhook_with_health(app: Application) -> None:
 
     async with app:
         await app.start()
-        await app.bot.set_webhook(
-            url=f"{WEBHOOK_URL}/{WEBHOOK_PATH}",
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
-        )
-        logger.info("Webhook set. Starting uvicorn with /health on :%s", PORT)
+        if WEBHOOK_URL:
+            await app.bot.set_webhook(
+                url=f"{WEBHOOK_URL}/{WEBHOOK_PATH}",
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+            )
+            logger.info("Webhook set. Starting uvicorn with /health on :%s", PORT)
+        else:
+            logger.info("Webhook URL is not configured yet; serving /health on :%s", PORT)
         await server.serve()
         await app.stop()
 
