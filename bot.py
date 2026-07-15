@@ -6,7 +6,7 @@ from datetime import date
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
@@ -15,7 +15,6 @@ from database import (
     DatabaseError,
     ensure_user,
     get_or_create_daily_card,
-    get_or_create_daily_runes,
     get_user_profile,
     init_db,
     save_onboarding_answer,
@@ -415,7 +414,7 @@ async def send_private_or_group(
 def short_help() -> str:
     return (
         "ℹ️ <b>Как пользоваться ботом</b>\n\n"
-        "🌞 <b>Руна дня</b> — одна карта с фокусом на сегодня + лунная фаза\n"
+        "🌞 <b>Руна дня</b> — одна карта с фокусом на сегодня\n"
         "❓ <b>Вопрос (да/нет)</b> — одна руна, короткий ответ по ситуации\n"
         "🔮 <b>Расклад</b> — три карты: прошлое / настоящее / будущее\n"
         "🕯 <b>Личный расклад</b> — живой ответ человека на твой вопрос\n"

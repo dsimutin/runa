@@ -82,7 +82,6 @@ def update_rune_text_data(new_blob: str) -> None:
     target = ROOT / "rune_text_data.py"
     content = target.read_text(encoding="utf-8")
     start_marker = 'RUNE_DAY_TEXTS_JSON_GZ_B64 = """\\\n'
-    end_marker = '\n"""\n\nRASKLAD_TEXTS_JSON_GZ_B64'
     start_idx = content.index(start_marker) + len(start_marker)
     end_idx = content.index('\n"""\n\nRASKLAD_TEXTS_JSON_GZ_B64')
     new_content = content[:start_idx] + new_blob + content[end_idx:]

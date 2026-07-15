@@ -3,7 +3,6 @@ from typing import Any, Dict, List
 from rune_text_repository import (
     POSITION_LABELS,
     get_rasklad_text,
-    orientation_label,
 )
 
 

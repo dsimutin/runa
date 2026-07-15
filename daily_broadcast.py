@@ -8,7 +8,6 @@ Users can opt out with /unsubscribe and back in with /subscribe.
 import logging
 from datetime import date, time, timezone, timedelta
 
-from telegram import Bot
 from telegram.error import Forbidden, TelegramError
 from telegram.ext import ContextTypes
 
@@ -20,7 +19,6 @@ from database import (
     get_or_create_daily_card,
     set_broadcast_enabled,
 )
-from lunar_calendar import moon_phase_today
 from rune_text_repository import get_daily_text
 from runes_data import RUNES, get_rune_by_name
 from weekly_questions import question_for_rune, rune_of_week
@@ -63,12 +61,10 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
         orientation_label = "перевёрнутое" if orientation == "rev" else "прямое"
-        moon = moon_phase_today()
         text = (
             f"{palette_icon} <b>{name}, руна дня</b>\n\n"
             f"<b>{rune['name']}</b> · {orientation_label}\n\n"
-            f"{day_text}\n\n"
-            f"{moon['emoji']} {moon['phase_name']} — {moon['description']}"
+            f"{day_text}"
         )
 
         try:
@@ -161,8 +157,6 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
     for user in eligible:
         user_id = user["user_id"]
         palette = user.get("palette") or "light"
-        palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
-
         image_path = _bot.get_rune_image_path(weekly_rune, palette)
         text = (
             f"🪬 <b>Руна недели — {weekly_rune['name']}</b>\n\n"

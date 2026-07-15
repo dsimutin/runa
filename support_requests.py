@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 
 import psycopg2
 
-from database import _db, DatabaseError
+from database import _db
 
 
 class SupportRequestError(Exception):

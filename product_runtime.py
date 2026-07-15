@@ -228,22 +228,6 @@ def product_rune_day_full_text(name: str, main: dict, palette: str) -> str:
     return "\n\n".join(parts)
 
 
-def product_daily_text(name: str, main: dict, main_text: dict, aux: dict, aux_text: dict, palette: str, main_alt: bool, aux_alt: bool) -> str:
-    key = palette if palette in HUMAN_DAILY_OPENINGS else "light"
-    opening = stable_pick(HUMAN_DAILY_OPENINGS[key], name, main["key"], aux["key"], date.today().isoformat()).format(name=name)
-    closing = stable_pick(HUMAN_DAILY_CLOSINGS[key], name, main["key"], aux["key"], "closing", date.today().isoformat())
-    main_desc = alt_meaning(main, palette) if main_alt else main_text["short_desc"]
-    aux_desc = alt_meaning(aux, palette) if aux_alt else aux_text["short_desc"]
-    return (
-        f"{opening}\n\n"
-        f"{rune_title(main, main_alt)}\n\n"
-        f"{main_desc}\n\n"
-        f"<i>А рядом ложится</i>\n{rune_title(aux, aux_alt)}\n\n"
-        f"{aux_desc}\n\n"
-        f"{closing}"
-    )
-
-
 def product_question_text(name: str, question: str, rune: dict, answer: str, palette: str, alt: bool) -> str:
     key = palette if palette in HUMAN_QUESTION_OPENINGS else "light"
     opening = stable_pick(HUMAN_QUESTION_OPENINGS[key], name, question, rune["key"], alt).format(name=name)
@@ -324,12 +308,6 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
     opening = _daily_opening(palette, bot.user_name(update))
     closing = stable_pick(HUMAN_DAILY_CLOSINGS.get(palette, HUMAN_DAILY_CLOSINGS["light"]), bot.user_name(update), main["key"], orientation, "closing", today)
     try:
-        from lunar_calendar import moon_phase_today
-        moon = moon_phase_today()
-        moon_line = f"\n\n{moon['emoji']} {moon['phase_name']} — {moon['description']}"
-    except Exception:
-        moon_line = ""
-    try:
         from database import get_streak
         streak = get_streak(update.effective_user.id)
         if streak >= 2:
@@ -339,7 +317,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
             streak_line = ""
     except Exception:
         streak_line = ""
-    text = f"{opening}\n\n{day_text}\n\n{closing}{moon_line}{streak_line}"
+    text = f"{opening}\n\n{day_text}\n\n{closing}{streak_line}"
     if loading_msg:
         try:
             await loading_msg.delete()

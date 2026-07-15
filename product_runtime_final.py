@@ -98,10 +98,17 @@ def is_operator_chat(update: Update) -> bool:
 
 def is_authorized_operator(update: Update) -> bool:
     user = update.effective_user
-    chat = update.effective_chat
-    if chat and chat.id in bot.ADMIN_IDS:
+    if not user:
+        return False
+    if user.id in bot.ADMIN_IDS:
         return True
-    return bool(user and user.username and user.username.lower() in ALLOWED_OPERATOR_USERNAMES)
+    if user.username and user.username.lower() in ALLOWED_OPERATOR_USERNAMES:
+        return True
+    try:
+        return user.id in set(list_operator_ids())
+    except SupportRequestError:
+        bot.logger.exception("Failed to load registered operators")
+        return False
 
 
 def extract_request_id_from_reply(update: Update) -> int | None:
@@ -869,15 +876,29 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def precheckout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.pre_checkout_query.answer(ok=True)
+    query = update.pre_checkout_query
+    if not query:
+        return
+    if not _valid_premium_payment(query.invoice_payload, query.currency, query.total_amount):
+        await query.answer(ok=False, error_message="Параметры платежа не совпадают со счётом. Создай новый счёт в меню премиума.")
+        return
+    await query.answer(ok=True)
+
+
+def _valid_premium_payment(payload: str, currency: str, total_amount: int) -> bool:
+    expected = {
+        "premium_stars_1month": ("XTR", PREMIUM_PRICE_STARS),
+        "premium_card_1month": ("RUB", PREMIUM_PRICE_RUB * 100),
+    }
+    return expected.get(payload) == (currency, total_amount)
 
 
 async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     payment = update.message.successful_payment
-    if payment.invoice_payload.startswith("premium_"):
+    if _valid_premium_payment(payment.invoice_payload, payment.currency, payment.total_amount):
         activate_premium(update.effective_user.id)
         await update.message.reply_text(
-            "💠 <b>Премиум активирован на 30 дней!</b>\n\n"
+            "💠 <b>Премиум активирован на месяц!</b>\n\n"
             "✅ Доступно:\n"
             "• Премиум-колода\n"
             "• Расклад на год\n"
@@ -892,6 +913,9 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
 async def operator_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if not query or not update.effective_user:
+        return
+    if not is_authorized_operator(update):
+        await query.answer("Это действие доступно только оператору.", show_alert=True)
         return
     await query.answer()
     data = query.data or ""
