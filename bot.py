@@ -596,37 +596,8 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.effective_message.reply_text("❓ Напиши вопрос — отвечу Да / Нет одной картой.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
         return
 
-    await send_one_rune_answer(update, context, question)
-
-
-async def send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
-    if not await ensure_profile_ready(update, context):
-        return
-
-    if update.effective_chat:
-        try:
-            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        except TelegramError:
-            pass
-
-    palette = get_user_palette(update)
-    rune = draw_yes_no_rune(RUNES)
-    image_path = get_rune_image_path(rune, palette)
-    if not image_path:
-        await send_missing_image_error(update, context, rune, palette)
-        return
-
-    sphere = detect_question_sphere(question)
-    answer_kind = "yes" if random.random() < 0.5 else "no"
-    try:
-        text_data = get_sphere_answer(rune["key"], palette, sphere, answer_kind)
-    except KeyError:
-        logger.exception("Yes/no text not found")
-        await send_private_or_group(update, context, "Для этой карты не найден ответ Да / Нет в загруженном файле.")
-        return
-
-    text = format_one_rune_answer(user_name(update), question, rune, text_data)
-    await send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
+    from product_runtime import product_send_one_rune_answer
+    await product_send_one_rune_answer(update, context, question)
 
 
 async def rasklad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -641,6 +612,17 @@ async def rasklad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     await send_rasklad(update, context, question)
+
+
+def choose_distinct_runes(count: int = 3) -> List[Dict[str, Any]]:
+    """Return `count` distinct rune dicts, no orientation attached.
+
+    Kept for compatibility with send_approved_rasklad's original signature;
+    the live send_rasklad path below uses draw_distinct_runes_with_orientations
+    instead, since orientation is used (upright/reversed genuinely changes
+    the reading and is shown on each card).
+    """
+    return random.sample(RUNES, min(count, len(RUNES)))
 
 
 async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
@@ -662,11 +644,19 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
         return
 
     try:
-        text = generate_rasklad(rune_draws, question, palette, name)
-    except KeyError:
-        logger.exception("Spread text not found")
-        await send_private_or_group(update, context, "Для одной из карт не найден текст расклада в загруженном файле.")
-        return
+        from spread_engine_approved import build_unified_spread
+        text = build_unified_spread(question, rune_draws, palette, name)
+    except Exception:
+        # Safety net: if the topic/group-aware engine ever breaks on an
+        # unexpected input, fall back to the simpler (but always-correct)
+        # rotation-based spread rather than failing the reading outright.
+        logger.exception("Approved spread engine failed, falling back")
+        try:
+            text = generate_rasklad(rune_draws, question, palette, name)
+        except KeyError:
+            logger.exception("Spread text not found")
+            await send_private_or_group(update, context, "Для одной из карт не найден текст расклада в загруженном файле.")
+            return
 
     await send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
     try:
@@ -713,7 +703,8 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     context.user_data.pop("state", None)
 
     if state == STATE_WAITING_ASK:
-        await send_one_rune_answer(update, context, text)
+        from product_runtime import product_send_one_rune_answer
+        await product_send_one_rune_answer(update, context, text)
         return
 
     if state == STATE_WAITING_RASKLAD:

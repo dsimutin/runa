@@ -170,12 +170,6 @@ def random_alt() -> bool:
     return random.random() < ALT_RATE
 
 
-def rune_title(rune: dict, alt: bool) -> str:
-    if alt:
-        return f"<b>{rune['name']}</b>\n<u>↺ Перевёрнутое значение</u>"
-    return f"<b>{rune['name']}</b>\n<u>→ Прямое значение</u>"
-
-
 def get_user_palette(update: Update) -> str:
     user = update.effective_user
     if not user:
@@ -267,36 +261,6 @@ def product_rune_day_full_text(name: str, main: dict, palette: str) -> str:
                 deep.append(f"<i>Ключевое действие:</i> {key_action}")
             parts.append("✧ <b>Глубинный слой</b>\n" + "\n".join(deep))
     return "\n\n".join(parts)
-
-
-def product_daily_text(name: str, main: dict, main_text: dict, aux: dict, aux_text: dict, palette: str, main_alt: bool, aux_alt: bool) -> str:
-    key = palette if palette in HUMAN_DAILY_OPENINGS else "light"
-    opening = stable_pick(HUMAN_DAILY_OPENINGS[key], name, main["key"], aux["key"], date.today().isoformat()).format(name=name)
-    closing = stable_pick(HUMAN_DAILY_CLOSINGS[key], name, main["key"], aux["key"], "closing", date.today().isoformat())
-    main_desc = alt_meaning(main, palette) if main_alt else main_text["short_desc"]
-    aux_desc = alt_meaning(aux, palette) if aux_alt else aux_text["short_desc"]
-    return (
-        f"{opening}\n\n"
-        f"{rune_title(main, main_alt)}\n\n"
-        f"{main_desc}\n\n"
-        f"<i>А рядом ложится</i>\n{rune_title(aux, aux_alt)}\n\n"
-        f"{aux_desc}\n\n"
-        f"{closing}"
-    )
-
-
-def product_question_text(name: str, question: str, rune: dict, answer: str, palette: str, alt: bool) -> str:
-    key = palette if palette in HUMAN_QUESTION_OPENINGS else "light"
-    opening = stable_pick(HUMAN_QUESTION_OPENINGS[key], name, question, rune["key"], alt).format(name=name)
-    closing = stable_pick(HUMAN_QUESTION_CLOSINGS[key], name, question, rune["key"], alt, "closing")
-    body = alt_meaning(rune, palette) if alt else answer
-    return (
-        f"{opening}\n\n"
-        f"<i>Твой вопрос:</i> {question}\n\n"
-        f"{rune_title(rune, alt)}\n\n"
-        f"{body}\n\n"
-        f"{closing}"
-    )
 
 
 async def product_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
