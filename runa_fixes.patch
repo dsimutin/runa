@@ -1,0 +1,897 @@
+diff --git a/bot.py b/bot.py
+index 4a7adc0..14a7524 100644
+--- a/bot.py
++++ b/bot.py
+@@ -304,11 +304,13 @@ def format_one_rune_answer(
+     question: str,
+     rune: Dict[str, Any],
+     text_data: Dict[str, str],
++    orientation_text: str = "",
+ ) -> str:
+     answer_icon = "✅" if text_data['answer_label'] == "Да" else "🚫"
++    rune_line = f"{rune['name']} · {orientation_text}" if orientation_text else rune['name']
+     return (
+         f"❓ <b>Вопрос:</b> <i>{question}</i>\n\n"
+-        f"{rune['name']}\n\n"
++        f"{rune_line}\n\n"
+         f"{text_data['short_desc']}\n\n"
+         f"{answer_icon} {text_data['answer']}"
+     )
+@@ -667,6 +669,15 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
+         return
+ 
+     await send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
++    try:
++        from product_runtime import rune_info_keyboard
++        pairs = [(r["key"], r["name"]) for r, _ in rune_draws]
++        await update.effective_message.reply_text(
++            "Хочешь традиционное значение этих рун?",
++            reply_markup=rune_info_keyboard(pairs),
++        )
++    except Exception:
++        logger.exception("Failed to send rune-info buttons for spread")
+ 
+ 
+ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+diff --git a/daily_broadcast.py b/daily_broadcast.py
+index 6b6c31f..e4460ae 100644
+--- a/daily_broadcast.py
++++ b/daily_broadcast.py
+@@ -18,9 +18,9 @@ from database import (
+     get_broadcast_users,
+     get_expiring_premium_users,
+     get_or_create_daily_card,
++    get_streak,
+     set_broadcast_enabled,
+ )
+-from lunar_calendar import moon_phase_today
+ from rune_text_repository import get_daily_text
+ from runes_data import RUNES, get_rune_by_name
+ from weekly_questions import question_for_rune, rune_of_week
+@@ -55,21 +55,18 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
+             )
+             rune = get_rune_by_name(rune_name)
+             image_path = _bot.get_rune_image_path(rune, palette)
+-            day_text = get_daily_text(rune["key"], palette, orientation)
+         except (DatabaseError, KeyError):
+             logger.exception("Failed to build rune for user_id=%s", user_id)
+             errors += 1
+             continue
+ 
+-        palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
+         orientation_label = "перевёрнутое" if orientation == "rev" else "прямое"
+-        moon = moon_phase_today()
+-        text = (
+-            f"{palette_icon} <b>{name}, руна дня</b>\n\n"
+-            f"<b>{rune['name']}</b> · {orientation_label}\n\n"
+-            f"{day_text}\n\n"
+-            f"{moon['emoji']} {moon['phase_name']} — {moon['description']}"
+-        )
++        try:
++            streak = get_streak(user_id)
++        except Exception:
++            streak = 0
++        from product_runtime import build_daily_card_text
++        text = build_daily_card_text(name, palette, rune, orientation, today, streak)
+ 
+         try:
+             from telegram import ReplyKeyboardRemove
+diff --git a/gender_voice.py b/gender_voice.py
+deleted file mode 100644
+index 91b1bdc..0000000
+--- a/gender_voice.py
++++ /dev/null
+@@ -1,57 +0,0 @@
+-"""Detect user gender from a Russian first name and adjust narrator voice.
+-
+-The bot's reader-friend narrator uses first-person past-tense verbs that
+-are grammatically gendered in Russian ('я бы шла' vs 'я бы шёл'). To make
+-the address feel personal, we infer the user's gender from their first
+-name and substitute the matching form.
+-
+-Usage:
+-    gender = detect_gender(name)        # 'm' or 'f'
+-    text = gender_fmt(text, gender)     # '{шёл|шла}' → 'шёл' or 'шла'
+-"""
+-
+-import re
+-
+-MALE_NAME_EXCEPTIONS = {
+-    # Russian male first names that end in -а / -я
+-    "никита", "илья", "кузьма", "фома", "лука", "савва", "гавриил", "гаврила",
+-    # Ukrainian / Belarusian variants
+-    "микита", "микола",
+-}
+-
+-FEMALE_NAME_EXCEPTIONS = {
+-    # Russian female names ending in a consonant
+-    "любовь", "юдифь", "эсфирь", "рахиль", "руфь",
+-}
+-
+-# {m_form|f_form} placeholder pattern, e.g. "{шёл|шла}"
+-_GENDER_RE = re.compile(r"\{([^|{}]+)\|([^|{}]+)\}")
+-
+-
+-def detect_gender(name: str) -> str:
+-    """Return 'm' or 'f' from a first name. Defaults to 'f' for empty/unknown.
+-
+-    Heuristic: names ending in -а / -я are usually female except for a small
+-    list of male exceptions. Names ending in a consonant or -й are usually male.
+-    Ambiguous nicknames (Саша, Женя, Валя) fall through to the -а/-я → female
+-    branch, which matches the bot's default narrator voice — no regression.
+-    """
+-    if not name:
+-        return "f"
+-    first = name.strip().split()[0].lower().replace("ё", "е")
+-    if not first:
+-        return "f"
+-    if first in MALE_NAME_EXCEPTIONS:
+-        return "m"
+-    if first in FEMALE_NAME_EXCEPTIONS:
+-        return "f"
+-    if first.endswith(("а", "я")):
+-        return "f"
+-    return "m"
+-
+-
+-def gender_fmt(text: str, gender: str) -> str:
+-    """Replace {мужская|женская} placeholders with the matching form."""
+-    if gender == "m":
+-        return _GENDER_RE.sub(lambda m: m.group(1), text)
+-    return _GENDER_RE.sub(lambda m: m.group(2), text)
+diff --git a/pair_rasklad.py b/pair_rasklad.py
+index 297e808..9f75dd0 100644
+--- a/pair_rasklad.py
++++ b/pair_rasklad.py
+@@ -4,7 +4,7 @@ from datetime import date
+ 
+ import bot as _bot
+ from database import get_pair_rasklad_runes
+-from rune_text_repository import get_rasklad_text
++from rune_text_repository import get_relationship_trio_texts
+ from runes_data import RUNES, get_rune_by_name
+ 
+ 
+@@ -25,21 +25,19 @@ async def _build_pair_text(update, context, partner_name: str) -> None:
+     rune2 = get_rune_by_name(rune2_name)
+     rune3 = get_rune_by_name(rune3_name)
+ 
+-    result1 = get_rasklad_text(rune1["key"], palette, "up", "past")
+-    result2 = get_rasklad_text(rune2["key"], palette, "up", "present")
+-    result3 = get_rasklad_text(rune3["key"], palette, "up", "future")
++    texts = get_relationship_trio_texts(rune1["key"], rune2["key"], rune3["key"], palette)
+ 
+     message_text = (
+         f"✌️ <b>Ты и {partner_name}</b>\n"
+         f"\n"
+         f"👤 <b>Ты</b> — {rune1_name}\n"
+-        f"{result1['text']}\n"
++        f"{texts['you']}\n"
+         f"\n"
+         f"👥 <b>{partner_name}</b> — {rune2_name}\n"
+-        f"{result2['text']}\n"
++        f"{texts['partner']}\n"
+         f"\n"
+         f"🔗 <b>Что между вами</b> — {rune3_name}\n"
+-        f"{result3['text']}"
++        f"{texts['between']}"
+     )
+ 
+     image_path = _bot.get_rune_image_path(rune3, palette)
+diff --git a/product_runtime.py b/product_runtime.py
+index a778080..ce6ac0a 100644
+--- a/product_runtime.py
++++ b/product_runtime.py
+@@ -37,10 +37,36 @@ bot.ONBOARDING_QUESTIONS = [
+ 
+ DAILY_PALETTE_ICON = {"light": "🌕", "dark": "🌑", "premium": "💠"}
+ 
++HUMAN_DAILY_OPENINGS = {
++    "light": [
++        "{icon} <b>{name}, руна дня</b>",
++        "{icon} <b>{name}, вот что сегодня рядом</b>",
++        "{icon} <b>{name}, на сегодня выпало это</b>",
++        "{icon} <b>{name}, тихий ориентир на день</b>",
++        "{icon} <b>{name}, сегодняшний знак</b>",
++    ],
++    "dark": [
++        "{icon} <b>{name}, руна дня</b>",
++        "{icon} <b>{name}, вот прямой сигнал на сегодня</b>",
++        "{icon} <b>{name}, сегодня расклад такой</b>",
++        "{icon} <b>{name}, факт дня</b>",
++        "{icon} <b>{name}, на сегодня — это</b>",
++    ],
++    "premium": [
++        "{icon} <b>{name}, руна дня</b>",
++        "{icon} <b>{name}, сегодняшний слой</b>",
++        "{icon} <b>{name}, вот что сегодня на поверхности</b>",
++        "{icon} <b>{name}, отправная точка дня</b>",
++        "{icon} <b>{name}, сегодняшний узел</b>",
++    ],
++}
+ 
+-def _daily_opening(palette: str, name: str) -> str:
++
++def _daily_opening(palette: str, name: str, seed_parts: tuple = ()) -> str:
+     icon = DAILY_PALETTE_ICON.get(palette, "🌕")
+-    return f"{icon} <b>{name}, руна дня</b>"
++    pool = HUMAN_DAILY_OPENINGS.get(palette, HUMAN_DAILY_OPENINGS["light"])
++    template = stable_pick(pool, name, *seed_parts) if seed_parts else pool[0]
++    return template.format(icon=icon, name=name)
+ 
+ HUMAN_DAILY_CLOSINGS = {
+     "light": [
+@@ -173,6 +199,21 @@ def onboarding_keyboard(step: int) -> InlineKeyboardMarkup:
+     ])
+ 
+ 
++def rune_info_keyboard(rune_pairs: list[tuple[str, str]]) -> InlineKeyboardMarkup:
++    """Build the optional 'ℹ️ О руне' inline button(s).
++
++    rune_pairs: list of (rune_key, rune_display_name). One button per rune,
++    up to 3 per row. Kept as a separate follow-up message/keyboard so it
++    never competes with the reply keyboard already on the reading message.
++    """
++    buttons = [
++        InlineKeyboardButton(f"ℹ️ {name}", callback_data=f"rune_info:{key}")
++        for key, name in rune_pairs
++    ]
++    rows = [buttons[i:i + 3] for i in range(0, len(buttons), 3)]
++    return InlineKeyboardMarkup(rows)
++
++
+ bot.onboarding_keyboard = onboarding_keyboard
+ 
+ 
+@@ -280,6 +321,49 @@ async def product_start_command(update: Update, context: ContextTypes.DEFAULT_TY
+     await update.effective_message.reply_text(f"{name}, меню готово.\n\nВыбери действие ниже.", reply_markup=bot.MAIN_KEYBOARD)
+ 
+ 
++def build_daily_card_text(
++    name: str,
++    palette: str,
++    rune: dict,
++    orientation: str,
++    day: str,
++    streak: int = 0,
++) -> str:
++    """Single source of truth for the daily-card message text.
++
++    Used by both the on-demand '🌞 Руна дня' button (product_runa_command)
++    and the 09:00 broadcast (daily_broadcast.send_daily_rune) so the two
++    can never drift into different formats again.
++    """
++    from rune_text_repository import get_daily_text
++
++    try:
++        day_text = get_daily_text(rune["key"], palette, orientation)
++    except KeyError:
++        day_text = bot.rune_text(rune, palette).get("short_desc", "")
++
++    opening = _daily_opening(palette, name, (rune["key"], orientation, day))
++    closing = stable_pick(
++        HUMAN_DAILY_CLOSINGS.get(palette, HUMAN_DAILY_CLOSINGS["light"]),
++        name, rune["key"], orientation, "closing", day,
++    )
++
++    try:
++        from lunar_calendar import moon_phase_today
++        moon = moon_phase_today()
++        moon_line = f"\n\n{moon['emoji']} {moon['phase_name']} — {moon['description']}"
++    except Exception:
++        moon_line = ""
++
++    if streak >= 2:
++        streak_word = "день" if streak == 1 else "дня" if 2 <= streak <= 4 else "дней"
++        streak_line = f"\n\n🔥 {streak} {streak_word} подряд"
++    else:
++        streak_line = ""
++
++    return f"{opening}\n\n{day_text}\n\n{closing}{moon_line}{streak_line}"
++
++
+ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+     context.user_data.clear()
+     if not update.effective_user:
+@@ -316,36 +400,56 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
+                 pass
+         await bot.send_missing_image_error(update, context, main, palette)
+         return
+-    from rune_text_repository import get_daily_text
+-    try:
+-        day_text = get_daily_text(main["key"], palette, orientation)
+-    except KeyError:
+-        day_text = bot.rune_text(main, palette).get("short_desc", "")
+-    opening = _daily_opening(palette, bot.user_name(update))
+-    closing = stable_pick(HUMAN_DAILY_CLOSINGS.get(palette, HUMAN_DAILY_CLOSINGS["light"]), bot.user_name(update), main["key"], orientation, "closing", today)
+-    try:
+-        from lunar_calendar import moon_phase_today
+-        moon = moon_phase_today()
+-        moon_line = f"\n\n{moon['emoji']} {moon['phase_name']} — {moon['description']}"
+-    except Exception:
+-        moon_line = ""
+     try:
+         from database import get_streak
+         streak = get_streak(update.effective_user.id)
+-        if streak >= 2:
+-            streak_word = "день" if streak == 1 else "дня" if 2 <= streak <= 4 else "дней"
+-            streak_line = f"\n\n🔥 {streak} {streak_word} подряд"
+-        else:
+-            streak_line = ""
+     except Exception:
+-        streak_line = ""
+-    text = f"{opening}\n\n{day_text}\n\n{closing}{moon_line}{streak_line}"
++        streak = 0
++    text = build_daily_card_text(bot.user_name(update), palette, main, orientation, today, streak)
+     if loading_msg:
+         try:
+             await loading_msg.delete()
+         except Exception:
+             pass
+     await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
++    try:
++        await update.effective_message.reply_text(
++            "Хочешь традиционное значение этой руны?",
++            reply_markup=rune_info_keyboard([(main["key"], main["name"])]),
++        )
++    except Exception:
++        bot.logger.exception("Failed to send rune-info button")
++
++
++def product_yes_no_text(
++    name: str,
++    question: str,
++    rune: dict,
++    orientation_text: str,
++    sphere_data: dict,
++) -> str:
++    """Format the yes/no one-rune answer using the opening/closing phrase
++    pools that already existed in this file but were never wired in.
++
++    The verdict (✅/🚫 + text starting with an unambiguous Да/Нет variant,
++    see _vary_verdict_opener) stays on its own line and is never replaced
++    or softened by the opening/closing framing — those only add context
++    before and after the actual answer.
++    """
++    palette_key = sphere_data.get("palette", "light")
++    key = palette_key if palette_key in HUMAN_QUESTION_OPENINGS else "light"
++    opening = random.choice(HUMAN_QUESTION_OPENINGS[key]).format(name=name)
++    closing = random.choice(HUMAN_QUESTION_CLOSINGS[key])
++    answer_icon = "✅" if sphere_data["answer_label"] == "Да" else "🚫"
++    rune_line = f"{rune['name']} · {orientation_text}" if orientation_text else rune["name"]
++    return (
++        f"{opening}\n\n"
++        f"<i>Твой вопрос:</i> {question}\n\n"
++        f"{rune_line}\n\n"
++        f"{sphere_data['short_desc']}\n\n"
++        f"{answer_icon} {sphere_data['answer']}\n\n"
++        f"{closing}"
++    )
+ 
+ 
+ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
+@@ -360,7 +464,12 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
+             pass
+     await reading_pause(update, context, 0.03)
+     palette = bot.get_user_palette(update)
+-    rune = random.choice(RUNES)
++    from rune_text_repository import draw_yes_no_rune, random_orientation
++    rune = draw_yes_no_rune(RUNES)
++    # The verdict follows the rune's own orientation (upright -> да-tilt,
++    # reversed -> нет-tilt), so the drawn card and the answer are actually
++    # the same event, not two independent random draws.
++    orientation = random_orientation(rune["key"])
+     image_path = bot.get_rune_image_path(rune, palette)
+     if not image_path:
+         if loading_msg:
+@@ -370,10 +479,9 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
+                 pass
+         await bot.send_missing_image_error(update, context, rune, palette)
+         return
+-    from rune_text_repository import detect_question_sphere, get_sphere_answer
+-    from bot import format_one_rune_answer
++    from rune_text_repository import detect_question_sphere, get_sphere_answer, orientation_label
+     sphere = detect_question_sphere(question)
+-    answer_kind = "yes" if random.random() < 0.5 else "no"
++    answer_kind = "yes" if orientation == "up" else "no"
+     try:
+         sphere_data = get_sphere_answer(rune["key"], palette, sphere, answer_kind)
+     except KeyError:
+@@ -386,16 +494,23 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
+             "sphere_label": "Принятие решений",
+             "answer_label": "Да" if answer_kind == "yes" else "Нет",
+         }
+-    text = format_one_rune_answer(bot.user_name(update), question, rune, sphere_data)
++    sphere_data["palette"] = palette
++    text = product_yes_no_text(
++        bot.user_name(update), question, rune, orientation_label(orientation), sphere_data
++    )
+     if loading_msg:
+         try:
+             await loading_msg.delete()
+         except Exception:
+             pass
+     await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
+-
+-
+-async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
++    try:
++        await update.effective_message.reply_text(
++            "Хочешь традиционное значение этой руны?",
++            reply_markup=rune_info_keyboard([(rune["key"], rune["name"])]),
++        )
++    except Exception:
++        bot.logger.exception("Failed to send rune-info button")
+     if not await bot.ensure_profile_ready(update, context):
+         return
+     palette = bot.get_user_palette(update)
+diff --git a/product_runtime_final.py b/product_runtime_final.py
+index df636ce..9b10548 100644
+--- a/product_runtime_final.py
++++ b/product_runtime_final.py
+@@ -1070,19 +1070,24 @@ async def trigger_question_callback(update: Update, context: ContextTypes.DEFAUL
+                 await query.answer()
+ 
+                 from philosophical_answers import get_truth_answer
+-                import random
++                from rune_text_repository import random_orientation, orientation_label
+ 
+-                # Draw a rune to determine yes/no orientation
++                # Draw a rune and use its orientation to determine yes/no —
++                # same rule as the rest of the yes/no flow, so this doesn't
++                # run its own disconnected coin flip.
+                 from runes_data import RUNES
+                 rune = product_runtime.draw_yes_no_rune(RUNES)
++                orientation = random_orientation(rune["key"])
+                 palette = bot.get_user_palette(update)
+                 image_path = bot.get_rune_image_path(rune, palette)
+ 
+-                # Determine if it's yes or no based on rune orientation
+-                is_yes = random.random() < 0.5
++                is_yes = orientation == "up"
+                 philosophical_answer = get_truth_answer(is_yes)
+ 
+-                message_text = f"❓ <b>{question}</b>\n\n{philosophical_answer}\n\n<i>Руна: {rune['name']}</i>"
++                message_text = (
++                    f"❓ <b>{question}</b>\n\n{philosophical_answer}\n\n"
++                    f"<i>Руна: {rune['name']} · {orientation_label(orientation)}</i>"
++                )
+ 
+                 await query.edit_message_text(message_text, parse_mode="HTML")
+                 if image_path:
+@@ -1100,6 +1105,25 @@ async def trigger_question_callback(update: Update, context: ContextTypes.DEFAUL
+         await query.answer("Что-то пошло не так.", show_alert=True)
+ 
+ 
++async def rune_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
++    """Handle the optional 'ℹ️ О руне' button — traditional/etymological meaning."""
++    query = update.callback_query
++    if not query or not update.effective_user:
++        return
++    try:
++        await query.answer()
++        _, rune_key = query.data.split(":", 1)
++        from runes_data import get_rune_by_key
++        from rune_traditional import get_traditional_text
++        rune = get_rune_by_key(rune_key)
++        rune_name = rune["name"] if rune else rune_key
++        text = get_traditional_text(rune_key, rune_name)
++        await query.message.reply_text(text, parse_mode="HTML")
++    except Exception:
++        bot.logger.exception("Failed to handle rune_info callback")
++        await query.answer("Не получилось показать традиционное значение.", show_alert=True)
++
++
+ async def year_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+     """Handle year rasklad interactions: viewing rune details and navigating between months."""
+     query = update.callback_query
+@@ -1181,6 +1205,7 @@ def final_build_application():
+     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
+     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
+     app.add_handler(CallbackQueryHandler(trigger_question_callback, pattern=r"^trigger_q:"))
++    app.add_handler(CallbackQueryHandler(rune_info_callback, pattern=r"^rune_info:"))
+     app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))
+     app.add_handler(CallbackQueryHandler(weekly_rasklad_callback, pattern=r"^weekly_rasklad:"))
+     app.add_handler(CallbackQueryHandler(year_rasklad_callback, pattern=r"^year_rune:|^year_rasklad_back:"))
+diff --git a/rasklad_engine.py b/rasklad_engine.py
+index 40f138b..898b0d6 100644
+--- a/rasklad_engine.py
++++ b/rasklad_engine.py
+@@ -1,4 +1,5 @@
+ from typing import Any, Dict, List
++import random
+ 
+ from rune_text_repository import (
+     POSITION_LABELS,
+@@ -9,6 +10,45 @@ from rune_text_repository import (
+ 
+ SPREAD_POSITIONS = ["past", "present", "future"]
+ 
++RASKLAD_INTROS = {
++    "light": [
++        "🔮 <b>Расклад</b>",
++        "🔮 <b>Три карты на твою ситуацию</b>",
++        "🔮 <b>Смотрим на путь</b>",
++        "🔮 <b>Что привело сюда и куда ведёт</b>",
++    ],
++    "dark": [
++        "🔮 <b>Расклад</b>",
++        "🔮 <b>Три факта по делу</b>",
++        "🔮 <b>Раскладываю по позициям</b>",
++        "🔮 <b>Три точки давления</b>",
++    ],
++    "premium": [
++        "🔮 <b>Расклад</b>",
++        "🔮 <b>Три слоя одной темы</b>",
++        "🔮 <b>Смотрим глубже: три позиции</b>",
++        "🔮 <b>Один узел, три ракурса</b>",
++    ],
++}
++
++RASKLAD_SYNTHESIS_CLOSINGS = {
++    "light": [
++        "Три карты — это не три отдельные истории, а одна: посмотри, что тянется из прошлого в настоящее и куда это ведёт, если ничего не менять.",
++        "Не старайся разложить всё по полочкам сразу. Дай себе заметить, какая из трёх карт откликается сильнее всего — с неё и начни.",
++        "Прошлое объясняет, настоящее держит, будущее пока не высечено в камне. Твой следующий шаг — это и есть влияние на третью карту.",
++    ],
++    "dark": [
++        "Смотри на связку, а не на карты по отдельности: что в прошлом создало давление, которое ты чувствуешь сейчас — и что оно готовит дальше, если не вмешаться.",
++        "Будущее здесь — не приговор, а прогноз при текущем курсе. Меняешь настоящее — меняется и оно.",
++        "Прошлое дало условия, настоящее — точка выбора, будущее — цена этого выбора. Смотри именно в эту сторону.",
++    ],
++    "premium": [
++        "Три позиции — это один паттерн в трёх фазах. Спроси себя: что в этой цепочке повторяется не первый раз?",
++        "Прошлое и будущее здесь — зеркала настоящего. Ключ обычно лежит не в крайних картах, а в том, что происходит с тобой прямо сейчас.",
++        "Не ищи готовый ответ в третьей карте. Она показывает направление при текущей траектории — направление меняешь ты, не расклад.",
++    ],
++}
++
+ 
+ def generate_rasklad(
+     rune_draws: List[tuple[Dict[str, Any], str]],
+@@ -16,7 +56,8 @@ def generate_rasklad(
+     palette: str,
+     name: str = "",
+ ) -> str:
+-    intro = "🔮 <b>Расклад</b>"
++    pool_key = palette if palette in RASKLAD_INTROS else "light"
++    intro = random.choice(RASKLAD_INTROS[pool_key])
+     lines = [
+         intro,
+         f"<i>{question}</i>",
+@@ -38,4 +79,6 @@ def generate_rasklad(
+             lines.append(data["extra"])
+         lines.append("")
+ 
++    lines.append(random.choice(RASKLAD_SYNTHESIS_CLOSINGS[pool_key]))
++
+     return "\n".join(lines).strip()
+diff --git a/relationship_rasklad.py b/relationship_rasklad.py
+index 1be6a66..7280bbc 100644
+--- a/relationship_rasklad.py
++++ b/relationship_rasklad.py
+@@ -4,7 +4,7 @@ from datetime import date
+ 
+ import bot as _bot
+ from database import get_pair_rasklad_runes
+-from rune_text_repository import get_rasklad_text
++from rune_text_repository import get_relationship_trio_texts
+ from runes_data import RUNES, get_rune_by_name
+ 
+ 
+@@ -48,9 +48,7 @@ async def _build_relationship_text(update, context, person_name: str, rel_type:
+     rune2 = get_rune_by_name(rune2_name)
+     rune3 = get_rune_by_name(rune3_name)
+ 
+-    result1 = get_rasklad_text(rune1["key"], palette, "up", "past")
+-    result2 = get_rasklad_text(rune2["key"], palette, "up", "present")
+-    result3 = get_rasklad_text(rune3["key"], palette, "up", "future")
++    texts = get_relationship_trio_texts(rune1["key"], rune2["key"], rune3["key"], palette)
+ 
+     if rel_type == "personal":
+         rel_label = "👥 Личные отношения"
+@@ -67,13 +65,13 @@ async def _build_relationship_text(update, context, person_name: str, rel_type:
+         f"{rel_label} с <b>{person_name}</b>\n"
+         f"\n"
+         f"👤 <b>{your_label}</b> — {rune1_name}\n"
+-        f"{result1['text']}\n"
++        f"{texts['you']}\n"
+         f"\n"
+         f"👥 <b>{their_label}</b> — {rune2_name}\n"
+-        f"{result2['text']}\n"
++        f"{texts['partner']}\n"
+         f"\n"
+         f"🔗 <b>{between_label}</b> — {rune3_name}\n"
+-        f"{result3['text']}"
++        f"{texts['between']}"
+     )
+ 
+     image_path = _bot.get_rune_image_path(rune3, palette)
+diff --git a/rune_text_repository.py b/rune_text_repository.py
+index e76d781..b2488f9 100644
+--- a/rune_text_repository.py
++++ b/rune_text_repository.py
+@@ -1,4 +1,5 @@
+ import random
++import re
+ from typing import Any, Dict, List
+ 
+ from rune_text_data import (
+@@ -10,6 +11,47 @@ from rune_text_data import (
+ PALETTES = {"light", "dark", "premium"}
+ ORIENTATIONS = {"up", "rev"}
+ 
++# Verdict-opener rotation for yes/no sphere answers.
++# IMPORTANT: every phrase here must carry the SAME unambiguous polarity as
++# the literal "Да."/"Нет." it replaces. This is variety of wording only —
++# never hedging, never turned into "maybe". The rest of the stored text
++# (reasoning) is untouched.
++YES_OPENERS = [
++    "Да.",
++    "Да, точно.",
++    "Да — можно.",
++    "Да, соглашайся.",
++    "Именно да.",
++    "Да, это тот случай.",
++    "Да, всё складывается.",
++    "Да, действуй.",
++]
++NO_OPENERS = [
++    "Нет.",
++    "Нет, не сейчас.",
++    "Нет — не в этом виде.",
++    "Нет, не стоит.",
++    "Именно нет.",
++    "Нет, придержи.",
++    "Нет, это не тот случай.",
++    "Нет, останови здесь.",
++]
++
++
++def _vary_verdict_opener(text: str, is_yes: bool) -> str:
++    """Swap a literal 'Да.'/'Нет.' opener for a random same-polarity variant.
++
++    Texts that already open with an alternate phrasing (e.g. 'Сейчас —',
++    'Время пришло') are left untouched — they're already varied and already
++    unambiguous for their field (answer_yes vs answer_no).
++    """
++    prefix = "Да." if is_yes else "Нет."
++    if not text.startswith(prefix):
++        return text
++    pool = YES_OPENERS if is_yes else NO_OPENERS
++    rest = text[len(prefix):]
++    return random.choice(pool) + rest
++
+ # Maps alternative rune names used inside texts → canonical name from runes_data.py
+ # Used to normalize text output so the name in the text matches the displayed card name.
+ RUNE_TEXT_NAME_FIXES: Dict[str, str] = {
+@@ -101,6 +143,29 @@ def normalize_orientation(rune_key: str, orientation: str) -> str:
+     return orientation if orientation in ORIENTATIONS else "up"
+ 
+ 
++def get_relationship_trio_texts(rune1_key: str, rune2_key: str, rune3_key: str, palette: str) -> Dict[str, str]:
++    """Texts for 'Ты' / 'Партнёр' / 'Между вами' readings (pair & relationship spreads).
++
++    IMPORTANT: this does NOT reuse the past/present/future spread texts.
++    Those are written as position-of-a-situation narratives (they literally
++    start with 'Прошлое:' / 'Настоящее:' / 'Будущее:') and made no sense
++    when relabelled as a description of a person. 'Ты' and 'Партнёр' now
++    use the card-of-day text (second-person, describes a state/trait),
++    and 'Между вами' uses the spread's future-position text with its
++    'Будущее:' prefix stripped, since a trajectory framing genuinely fits
++    'where this connection is heading'.
++    """
++    you_text = _normalize_rune_names_in_text(get_daily_text(rune1_key, palette, "up"))
++    partner_text = _normalize_rune_names_in_text(get_daily_text(rune2_key, palette, "up"))
++    between_raw = get_rasklad_text(rune3_key, palette, "up", "future")["text"]
++    between_text = re.sub(r"^Будущее:\s*", "", between_raw)
++    return {
++        "you": you_text,
++        "partner": partner_text,
++        "between": _normalize_rune_names_in_text(between_text),
++    }
++
++
+ def daily_texts() -> Dict[str, Any]:
+     return rune_day_texts()
+ 
+@@ -210,10 +275,14 @@ def get_sphere_answer(rune_key: str, palette: str, sphere: str, answer_kind: str
+     if not palette_data:
+         raise KeyError(f"Palette text not found for rune={rune_key}, sphere={sphere}, palette={palette}")
+ 
++    is_yes = answer_kind == "answer_yes"
++    answer_text = _normalize_rune_names_in_text(palette_data.get(answer_kind, ""))
++    answer_text = _vary_verdict_opener(answer_text, is_yes)
++
+     return {
+         "short_desc": _normalize_rune_names_in_text(palette_data.get("short_desc", "")),
+-        "answer": _normalize_rune_names_in_text(palette_data.get(answer_kind, "")),
++        "answer": answer_text,
+         "sphere": sphere,
+         "sphere_label": SPHERE_LABELS.get(sphere, "Принятие решений"),
+-        "answer_label": "Да" if answer_kind == "answer_yes" else "Нет",
++        "answer_label": "Да" if is_yes else "Нет",
+     }
+diff --git a/rune_traditional.py b/rune_traditional.py
+new file mode 100644
+index 0000000..782e0a7
+--- /dev/null
++++ b/rune_traditional.py
+@@ -0,0 +1,177 @@
++"""Traditional / etymological rune meanings — Elder Futhark.
++
++Separate, optional layer shown only on request (the 'ℹ️ О руне' button),
++deliberately kept OUT of the main reading flow. The main bot voice is
++psychological/coaching, not mythological — mixing the two registers in
++the same message reads as inconsistent. This module gives the classic
++context to people who explicitly ask for it, without changing the tone
++of readings themselves.
++
++Each entry: element/idea in one line, then 2-3 sentences of traditional
++meaning (Old Norse/Old English source name, common attested associations).
++Deliberately factual and brief — this is reference material, not a reading.
++"""
++
++from typing import Dict
++
++TRADITIONAL_MEANINGS: Dict[str, str] = {
++    "fehu": (
++        "Стихия/идея: скот, движимое богатство.\n\n"
++        "Древнейший смысл — домашний скот как мера состояния в дописьменную эпоху: "
++        "богатство, которое можно перегнать, потерять или пустить в оборот. "
++        "Традиционно связывается с достатком, начальным капиталом и тем, что заработано, "
++        "а не унаследовано."
++    ),
++    "uruz": (
++        "Стихия/идея: тур (дикий бык), первобытная сила.\n\n"
++        "Названа в честь тура — вымершего дикого быка, символа необузданной физической мощи "
++        "и выносливости. Традиционно означает жизненную силу, здоровье и волю, "
++        "которую невозможно приручить до конца."
++    ),
++    "thurisaz": (
++        "Стихия/идея: великан, шип, Тор.\n\n"
++        "Связана с великанами (турсами) в скандинавской мифологии и молотом Тора как оружием "
++        "защиты от них. Традиционно символ разрушительной, но и защитной силы — "
++        "конфликта, который расчищает пространство."
++    ),
++    "ansuz": (
++        "Стихия/идея: бог, речь, Один.\n\n"
++        "Связана с Одином — богом мудрости, магии и красноречия. "
++        "Традиционно символизирует слово, вдохновение, послание свыше "
++        "и силу, которую несёт правильно сказанная речь."
++    ),
++    "raido": (
++        "Стихия/идея: путешествие верхом, колесо.\n\n"
++        "Буквально означает «езда» — путешествие по дороге, часто ритуальное или обрядовое. "
++        "Традиционно связана с движением, путём как таковым и порядком, "
++        "который требуется, чтобы путь был пройден благополучно."
++    ),
++    "kenaz": (
++        "Стихия/идея: факел, язва/огонь.\n\n"
++        "В разных традициях толкуется и как «свет, знание», и как «болезненный нарыв» — "
++        "то есть огонь, который освещает, но и причиняет боль при контакте. "
++        "Символ ремесла, мастерства и знания, добытого через контролируемый огонь."
++    ),
++    "gebo": (
++        "Стихия/идея: дар, обмен.\n\n"
++        "Одна из немногих рун без прямого/перевёрнутого положения — символ равновесия. "
++        "Означает дар, обмен и договор: то, что даётся, предполагает отдачу, "
++        "а взаимность лежит в основе любого союза."
++    ),
++    "wunjo": (
++        "Стихия/идея: радость, гармония.\n\n"
++        "Связана с достижением общности и радости рода — состоянием, когда племя или семья "
++        "живут в согласии. Традиционно символ удовлетворения, полученного через принадлежность, "
++        "а не через одиночное усилие."
++    ),
++    "hagalaz": (
++        "Стихия/идея: град.\n\n"
++        "Град — стихийное бедствие, разрушающее урожай внезапно и без предупреждения. "
++        "Традиционно символ неконтролируемого, но естественного разрушения, "
++        "после которого начинается новый цикл."
++    ),
++    "nauthiz": (
++        "Стихия/идея: нужда, необходимость.\n\n"
++        "Связана с трением огнива — искрой, добытой через сопротивление и усилие. "
++        "Традиционно символ ограничения и нехватки, которые вынуждают к росту "
++        "и учат ценить необходимое."
++    ),
++    "isa": (
++        "Стихия/идея: лёд.\n\n"
++        "Простейшая по форме и одна из самых буквальных рун: лёд как застывшее, "
++        "остановленное состояние. Традиционно символ паузы, заморозки процессов "
++        "и периода, когда действовать ещё рано."
++    ),
++    "jera": (
++        "Стихия/идея: урожайный год, цикл.\n\n"
++        "Означает «год» в смысле полного земледельческого цикла — от посева до жатвы. "
++        "Традиционно символ закономерного результата: то, что было посеяно, "
++        "неизбежно проявится, но только в своё время."
++    ),
++    "eihwaz": (
++        "Стихия/идея: тис.\n\n"
++        "Тис — дерево с ядовитой хвоей и очень прочной древесиной, из которой делали луки; "
++        "растёт на границе жизни и смерти. Традиционно символ стойкости, "
++        "прочной опоры и способности выдержать долгое давление."
++    ),
++    "perthro": (
++        "Стихия/идея: сосуд для жребия, тайна.\n\n"
++        "Значение этой руны — самое спорное в рунологии: вероятно, связана с сосудом "
++        "для метания жребия. Традиционно символ судьбы, скрытого знания "
++        "и того, что раскрывается не по воле человека."
++    ),
++    "algiz": (
++        "Стихия/идея: лось/защита, поднятые руки.\n\n"
++        "Форма руны напоминает раскинутые рога лося или защитный жест. "
++        "Традиционно — оберегающий знак, символ инстинктивной защиты "
++        "и границы между безопасным и опасным."
++    ),
++    "sowilo": (
++        "Стихия/идея: солнце.\n\n"
++        "Солнце как источник жизни и победы света над тьмой. "
++        "Традиционно символ успеха, ясности и энергии, "
++        "которая движется по своему постоянному пути и не может быть остановлена."
++    ),
++    "tiwaz": (
++        "Стихия/идея: бог Тюр, справедливость.\n\n"
++        "Названа в честь Тюра — бога права и воинской чести, пожертвовавшего рукой "
++        "ради удержания данного слова. Традиционно символ справедливости, "
++        "дисциплины и готовности платить цену за верность принципу."
++    ),
++    "berkano": (
++        "Стихия/идея: берёза.\n\n"
++        "Берёза — одно из первых деревьев, зеленеющих после зимы. "
++        "Традиционно символ роста, плодородия и заботы — "
++        "материнское, взращивающее начало."
++    ),
++    "ehwaz": (
++        "Стихия/идея: конь.\n\n"
++        "Конь в северной традиции — партнёр человека в пути, символ доверия между двумя. "
++        "Традиционно означает слаженное движение, союз "
++        "и прогресс, который держится на взаимном доверии."
++    ),
++    "mannaz": (
++        "Стихия/идея: человек.\n\n"
++        "Символ человека как социального существа — не одиночки, а части рода. "
++        "Традиционно связана с самопознанием через отношения "
++        "и тем, что человек — часть большего сообщества."
++    ),
++    "laguz": (
++        "Стихия/идея: вода.\n\n"
++        "Вода — стихия, которая течёт туда, куда позволяет ландшафт, и не имеет собственной формы. "
++        "Традиционно символ интуиции, подсознания "
++        "и течений, которые управляют нами незаметно."
++    ),
++    "ingwaz": (
++        "Стихия/идея: бог Инг, плодородие.\n\n"
++        "Связана с Ингом (Фрейром) — богом плодородия и мирного изобилия. "
++        "Традиционно символ завершения процесса, накопленной потенциальной энергии, "
++        "готовой воплотиться."
++    ),
++    "dagaz": (
++        "Стихия/идея: день, рассвет.\n\n"
++        "Означает переход от тьмы к свету — момент, когда всё меняется бесповоротно. "
++        "Традиционно символ прорыва, пробуждения "
++        "и качественного, а не постепенного изменения."
++    ),
++    "othala": (
++        "Стихия/идея: наследство, родовая земля.\n\n"
++        "Означает родовое имение — то, что принадлежит семье по праву происхождения, "
++        "а не куплено. Традиционно символ корней, наследия "
++        "и того, что остаётся за человеком независимо от обстоятельств."
++    ),
++    "wyrd": (
++        "Стихия/идея: судьба (пустая руна).\n\n"
++        "Не входит в исторический Старший Футарк — это современное дополнение "
++        "(«руна Одина»/«пустая руна»), появившееся в XX веке. Символизирует "
++        "неизвестное и то, что пока не оформлено ни в один знак."
++    ),
++}
++
++
++def get_traditional_text(rune_key: str, rune_name: str) -> str:
++    key = (rune_key or "").strip().lower()
++    body = TRADITIONAL_MEANINGS.get(key)
++    if not body:
++        return f"📜 <b>{rune_name}</b>\n\nТрадиционное описание для этой руны пока не добавлено."
++    return f"📜 <b>{rune_name}</b> — традиционное значение\n\n{body}"

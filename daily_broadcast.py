@@ -18,9 +18,9 @@ from database import (
     get_broadcast_users,
     get_expiring_premium_users,
     get_or_create_daily_card,
+    get_streak,
     set_broadcast_enabled,
 )
-from lunar_calendar import moon_phase_today
 from rune_text_repository import get_daily_text
 from runes_data import RUNES, get_rune_by_name
 from weekly_questions import question_for_rune, rune_of_week
@@ -55,21 +55,18 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             rune = get_rune_by_name(rune_name)
             image_path = _bot.get_rune_image_path(rune, palette)
-            day_text = get_daily_text(rune["key"], palette, orientation)
         except (DatabaseError, KeyError):
             logger.exception("Failed to build rune for user_id=%s", user_id)
             errors += 1
             continue
 
-        palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
         orientation_label = "перевёрнутое" if orientation == "rev" else "прямое"
-        moon = moon_phase_today()
-        text = (
-            f"{palette_icon} <b>{name}, руна дня</b>\n\n"
-            f"<b>{rune['name']}</b> · {orientation_label}\n\n"
-            f"{day_text}\n\n"
-            f"{moon['emoji']} {moon['phase_name']} — {moon['description']}"
-        )
+        try:
+            streak = get_streak(user_id)
+        except Exception:
+            streak = 0
+        from product_runtime import build_daily_card_text
+        text = build_daily_card_text(name, palette, rune, orientation, today, streak)
 
         try:
             from telegram import ReplyKeyboardRemove

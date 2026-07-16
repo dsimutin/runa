@@ -304,11 +304,13 @@ def format_one_rune_answer(
     question: str,
     rune: Dict[str, Any],
     text_data: Dict[str, str],
+    orientation_text: str = "",
 ) -> str:
     answer_icon = "✅" if text_data['answer_label'] == "Да" else "🚫"
+    rune_line = f"{rune['name']} · {orientation_text}" if orientation_text else rune['name']
     return (
         f"❓ <b>Вопрос:</b> <i>{question}</i>\n\n"
-        f"{rune['name']}\n\n"
+        f"{rune_line}\n\n"
         f"{text_data['short_desc']}\n\n"
         f"{answer_icon} {text_data['answer']}"
     )
@@ -667,6 +669,15 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
         return
 
     await send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
+    try:
+        from product_runtime import rune_info_keyboard
+        pairs = [(r["key"], r["name"]) for r, _ in rune_draws]
+        await update.effective_message.reply_text(
+            "Хочешь традиционное значение этих рун?",
+            reply_markup=rune_info_keyboard(pairs),
+        )
+    except Exception:
+        logger.exception("Failed to send rune-info buttons for spread")
 
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

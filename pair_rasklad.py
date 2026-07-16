@@ -4,7 +4,7 @@ from datetime import date
 
 import bot as _bot
 from database import get_pair_rasklad_runes
-from rune_text_repository import get_rasklad_text
+from rune_text_repository import get_relationship_trio_texts
 from runes_data import RUNES, get_rune_by_name
 
 
@@ -25,21 +25,19 @@ async def _build_pair_text(update, context, partner_name: str) -> None:
     rune2 = get_rune_by_name(rune2_name)
     rune3 = get_rune_by_name(rune3_name)
 
-    result1 = get_rasklad_text(rune1["key"], palette, "up", "past")
-    result2 = get_rasklad_text(rune2["key"], palette, "up", "present")
-    result3 = get_rasklad_text(rune3["key"], palette, "up", "future")
+    texts = get_relationship_trio_texts(rune1["key"], rune2["key"], rune3["key"], palette)
 
     message_text = (
         f"✌️ <b>Ты и {partner_name}</b>\n"
         f"\n"
         f"👤 <b>Ты</b> — {rune1_name}\n"
-        f"{result1['text']}\n"
+        f"{texts['you']}\n"
         f"\n"
         f"👥 <b>{partner_name}</b> — {rune2_name}\n"
-        f"{result2['text']}\n"
+        f"{texts['partner']}\n"
         f"\n"
         f"🔗 <b>Что между вами</b> — {rune3_name}\n"
-        f"{result3['text']}"
+        f"{texts['between']}"
     )
 
     image_path = _bot.get_rune_image_path(rune3, palette)
