@@ -53,26 +53,24 @@ async def _build_relationship_text(update, context, person_name: str, rel_type: 
     texts = get_relationship_trio_texts(rune1["key"], rune2["key"], rune3["key"], palette)
 
     if rel_type == "personal":
-        rel_label = "👥 Личные отношения"
+        rel_label = "👥 <b>Личные отношения</b>"
         your_label = "Ты"
         their_label = "Они"
         between_label = "Между вами"
     else:  # business
-        rel_label = "💼 Деловые отношения"
+        rel_label = "💼 <b>Деловые отношения</b>"
         your_label = "Ты в работе"
         their_label = "Они в работе"
         between_label = "Ваше сотрудничество"
 
     message_text = (
-        f"{rel_label} с <b>{escape(person_name)}</b>\n"
-        f"\n"
-        f"👤 <b>{your_label}</b> — {rune1_name}\n"
+        f"{rel_label}\n"
+        f"Ты и <b>{escape(person_name)}</b>\n\n"
+        f"1️⃣ <b>{your_label}</b>\n{rune1_name}\n"
         f"{texts['you']}\n"
-        f"\n"
-        f"👥 <b>{their_label}</b> — {rune2_name}\n"
+        f"\n\n2️⃣ <b>{their_label}</b>\n{rune2_name}\n"
         f"{texts['partner']}\n"
-        f"\n"
-        f"🔗 <b>{between_label}</b> — {rune3_name}\n"
+        f"\n\n3️⃣ <b>{between_label}</b>\n{rune3_name}\n"
         f"{texts['between']}"
     )
 

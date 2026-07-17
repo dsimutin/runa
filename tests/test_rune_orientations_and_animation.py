@@ -104,9 +104,9 @@ def test_three_card_text_uses_past_present_and_conditional_future():
         ({"key": "thurisaz", "name": "Турисаз"}, "up"),
     ]
     text = build_unified_spread("Что происходит?", draws, "light", "Дмитрий")
-    assert "1️⃣ <b>Прошлое — Феху (прямое положение)</b>" in text
-    assert "2️⃣ <b>Настоящее — Уруз (прямое положение)</b>" in text
-    assert "3️⃣ <b>Будущее — Турисаз (прямое положение)</b>" in text
+    assert "1️⃣ <b>Прошлое</b>\nФеху · прямое" in text
+    assert "2️⃣ <b>Настоящее</b>\nУруз · прямое" in text
+    assert "3️⃣ <b>Будущее</b>\nТурисаз · прямое" in text
     assert "Если текущая траектория сохранится:" in text
 
 
@@ -128,7 +128,7 @@ def test_spread_uses_detected_sphere_and_is_split_from_the_beginning():
     ]
     pages = build_unified_spread_pages("Что происходит на работе?", draws, "light", "Дмитрий")
     assert len(pages) == 3
-    assert "Сфера вопроса:</b> Работа" in pages[0]
+    assert "🎯 <b>Сфера</b>\nРабота" in pages[0]
     assert "1️⃣ <b>Прошлое" in pages[0]
     assert "2️⃣ <b>Настоящее" in pages[1]
     assert "3️⃣ <b>Будущее" in pages[2]

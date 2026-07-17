@@ -4,6 +4,7 @@ import bot
 import human_reading
 import product_runtime_final
 from product_runtime import product_yes_no_text
+from product_runtime import build_daily_card_text
 from question_guard import classify_question, guarded_question_response
 from premium_subscription import PREMIUM_BENEFITS
 
@@ -88,3 +89,33 @@ def test_yes_no_question_is_html_escaped():
     )
     assert "&lt;Дима&gt;" in text
     assert "Я &lt;прав?&gt;" in text
+
+
+def test_daily_card_uses_consistent_sections_without_random_headlines():
+    text = build_daily_card_text(
+        "Дмитрий", "light", {"key": "dagaz", "name": "Дагаз"}, "up", "2026-07-18", 2
+    )
+    assert text.startswith("🌞 <b>Руна дня</b>\n<b>Дмитрий</b> · Дагаз · необратимая")
+    assert "🔎 <b>Основной смысл</b>" in text
+    assert "❔ <b>Вопрос для размышления</b>" in text
+    assert "🧭 <b>Ориентир на день</b>" in text
+    assert "сегодняшний знак" not in text.lower()
+    assert "Будь готовы" not in text
+
+
+def test_yes_no_answer_uses_consistent_sections():
+    text = product_yes_no_text(
+        "Дмитрий",
+        "Стоит ли менять работу?",
+        {"name": "Феху"},
+        "прямое",
+        {
+            "answer_label": "Да",
+            "sphere_label": "Работа",
+            "short_desc": "Появляется ресурс.",
+            "answer": "Да. Можно действовать.",
+        },
+    )
+    assert text.startswith("❓ <b>Ответ на вопрос</b>")
+    assert "🔎 <b>Что показывает руна</b>" in text
+    assert "✅ <b>Ответ</b>" in text

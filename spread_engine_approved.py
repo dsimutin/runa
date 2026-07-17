@@ -138,40 +138,32 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
     names = [rune_name(r) for r in runes]
     from rune_text_repository import get_rasklad_text, orientation_label
     orientation_labels = [orientation_label(o, k) for k, o in zip(keys, orientations)]
-    position_descriptions = [
-        "прямое положение" if label == "прямое"
-        else "перевёрнутое положение" if label == "перевёрнутое"
-        else label
-        for label in orientation_labels
-    ]
-    position_names = ("Прошлое", "Настоящее", "Будущее")
-    cards = " · ".join(
-        f"{position}: {escape(name_)} — {description}"
-        for position, name_, description in zip(position_names, names, position_descriptions)
-    )
+    position_descriptions = orientation_labels
     safe_question = escape(short_sentence(question, 120))
     position_keys = ("past", "present", "future")
+    position_labels = ("Прошлое", "Настоящее", "Будущее")
     position_texts = []
-    for key, orientation, position, label in zip(keys, orientations, position_keys, position_names):
+    for key, orientation, position, label in zip(keys, orientations, position_keys, position_labels):
         raw = get_rasklad_text(key, deck, orientation, position)["text"]
         raw = re.sub(rf"^{label}:\s*", "", raw, flags=re.IGNORECASE)
         position_texts.append(escape(short_sentence(raw, 360)))
     first, second, third = position_texts
     bridge = escape(bridge_text(groups, topic))
     finish = escape(final_text(topic, groups[2]))
-    header = f"🔮 <b>{escape(name)}, расклад</b>" if name else "🔮 <b>Расклад</b>"
+    header = "🔮 <b>Расклад на три руны</b>"
+    person_line = f"\n<b>{escape(name)}</b>" if name else ""
     from rune_text_repository import SPHERE_LABELS, detect_question_sphere
     sphere_label = escape(SPHERE_LABELS[detect_question_sphere(question)])
     return (
-        f"{header}\n\n<i>{safe_question}</i>\n\n<b>{cards}</b>\n\n"
-        f"<b>Сфера вопроса:</b> {sphere_label}\n\n"
+        f"{header}{person_line}\n\n❓ <b>Вопрос</b>\n<i>«{safe_question}»</i>\n\n"
+        f"🎯 <b>Сфера</b>\n{sphere_label}\n\n"
         f"{escape(intro_by_topic(topic))}\n\n"
-        f"1️⃣ <b>Прошлое — {escape(names[0])} ({position_descriptions[0]})</b>\n{first}\n\n"
-        f"2️⃣ <b>Настоящее — {escape(names[1])} ({position_descriptions[1]})</b>\n{second}\n\n"
-        f"{bridge}\n\n"
-        f"3️⃣ <b>Будущее — {escape(names[2])} ({position_descriptions[2]})</b>\n"
-        f"<i>Если текущая траектория сохранится:</i> {third}\n\n"
-        f"───\n\n<b>{finish}</b>"
+        f"1️⃣ <b>Прошлое</b>\n{escape(names[0])} · {position_descriptions[0]}\n{first}\n\n"
+        f"2️⃣ <b>Настоящее</b>\n{escape(names[1])} · {position_descriptions[1]}\n{second}\n\n"
+        f"🔗 <b>Связь между рунами</b>\n{bridge}\n\n"
+        f"3️⃣ <b>Будущее</b>\n{escape(names[2])} · {position_descriptions[2]}\n"
+        f"<i>Если текущая траектория сохранится:</i>\n{third}\n\n"
+        f"───\n\n{finish}"
     )
 
 

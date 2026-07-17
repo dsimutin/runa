@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import random
+import re
 from datetime import date
 from html import escape
 
@@ -33,120 +34,6 @@ PRODUCT_ONBOARDING_QUESTIONS = [
     {"text": "Когда внутри нет ясности, что тебе ближе?", "a": "Пауза и мягкое прояснение", "b": "Прямой ответ и действие"},
     {"text": "Какого ответа ты ждёшь от рун?", "a": "Бережного ориентира и поддержки", "b": "Честного предупреждения без прикрас"},
 ]
-
-DAILY_PALETTE_ICON = {"light": "🌕", "dark": "🌑", "premium": "💠"}
-
-HUMAN_DAILY_OPENINGS = {
-    "light": [
-        "{icon} <b>{name}, руна дня</b>",
-        "{icon} <b>{name}, вот что сегодня рядом</b>",
-        "{icon} <b>{name}, на сегодня выпало это</b>",
-        "{icon} <b>{name}, тихий ориентир на день</b>",
-        "{icon} <b>{name}, сегодняшний знак</b>",
-    ],
-    "dark": [
-        "{icon} <b>{name}, руна дня</b>",
-        "{icon} <b>{name}, вот прямой сигнал на сегодня</b>",
-        "{icon} <b>{name}, сегодня расклад такой</b>",
-        "{icon} <b>{name}, факт дня</b>",
-        "{icon} <b>{name}, на сегодня — это</b>",
-    ],
-    "premium": [
-        "{icon} <b>{name}, руна дня</b>",
-        "{icon} <b>{name}, сегодняшний слой</b>",
-        "{icon} <b>{name}, вот что сегодня на поверхности</b>",
-        "{icon} <b>{name}, отправная точка дня</b>",
-        "{icon} <b>{name}, сегодняшний узел</b>",
-    ],
-}
-
-
-def _daily_opening(palette: str, name: str, seed_parts: tuple = ()) -> str:
-    icon = DAILY_PALETTE_ICON.get(palette, "🌕")
-    pool = HUMAN_DAILY_OPENINGS.get(palette, HUMAN_DAILY_OPENINGS["light"])
-    template = stable_pick(pool, name, *seed_parts) if seed_parts else pool[0]
-    return template.format(icon=icon, name=name)
-
-HUMAN_DAILY_CLOSINGS = {
-    "light": [
-        "На сегодня достаточно одного бережного шага. Не бери на себя больше, чем реально можешь удержать.",
-        "Сделай то, после чего внутри станет тише. Остальное можно не трогать прямо сейчас.",
-        "Не подстраивайся автоматически. Сначала проверь: тебе от этого легче или тяжелее?",
-        "Лучшее действие сегодня — убрать лишнее давление и оставить себе пространство для нормального решения.",
-        "Если выбор не созрел, не выжимай его из себя. Подготовь почву — это тоже действие.",
-    ],
-    "dark": [
-        "Сегодня лучше не объяснять очевидное слишком долго. Скажи короче и держись выбранной линии.",
-        "Если где-то уже нарушена граница, возвращай её спокойно. Без нападения, но твёрдо.",
-        "Смотри на поступки. Слова сейчас могут красиво закрывать неудобный факт.",
-        "Не бери чужую ответственность на себя. Особенно если тебя к этому мягко подталкивают.",
-        "Твоя задача — не победить, а не предать свою позицию.",
-    ],
-    "premium": [
-        "Сегодня полезнее распутать причину, чем быстро реагировать на поверхность.",
-        "Спроси себя: что в этой теме возвращается не первый раз? Там и лежит ключ.",
-        "Не расширяй ситуацию новыми действиями, пока не понятен её центр.",
-        "Запиши вопрос одной фразой. Лишние слова покажут, где ты сама себя уводишь в сторону.",
-        "Не спеши закрывать тему. Сначала пойми, какую роль ты в ней продолжаешь играть.",
-    ],
-}
-
-HUMAN_QUESTION_OPENINGS = {
-    "light": [
-        "❓ <b>{name}, по твоему вопросу</b>\nОтвет здесь не резкий. Скорее карта показывает, где внутри уже есть тихое понимание.",
-        "❓ <b>{name}, одна карта на вопрос</b>\nЯ бы не читала это категорично. Но направление видно.",
-        "❓ <b>{name}, коротко по вопросу</b>\nТут важно не то, чего хочется сразу, а что после этого станет легче держать.",
-        "❓ <b>{name}, ответ по ситуации</b>\nКарта говорит мягко, но не пусто: прислушайся к первой реакции.",
-        "❓ <b>{name}, без давления</b>\nОтвет проявляется через ощущение, а не через спор с собой. Не дави на него.",
-    ],
-    "dark": [
-        "❓ <b>{name}, по твоему вопросу</b>\nКарта здесь довольно сухая. Она скорее показывает факт, чем успокаивает.",
-        "❓ <b>{name}, одна карта на вопрос</b>\nЯ бы смотрела на последствия. Именно там ответ становится понятнее.",
-        "❓ <b>{name}, коротко по вопросу</b>\nЗдесь важно не оправдать ситуацию, а увидеть, что она уже делает с тобой.",
-        "❓ <b>{name}, отвечаю прямо</b>\nКарта подсвечивает место, где ты можешь уступить больше, чем стоит.",
-        "❓ <b>{name}, по сути</b>\nЕсли убрать эмоции, остаётся вопрос границы и цены твоего согласия.",
-    ],
-    "premium": [
-        "❓ <b>{name}, по твоему вопросу</b>\nОтвет прячется не в событии, а в мотиве, который за ним стоит.",
-        "❓ <b>{name}, одна карта на вопрос</b>\nЯ бы смотрела глубже: что ты на самом деле хочешь подтвердить этим вопросом?",
-        "❓ <b>{name}, коротко по вопросу</b>\nКарта показывает не только направление, но и скрытый узел внутри ситуации.",
-        "❓ <b>{name}, через подтекст</b>\nНе спеши с формальным «да» или «нет». Есть слой, который меняет смысл.",
-        "❓ <b>{name}, через одну карту</b>\nОтвет идёт через повтор: что уже происходило похожим образом?",
-    ],
-}
-
-HUMAN_QUESTION_CLOSINGS = {
-    "light": [
-        "Если пойдёшь в эту сторону — следующий шаг станет легче. Если нет — вопрос вернётся.",
-        "Это направление ведёт к более спокойному варианту. Другое — к тому же месту через круг.",
-        "Первый шаг здесь маленький. Но именно он меняет, куда выходит ситуация.",
-        "Прямо сейчас тут открывается дверь. Через неделю она может закрыться.",
-        "Ближайший исход зависит от того, отпустишь ты это или будешь удерживать.",
-    ],
-    "dark": [
-        "Если возьмёшь позицию сейчас — выйдешь с результатом. Если промедлишь — другие займут поле.",
-        "Здесь есть одно окно. Его не нужно долго обдумывать — нужно его заметить.",
-        "Исход читается прямо: один путь закрывает вопрос, второй его продлевает.",
-        "Если закроешь слабое место сейчас — ситуация выровняется. Если нет — она повторится с большей ценой.",
-        "Ставка понятна. Важнее не что решить, а когда.",
-    ],
-    "premium": [
-        "Если паттерн распознаётся — ситуация выходит в новое качество. Если нет — повторится в другой форме.",
-        "То, что ты видишь снаружи, — это следствие. Причина разворачивается глубже, и именно там ответ.",
-        "Этот вопрос ведёт к развязке только если смотреть не на событие, а на то, что оно удерживает.",
-        "Исход здесь не в решении. Он в том, какую роль ты готов отпустить.",
-        "Ситуация меняется не когда появляется ответ, а когда меняется вопрос.",
-    ],
-}
-
-
-def stable_pick(pool: list[str], *parts: object) -> str:
-    if not pool:
-        return ""
-    raw = ":".join(str(p) for p in parts).encode("utf-8")
-    index = int(hashlib.sha256(raw).hexdigest()[:8], 16) % len(pool)
-    return pool[index]
-
 
 async def reading_pause(update: Update, context: ContextTypes.DEFAULT_TYPE, seconds: float | None = None) -> None:
     chat = update.effective_chat
@@ -284,26 +171,38 @@ def build_daily_card_text(
     and the 09:00 broadcast (daily_broadcast.send_daily_rune) so the two
     can never drift into different formats again.
     """
-    from rune_text_repository import get_daily_text
+    from rune_decks_approved import get_deck_meaning
+    from rune_text_repository import get_daily_text, orientation_label
 
     try:
         day_text = get_daily_text(rune["key"], palette, orientation)
     except KeyError:
         day_text = bot.rune_text(rune, palette).get("short_desc", "")
 
-    opening = _daily_opening(palette, name, (rune["key"], orientation, day))
-    closing = stable_pick(
-        HUMAN_DAILY_CLOSINGS.get(palette, HUMAN_DAILY_CLOSINGS["light"]),
-        name, rune["key"], orientation, "closing", day,
-    )
+    parts = re.split(r"\s*Вопрос дня:\s*", day_text, maxsplit=1, flags=re.IGNORECASE)
+    meaning = parts[0].strip()
+    reflection = parts[1].strip() if len(parts) > 1 else "Что сегодня особенно важно заметить?"
+    try:
+        advice = get_deck_meaning(rune["key"], palette, orientation == "rev")["advice"].strip()
+    except (KeyError, TypeError):
+        advice = "Выбери один небольшой шаг, который поддерживает смысл этой руны."
+
+    position = orientation_label(orientation, rune["key"])
 
     if streak >= 2:
         streak_word = "день" if streak == 1 else "дня" if 2 <= streak <= 4 else "дней"
-        streak_line = f"\n\n🔥 {streak} {streak_word} подряд"
+        streak_line = f"\n\n🔥 <b>Серия:</b> {streak} {streak_word} подряд"
     else:
         streak_line = ""
 
-    return f"{opening}\n\n{day_text}\n\n{closing}{streak_line}"
+    return (
+        f"🌞 <b>Руна дня</b>\n"
+        f"<b>{escape(name)}</b> · {escape(str(rune['name']))} · {escape(position)}\n\n"
+        f"🔎 <b>Основной смысл</b>\n{escape(meaning)}\n\n"
+        f"❔ <b>Вопрос для размышления</b>\n{escape(reflection)}\n\n"
+        f"🧭 <b>Ориентир на день</b>\n{escape(advice)}"
+        f"{streak_line}"
+    )
 
 
 async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -343,29 +242,18 @@ def product_yes_no_text(
     orientation_text: str,
     sphere_data: dict,
 ) -> str:
-    """Format the yes/no one-rune answer using the opening/closing phrase
-    pools that already existed in this file but were never wired in.
-
-    The verdict (✅/🚫 + text starting with an unambiguous Да/Нет variant,
-    see _vary_verdict_opener) stays on its own line and is never replaced
-    or softened by the opening/closing framing — those only add context
-    before and after the actual answer.
-    """
-    palette_key = sphere_data.get("palette", "light")
-    key = palette_key if palette_key in HUMAN_QUESTION_OPENINGS else "light"
-    opening = random.choice(HUMAN_QUESTION_OPENINGS[key]).format(name=escape(name))
-    closing = random.choice(HUMAN_QUESTION_CLOSINGS[key])
+    """Format a one-rune answer with the same hierarchy as other readings."""
     answer_icon = {"Да": "✅", "Нет": "🚫"}.get(sphere_data["answer_label"], "◻️")
     rune_name = escape(str(rune["name"]))
     rune_line = f"{rune_name} · {escape(orientation_text)}" if orientation_text else rune_name
     return (
-        f"{opening}\n\n"
-        f"<i>Твой вопрос:</i> {escape(question)}\n\n"
-        f"<b>Сфера вопроса:</b> {escape(str(sphere_data['sphere_label']))}\n\n"
-        f"{rune_line}\n\n"
-        f"{escape(str(sphere_data['short_desc']))}\n\n"
-        f"{answer_icon} {escape(str(sphere_data['answer']))}\n\n"
-        f"{closing}"
+        f"❓ <b>Ответ на вопрос</b>\n"
+        f"<b>{escape(name)}</b> · {rune_line}\n\n"
+        f"<i>«{escape(question)}»</i>\n"
+        f"Сфера: {escape(str(sphere_data['sphere_label']))}\n\n"
+        f"🔎 <b>Что показывает руна</b>\n{escape(str(sphere_data['short_desc']))}\n\n"
+        f"{answer_icon} <b>Ответ</b>\n{escape(str(sphere_data['answer']))}\n\n"
+        f"<i>Это текущая тенденция, а не неизменный исход.</i>"
     )
 
 
