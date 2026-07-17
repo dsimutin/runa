@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import date
+from html import escape
 
 import bot as _bot
 from database import get_pair_rasklad_runes
@@ -28,13 +29,14 @@ async def _build_pair_text(update, context, partner_name: str) -> None:
 
     texts = get_relationship_trio_texts(rune1["key"], rune2["key"], rune3["key"], palette)
 
+    safe_partner_name = escape(partner_name)
     message_text = (
-        f"✌️ <b>Ты и {partner_name}</b>\n"
+        f"✌️ <b>Ты и {safe_partner_name}</b>\n"
         f"\n"
         f"👤 <b>Ты</b> — {rune1_name}\n"
         f"{texts['you']}\n"
         f"\n"
-        f"👥 <b>{partner_name}</b> — {rune2_name}\n"
+        f"👥 <b>{safe_partner_name}</b> — {rune2_name}\n"
         f"{texts['partner']}\n"
         f"\n"
         f"🔗 <b>Что между вами</b> — {rune3_name}\n"

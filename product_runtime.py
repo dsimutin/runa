@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import random
 from datetime import date
+from html import escape
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.constants import ChatAction
@@ -352,23 +353,29 @@ def product_yes_no_text(
     """
     palette_key = sphere_data.get("palette", "light")
     key = palette_key if palette_key in HUMAN_QUESTION_OPENINGS else "light"
-    opening = random.choice(HUMAN_QUESTION_OPENINGS[key]).format(name=name)
+    opening = random.choice(HUMAN_QUESTION_OPENINGS[key]).format(name=escape(name))
     closing = random.choice(HUMAN_QUESTION_CLOSINGS[key])
     answer_icon = {"Да": "✅", "Нет": "🚫"}.get(sphere_data["answer_label"], "◻️")
-    rune_line = f"{rune['name']} · {orientation_text}" if orientation_text else rune["name"]
+    rune_name = escape(str(rune["name"]))
+    rune_line = f"{rune_name} · {escape(orientation_text)}" if orientation_text else rune_name
     return (
         f"{opening}\n\n"
-        f"<i>Твой вопрос:</i> {question}\n\n"
-        f"<b>Сфера вопроса:</b> {sphere_data['sphere_label']}\n\n"
+        f"<i>Твой вопрос:</i> {escape(question)}\n\n"
+        f"<b>Сфера вопроса:</b> {escape(str(sphere_data['sphere_label']))}\n\n"
         f"{rune_line}\n\n"
-        f"{sphere_data['short_desc']}\n\n"
-        f"{answer_icon} {sphere_data['answer']}\n\n"
+        f"{escape(str(sphere_data['short_desc']))}\n\n"
+        f"{answer_icon} {escape(str(sphere_data['answer']))}\n\n"
         f"{closing}"
     )
 
 
 async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
     if not await bot.ensure_profile_ready(update, context):
+        return
+    from question_guard import guarded_question_response
+    guarded_response = guarded_question_response(question)
+    if guarded_response:
+        await bot.send_private_or_group(update, context, guarded_response)
         return
     await reading_pause(update, context, 0.03)
     palette = bot.get_user_palette(update)

@@ -67,6 +67,7 @@ ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DECK_DIRS = {"light": "light", "dark": "dark", "premium": "premium"}
 MAX_PHOTO_CAPTION_LENGTH = 1000
+MAX_TELEGRAM_PAGE_LENGTH = 3800
 _telegram_file_ids: dict[str, str | None] = {}
 
 STATE_WAITING_ASK = "waiting_ask"
@@ -416,6 +417,55 @@ async def send_cached_photo(send_photo, image_path: str, **kwargs):
     return sent
 
 
+def split_telegram_text(text: str, limit: int = MAX_TELEGRAM_PAGE_LENGTH) -> list[str]:
+    """Split a response at paragraph boundaries before Telegram rejects it.
+
+    Generated HTML uses self-contained paragraphs, so keeping a paragraph
+    intact also keeps its markup intact. An unexpectedly huge paragraph is
+    converted to plain text before word-based splitting rather than sending
+    broken HTML tags.
+    """
+    if len(text) <= limit:
+        return [text]
+
+    blocks = text.split("\n\n")
+    pages: list[str] = []
+    current = ""
+
+    def flush() -> None:
+        nonlocal current
+        if current:
+            pages.append(current)
+            current = ""
+
+    for block in blocks:
+        if len(block) > limit:
+            flush()
+            plain = strip_html(block)
+            words = plain.split()
+            chunk = ""
+            for word in words:
+                candidate = f"{chunk} {word}".strip()
+                if len(candidate) > limit and chunk:
+                    pages.append(chunk)
+                    chunk = word
+                else:
+                    chunk = candidate
+            if chunk:
+                pages.append(chunk)
+            continue
+
+        candidate = f"{current}\n\n{block}" if current else block
+        if len(candidate) > limit:
+            flush()
+            current = block
+        else:
+            current = candidate
+
+    flush()
+    return pages or [""]
+
+
 async def send_private_or_group(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -467,6 +517,17 @@ async def send_private_or_group(
             return await context.bot.send_message(chat_id=user.id, **kwargs)
         await show_shuffle(send_message)
 
+    async def send_private_pages(target_text: str, mode: str | None) -> None:
+        pages = split_telegram_text(target_text)
+        for index, page in enumerate(pages):
+            markup = reply_markup if index == len(pages) - 1 else None
+            await _send_text_message(message, page, reply_markup=markup, parse_mode=mode)
+
+    async def send_bot_pages(target_text: str, mode: str | None) -> None:
+        pages = split_telegram_text(target_text)
+        for page in pages:
+            await _send_bot_text(context, user.id, page, parse_mode=mode)
+
     async def send_to_private(target_text: str, mode: str | None) -> None:
         if image_path:
             if reading_mode and show_shuffle:
@@ -475,9 +536,9 @@ async def send_private_or_group(
                 await send_cached_photo(message.reply_photo, image_path, caption=target_text, reply_markup=reply_markup, parse_mode=mode)
             else:
                 await send_cached_photo(message.reply_photo, image_path)
-                await _send_text_message(message, target_text, reply_markup=reply_markup, parse_mode=mode)
+                await send_private_pages(target_text, mode)
         else:
-            await _send_text_message(message, target_text, reply_markup=reply_markup, parse_mode=mode)
+            await send_private_pages(target_text, mode)
 
     async def send_to_group_private(target_text: str, mode: str | None) -> None:
         if image_path:
@@ -487,9 +548,9 @@ async def send_private_or_group(
                 await send_cached_photo(context.bot.send_photo, image_path, chat_id=user.id, caption=target_text, parse_mode=mode)
             else:
                 await send_cached_photo(context.bot.send_photo, image_path, chat_id=user.id)
-                await _send_bot_text(context, user.id, target_text, parse_mode=mode)
+                await send_bot_pages(target_text, mode)
         else:
-            await _send_bot_text(context, user.id, target_text, parse_mode=mode)
+            await send_bot_pages(target_text, mode)
         await message.reply_text("Отправил ответ тебе в личку ✨")
 
     try:

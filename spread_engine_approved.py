@@ -248,6 +248,12 @@ async def send_approved_rasklad(update, context, question: str) -> None:
     import bot
     import time
 
+    from question_guard import guarded_question_response
+    guarded_response = guarded_question_response(question)
+    if guarded_response:
+        await bot.send_private_or_group(update, context, guarded_response)
+        return
+
     started_at = time.perf_counter()
     status_message = None
     if update.effective_user:

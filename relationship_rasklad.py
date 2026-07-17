@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import date
+from html import escape
 
 import bot as _bot
 from database import get_pair_rasklad_runes
@@ -16,13 +17,13 @@ async def send_relationship_type_choice(update, context, person_name: str) -> No
     context.user_data["relationship_person"] = person_name
 
     buttons = [
-        [InlineKeyboardButton("👥 Личные отношения", callback_data=f"rel_type:personal:{person_name}")],
-        [InlineKeyboardButton("💼 Деловые отношения", callback_data=f"rel_type:business:{person_name}")],
+        [InlineKeyboardButton("👥 Личные отношения", callback_data="rel_type:personal")],
+        [InlineKeyboardButton("💼 Деловые отношения", callback_data="rel_type:business")],
     ]
     keyboard = InlineKeyboardMarkup(buttons)
 
     await update.effective_message.reply_text(
-        f"👥 Расклад для <b>{person_name}</b> — выбери тип:\n\n"
+        f"👥 Расклад для <b>{escape(person_name)}</b> — выбери тип:\n\n"
         "👤 <i>Личные</i> — любовь, дружба, семья\n"
         "💼 <i>Деловые</i> — работа, партнёрство, сотрудничество",
         reply_markup=keyboard,
@@ -63,7 +64,7 @@ async def _build_relationship_text(update, context, person_name: str, rel_type: 
         between_label = "Ваше сотрудничество"
 
     message_text = (
-        f"{rel_label} с <b>{person_name}</b>\n"
+        f"{rel_label} с <b>{escape(person_name)}</b>\n"
         f"\n"
         f"👤 <b>{your_label}</b> — {rune1_name}\n"
         f"{texts['you']}\n"
@@ -76,15 +77,9 @@ async def _build_relationship_text(update, context, person_name: str, rel_type: 
     )
 
     image_path = _bot.get_rune_image_path(rune3, palette)
-    message = update.effective_message
-    if message and _bot.is_private(update):
-        await message.reply_text(message_text, parse_mode="HTML")
-        if image_path:
-            await _bot.send_cached_photo(message.reply_photo, image_path)
-    else:
-        await context.bot.send_message(chat_id=user_id, text=message_text, parse_mode="HTML")
-        if image_path:
-            await _bot.send_cached_photo(context.bot.send_photo, image_path, chat_id=user_id)
+    await _bot.send_private_or_group(
+        update, context, message_text, image_path=image_path, reading_mode=True
+    )
 
 
 async def relationship_type_callback(update, context) -> None:
@@ -95,12 +90,15 @@ async def relationship_type_callback(update, context) -> None:
 
     try:
         parts = query.data.split(":", 2)
-        if parts[0] == "rel_type" and len(parts) == 3:
+        if parts[0] == "rel_type" and len(parts) >= 2:
             rel_type = parts[1]  # personal or business
-            person_name = parts[2]
+            person_name = parts[2] if len(parts) == 3 else context.user_data.get("relationship_person", "")
+            if not person_name:
+                await query.answer("Напиши имя ещё раз.", show_alert=True)
+                return
 
             await query.answer()
-            await query.edit_message_text(f"⏳ Выбираю карты для {person_name}...")
+            await query.edit_message_text(f"⏳ Выбираю карты для {escape(person_name)}...", parse_mode="HTML")
 
             await _build_relationship_text(update, context, person_name, rel_type)
     except Exception:

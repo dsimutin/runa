@@ -503,20 +503,12 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
     if text in {"❓ Вопрос", "❓ Задать вопрос", "❓ Вопрос (да/нет)"}:
-        from trigger_questions import TRIGGER_QUESTIONS
         context.user_data["state"] = bot.STATE_WAITING_ASK
-
-        # Create inline buttons for trigger questions
-        buttons = []
-        for question in TRIGGER_QUESTIONS[:4]:  # First 4 questions in first row
-            buttons.append([InlineKeyboardButton(question, callback_data=f"trigger_q:{question}")])
-        buttons.append([InlineKeyboardButton("+ Свой вопрос", callback_data="trigger_q:own")])
-
-        keyboard = InlineKeyboardMarkup(buttons)
         await update.effective_message.reply_text(
-            "❓ <b>Выбери вопрос или напиши свой:</b>",
-            reply_markup=keyboard,
-            parse_mode="HTML"
+            "❓ <b>Напиши свой вопрос</b> одним сообщением.\n\n"
+            "Лучше о ситуации, решении или отношениях, на которые ты можешь повлиять.",
+            reply_markup=_kb(update) if bot.is_private(update) else None,
+            parse_mode="HTML",
         )
         return
     if text == "🔮 Расклад":
