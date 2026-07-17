@@ -631,6 +631,20 @@ async def whoami_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.effective_message.reply_text(f"User ID: {user.id}\nChat ID: {chat.id}\nUsername: @{user.username}" if user.username else f"User ID: {user.id}\nChat ID: {chat.id}")
 
 
+async def where_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show whether the current chat receives manual payment requests."""
+    chat = update.effective_chat
+    if not chat:
+        return
+    title = getattr(chat, "title", None) or "личный чат"
+    connected = chat.id in bot.ADMIN_IDS
+    status = "✅ подключён" if connected else "❌ не подключён"
+    await update.effective_message.reply_text(
+        f"Чат: {title}\nChat ID: {chat.id}\nПриём заявок на оплату: {status}\n\n"
+        "Чтобы подключить этот чат, добавь его Chat ID в ADMIN_IDS сервиса Cloud Run."
+    )
+
+
 async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text("Теперь не нужно брать заявку командой. Ответьте реплаем на сообщение заявки.")
 
@@ -845,16 +859,21 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             [InlineKeyboardButton("✅ Подтвердить оплату", callback_data=f"op:premium_confirm:{user.id}")],
             [InlineKeyboardButton("❌ Отклонить", callback_data=f"op:premium_decline:{user.id}")],
         ])
+        delivered_to = []
         for admin_id in bot.ADMIN_IDS:
             try:
                 await context.bot.send_message(chat_id=admin_id, text=note, reply_markup=confirm_kb)
+                delivered_to.append(admin_id)
             except TelegramError:
                 bot.logger.exception("Failed to notify admin about premium payment chat_id=%s", admin_id)
-        await context.bot.send_message(
-            chat_id=user.id,
-            text="✅ Заявка на премиум получена. После проверки оплаты подписка будет активирована.",
-            reply_markup=_kb(update),
-        )
+        if delivered_to:
+            response = "✅ Заявка на премиум получена. После проверки оплаты подписка будет активирована."
+        else:
+            response = (
+                "⚠️ Оплата отмечена, но заявка не дошла оператору. "
+                "Напиши в поддержку и не нажимай оплату повторно."
+            )
+        await context.bot.send_message(chat_id=user.id, text=response, reply_markup=_kb(update))
         return
 
     if data == "premium:year":
@@ -1233,6 +1252,7 @@ def final_build_application():
     app.add_handler(CommandHandler("rasklad", product_runtime.bot.rasklad_command))
     app.add_handler(CommandHandler("operator", operator_command))
     app.add_handler(CommandHandler("whoami", whoami_command))
+    app.add_handler(CommandHandler("where_admin", where_admin_command))
     app.add_handler(CommandHandler("activatepremium", activatepremium_command))
     app.add_handler(CommandHandler("claim", claim_command))
     app.add_handler(CommandHandler("answer", answer_command))
@@ -1245,6 +1265,8 @@ def final_build_application():
     app.add_handler(CommandHandler("menu", show_menu_command))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
+    from spread_engine_approved import spread_page_callback
+    app.add_handler(CallbackQueryHandler(spread_page_callback, pattern=r"^spread_page:"))
     app.add_handler(CallbackQueryHandler(trigger_question_callback, pattern=r"^trigger_q:"))
     app.add_handler(CallbackQueryHandler(rune_info_callback, pattern=r"^rune_info:"))
     app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))

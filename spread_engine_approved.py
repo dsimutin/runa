@@ -24,10 +24,21 @@ RUNE_NAMES = {"fehu":"Феху","uruz":"Уруз","thurisaz":"Турисаз","a
 
 
 def detect_topic(question: str) -> str:
-    q = (question or "").lower()
-    scores = {topic: sum(1 for word in words if word in q) for topic, words in TOPIC_KEYWORDS.items()}
-    best = max(scores, key=scores.get)
-    return best if scores[best] else "general"
+    """Use the same sphere detector as the one-rune answer.
+
+    Keeping one detector prevents the same question being treated as work in
+    one product and as a generic choice in another.
+    """
+    from rune_text_repository import detect_question_sphere
+
+    return {
+        "relationships": "love",
+        "work": "work",
+        "money": "money",
+        "health": "health",
+        "timing": "timing",
+        "decision": "choice",
+    }[detect_question_sphere(question)]
 
 
 def rune_key(rune: dict[str, Any]) -> str:
@@ -57,6 +68,8 @@ def intro_by_topic(topic: str) -> str:
         "love": "Сейчас в центре вопроса не красивые слова, а то, как между вами на самом деле движется тепло, внимание и ответственность.",
         "work": "В этой истории важны не только возможности, но и условия: кто за что отвечает, где есть отдача и где уже начинается перегруз.",
         "money": "Здесь всё лучше смотреть через деньги, силы и цену участия. Не по обещаниям, а по тому, что реально остаётся у тебя на руках.",
+        "health": "В центре вопроса — самочувствие и запас сил. Руны здесь помогают увидеть нагрузку и направление заботы о себе, но не заменяют врача и диагностику.",
+        "timing": "В вопросе о сроках важнее увидеть, что ускоряет или задерживает развитие. Руны показывают динамику, а не гарантированную календарную дату.",
         "choice": "Этот выбор нельзя смотреть только через желание. Важно понять, какой вариант ты выдержишь не один день, а дальше.",
         "conflict": "Здесь уже есть напряжение, даже если его пытаются сгладить. Вопрос в том, где проходит граница и кто готов её уважать.",
         "future": "Ближайшее развитие зависит не от случайности, а от того, что уже повторяется сейчас. Именно это задаёт направление.",
@@ -89,6 +102,10 @@ def final_text(topic: str, last_group: str) -> str:
         return "Не бери на себя больше, пока не станет понятно, где твоя зона ответственности и какая будет отдача."
     if topic == "money":
         return "Сначала считай цену решения, потом уже смотри на обещанную выгоду."
+    if topic == "health":
+        return "Отнесись к сигналам тела серьёзно; при симптомах опирайся на врача, а не только на символический расклад."
+    if topic == "timing":
+        return "Срок прояснится по движению ситуации: смотри, исчезают ли задержки и появляются ли реальные шаги."
     if topic == "choice":
         return "Сильнее тот вариант, после которого тебе не придётся постоянно уговаривать себя."
     if topic == "conflict":
@@ -143,8 +160,11 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
     bridge = escape(bridge_text(groups, topic))
     finish = escape(final_text(topic, groups[2]))
     header = f"🔮 <b>{escape(name)}, расклад</b>" if name else "🔮 <b>Расклад</b>"
+    from rune_text_repository import SPHERE_LABELS, detect_question_sphere
+    sphere_label = escape(SPHERE_LABELS[detect_question_sphere(question)])
     return (
         f"{header}\n\n<i>{safe_question}</i>\n\n<b>{cards}</b>\n\n"
+        f"<b>Сфера вопроса:</b> {sphere_label}\n\n"
         f"{escape(intro_by_topic(topic))}\n\n"
         f"1️⃣ <b>Прошлое — {escape(names[0])} ({position_descriptions[0]})</b>\n{first}\n\n"
         f"2️⃣ <b>Настоящее — {escape(names[1])} ({position_descriptions[1]})</b>\n{second}\n\n"
@@ -152,6 +172,60 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
         f"3️⃣ <b>Будущее — {escape(names[2])} ({position_descriptions[2]})</b>\n"
         f"<i>Если текущая траектория сохранится:</i> {third}\n\n"
         f"───\n\n<b>{finish}</b>"
+    )
+
+
+def build_unified_spread_pages(
+    question: str,
+    rune_draws: list[tuple[dict[str, Any], str]],
+    deck: str = "premium",
+    name: str = "",
+) -> list[str]:
+    """Split the reading into short, navigable pages for Telegram."""
+    full = build_unified_spread(question, rune_draws, deck, name)
+    markers = ("1️⃣ <b>Прошлое", "2️⃣ <b>Настоящее", "3️⃣ <b>Будущее", "───")
+    starts = [full.index(marker) for marker in markers]
+    header = full[:starts[0]].rstrip()
+    past = full[starts[0]:starts[1]].rstrip()
+    present = full[starts[1]:starts[2]].rstrip()
+    future = full[starts[2]:starts[3]].rstrip()
+    summary = full[starts[3]:].replace("───", "🧭 <b>Итог расклада</b>", 1).strip()
+    return [f"{header}\n\n{past}", present, future, summary]
+
+
+def spread_page_markup(token: str, page: int, total: int):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton("← Назад", callback_data=f"spread_page:{token}:{page - 1}"))
+    if page + 1 < total:
+        buttons.append(InlineKeyboardButton("Далее →", callback_data=f"spread_page:{token}:{page + 1}"))
+    return InlineKeyboardMarkup([buttons]) if buttons else None
+
+
+async def spread_page_callback(update, context) -> None:
+    query = update.callback_query
+    if not query:
+        return
+    match = re.fullmatch(r"spread_page:([a-f0-9]+):(\d+)", query.data or "")
+    if not match:
+        return
+    token, page_raw = match.groups()
+    stored = context.user_data.get("spread_pages") or {}
+    if stored.get("token") != token:
+        await query.answer("Этот расклад уже устарел. Сделай новый.", show_alert=True)
+        return
+    pages = stored.get("pages") or []
+    page = int(page_raw)
+    if page >= len(pages):
+        await query.answer("Страница не найдена.", show_alert=True)
+        return
+    await query.answer()
+    await query.edit_message_text(
+        pages[page],
+        parse_mode="HTML",
+        reply_markup=spread_page_markup(token, page, len(pages)),
     )
 
 
@@ -177,5 +251,16 @@ async def send_approved_rasklad(update, context, question: str) -> None:
     from rune_text_repository import orientation_label
     collage_labels = [orientation_label(orientation, rune["key"]) for rune, orientation in rune_draws]
     image_path = build_spread_collage(image_paths, deck, collage_labels)
-    text = build_unified_spread(question, rune_draws, deck, bot.user_name(update))
-    await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
+    pages = build_unified_spread_pages(question, rune_draws, deck, bot.user_name(update))
+    await bot.send_private_or_group(
+        update, context, "🔮 Три руны: прошлое · настоящее · будущее", image_path=image_path, reading_mode=True
+    )
+    import secrets
+    token = secrets.token_hex(4)
+    context.user_data["spread_pages"] = {"token": token, "pages": pages}
+    await context.bot.send_message(
+        chat_id=update.effective_user.id,
+        text=pages[0],
+        parse_mode="HTML",
+        reply_markup=spread_page_markup(token, 0, len(pages)),
+    )

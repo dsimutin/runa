@@ -3,6 +3,7 @@ from pathlib import Path
 from PIL import Image
 
 from rune_text_repository import (
+    detect_question_sphere,
     is_reversible,
     normalize_orientation,
     orientation_label,
@@ -13,7 +14,7 @@ from rune_text_repository import (
 from rune_collage import build_spread_collage
 from runes_data import NON_REVERSIBLE_RUNE_KEYS, RUNES
 from year_rasklad import build_month_interpretation
-from spread_engine_approved import build_unified_spread
+from spread_engine_approved import build_unified_spread, build_unified_spread_pages
 
 
 def test_non_reversible_runes_never_draw_reversed():
@@ -84,3 +85,28 @@ def test_three_card_text_uses_past_present_and_conditional_future():
     assert "2️⃣ <b>Настоящее — Уруз (прямое положение)</b>" in text
     assert "3️⃣ <b>Будущее — Турисаз (прямое положение)</b>" in text
     assert "Если текущая траектория сохранится:" in text
+
+
+def test_question_spheres_are_detected_and_generic_choice_does_not_override_domain():
+    assert detect_question_sphere("Стоит ли менять работу?") == "work"
+    assert detect_question_sphere("Вернётся ли бывший партнёр?") == "relationships"
+    assert detect_question_sphere("Стоит ли брать кредит?") == "money"
+    assert detect_question_sphere("Нужно ли идти к врачу?") == "health"
+    assert detect_question_sphere("Когда будет результат?") == "timing"
+    assert detect_question_sphere("Стоит ли соглашаться?") == "decision"
+    assert detect_question_sphere("Мы обсудили поездку") == "decision"
+
+
+def test_spread_uses_detected_sphere_and_is_split_from_the_beginning():
+    draws = [
+        ({"key": "fehu", "name": "Феху"}, "up"),
+        ({"key": "uruz", "name": "Уруз"}, "up"),
+        ({"key": "thurisaz", "name": "Турисаз"}, "up"),
+    ]
+    pages = build_unified_spread_pages("Что происходит на работе?", draws, "light", "Дмитрий")
+    assert len(pages) == 4
+    assert "Сфера вопроса:</b> Работа" in pages[0]
+    assert "1️⃣ <b>Прошлое" in pages[0]
+    assert "2️⃣ <b>Настоящее" in pages[1]
+    assert "3️⃣ <b>Будущее" in pages[2]
+    assert "Итог расклада" in pages[3]

@@ -371,6 +371,7 @@ def product_yes_no_text(
     return (
         f"{opening}\n\n"
         f"<i>Твой вопрос:</i> {question}\n\n"
+        f"<b>Сфера вопроса:</b> {sphere_data['sphere_label']}\n\n"
         f"{rune_line}\n\n"
         f"{sphere_data['short_desc']}\n\n"
         f"{answer_icon} {sphere_data['answer']}\n\n"

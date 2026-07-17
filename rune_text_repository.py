@@ -302,15 +302,36 @@ def get_rasklad_text(rune_key: str, palette: str, orientation: str, position: st
 
 
 def detect_question_sphere(question: str) -> str:
-    question_l = (question or "").lower()
-    scores: Dict[str, int] = {}
-    for sphere, keywords in QUESTION_SPHERE_KEYWORDS.items():
-        score = sum(1 for keyword in keywords if keyword in question_l)
-        if score:
-            scores[sphere] = score
-    if not scores:
+    """Detect the subject area without matching fragments inside other words.
+
+    Domain spheres are deliberately preferred over the generic ``decision``
+    intent.  Thus «стоит ли менять работу» is about work, while «стоит ли
+    соглашаться» falls back to decision.  Timing is treated as an explicit
+    intent and wins when the question contains «когда», «срок» and the like.
+    """
+    question_l = " ".join((question or "").lower().replace("ё", "е").split())
+    if not question_l:
         return "decision"
-    return max(scores, key=scores.get)
+
+    def matches(keyword: str) -> bool:
+        keyword = keyword.replace("ё", "е")
+        # Entries are intentional stems (работ-, отнош-), so allow the final
+        # word to continue, but require a real word boundary at its start.
+        parts = [re.escape(part) for part in keyword.split()]
+        pattern = r"(?<!\w)" + r"\s+".join(parts) + r"\w*"
+        return re.search(pattern, question_l, flags=re.UNICODE) is not None
+
+    scores = {
+        sphere: sum(1 for keyword in keywords if matches(keyword))
+        for sphere, keywords in QUESTION_SPHERE_KEYWORDS.items()
+    }
+    if scores["timing"]:
+        return "timing"
+    domain_spheres = ("relationships", "work", "money", "health")
+    best_domain = max(domain_spheres, key=lambda sphere: scores[sphere])
+    if scores[best_domain]:
+        return best_domain
+    return "decision"
 
 
 def get_sphere_answer(rune_key: str, palette: str, sphere: str, answer_kind: str) -> Dict[str, str]:
