@@ -814,7 +814,13 @@ async def _run_webhook_with_health(app: Application) -> None:
 
     async def telegram_webhook(request: StarletteRequest) -> Response:
         data = await request.json()
-        await app.update_queue.put(Update.de_json(data=data, bot=app.bot))
+        # Keep the Cloud Run request open while PTB handles the update.
+        # With request-based billing Cloud Run can throttle CPU as soon as the
+        # HTTP response is returned.  Queuing the update and returning first
+        # therefore made image composition and Telegram sends run as
+        # background work, which could stretch a spread from seconds to
+        # minutes on a scale-to-zero instance.
+        await app.process_update(Update.de_json(data=data, bot=app.bot))
         return Response()
 
     async def health(_: StarletteRequest) -> PlainTextResponse:
