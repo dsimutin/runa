@@ -95,6 +95,35 @@ def _normalize_rune_names_in_text(text: str) -> str:
     return text
 
 
+def _normalize_user_address(text: str) -> str:
+    """Keep legacy compiled spread texts consistent with the bot's «ты» voice."""
+    replacements = (
+        (r"\bрядом с вами\b", "рядом с тобой"),
+        (r"\bс вами\b", "с тобой"),
+        (r"\bу вас\b", "у тебя"),
+        (r"\bв вас\b", "в тебе"),
+        (r"\bк вам\b", "к тебе"),
+        (r"\bдля вас\b", "для тебя"),
+        (r"\bваша\b", "твоя"),
+        (r"\bваше\b", "твоё"),
+        (r"\bвашей\b", "твоей"),
+        (r"\bвашу\b", "твою"),
+        (r"\bваши\b", "твои"),
+        (r"\bваших\b", "твоих"),
+        (r"\bвашим\b", "твоим"),
+        (r"\bвам\b", "тебе"),
+        (r"\bвас\b", "тебя"),
+    )
+    for pattern, replacement in replacements:
+        text = re.sub(
+            pattern,
+            lambda match: replacement.capitalize() if match.group(0)[0].isupper() else replacement,
+            text,
+            flags=re.IGNORECASE,
+        )
+    return text
+
+
 RUNE_KEY_ALIASES = {
     "teiwaz": "tiwaz",
     "tiwaz": "tiwaz",
@@ -298,8 +327,8 @@ def get_rasklad_text(rune_key: str, palette: str, orientation: str, position: st
 
     return {
         "name": _normalize_rune_names_in_text(rune_data.get("name", "")),
-        "text": _normalize_rune_names_in_text(text),
-        "extra": _normalize_rune_names_in_text(palette_data.get("extra", "")),
+        "text": _normalize_user_address(_normalize_rune_names_in_text(text)),
+        "extra": _normalize_user_address(_normalize_rune_names_in_text(palette_data.get("extra", ""))),
     }
 
 

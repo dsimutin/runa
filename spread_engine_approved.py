@@ -220,11 +220,18 @@ async def spread_page_callback(update, context) -> None:
         return
     await query.answer()
     try:
-        await query.edit_message_text(
-            pages[page],
-            parse_mode="HTML",
-            reply_markup=spread_page_markup(token, page, len(pages)),
-        )
+        if stored.get("media"):
+            await query.edit_message_caption(
+                caption=pages[page],
+                parse_mode="HTML",
+                reply_markup=spread_page_markup(token, page, len(pages)),
+            )
+        else:
+            await query.edit_message_text(
+                pages[page],
+                parse_mode="HTML",
+                reply_markup=spread_page_markup(token, page, len(pages)),
+            )
     except TelegramError:
         # An old Telegram client/message can occasionally reject editing.
         # Continue the reading in a new message instead of losing the page.
@@ -290,30 +297,44 @@ async def send_approved_rasklad(update, context, question: str) -> None:
         image_path = None
     collage_seconds = time.perf_counter() - collage_started_at
     send_started_at = time.perf_counter()
-    if image_path:
-        await bot.send_private_or_group(
-            update,
-            context,
-            "🔮 Три руны: прошлое · настоящее · будущее",
-            image_path=image_path,
-            reading_mode=True,
-            show_shuffle=False,
-        )
     import secrets
     token = secrets.token_hex(4)
-    context.user_data["spread_pages"] = {"token": token, "pages": pages}
+    media_pages = bool(
+        image_path and all(len(page) <= bot.MAX_PHOTO_CAPTION_LENGTH for page in pages)
+    )
+    context.user_data["spread_pages"] = {
+        "token": token,
+        "pages": pages,
+        "media": media_pages,
+    }
     if status_message:
         try:
             await status_message.delete()
         except Exception:
             bot.logger.debug("Could not remove spread progress message", exc_info=True)
     try:
-        await context.bot.send_message(
-            chat_id=update.effective_user.id,
-            text=pages[0],
-            parse_mode="HTML",
-            reply_markup=spread_page_markup(token, 0, len(pages)),
-        )
+        if media_pages:
+            await bot.send_cached_photo(
+                context.bot.send_photo,
+                image_path,
+                chat_id=update.effective_user.id,
+                caption=pages[0],
+                parse_mode="HTML",
+                reply_markup=spread_page_markup(token, 0, len(pages)),
+            )
+        else:
+            if image_path:
+                await bot.send_cached_photo(
+                    context.bot.send_photo,
+                    image_path,
+                    chat_id=update.effective_user.id,
+                )
+            await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text=pages[0],
+                parse_mode="HTML",
+                reply_markup=spread_page_markup(token, 0, len(pages)),
+            )
     except Exception:
         bot.logger.exception("Failed to send paginated spread; sending plain fallback")
         await context.bot.send_message(

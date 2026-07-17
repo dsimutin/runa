@@ -8,6 +8,7 @@ import psycopg2
 import bot
 import database
 import neon_persistence
+from spread_engine_approved import spread_page_callback
 
 
 @pytest.mark.asyncio
@@ -112,3 +113,29 @@ async def test_neon_persistence_refreshes_and_saves_user_state():
         await persistence.update_user_data(42, user_data)
 
     save_state.assert_called_once_with(42, user_data)
+
+
+@pytest.mark.asyncio
+async def test_spread_navigation_edits_photo_caption_instead_of_sending_new_message():
+    query = SimpleNamespace(
+        data="spread_page:abc123:1",
+        answer=AsyncMock(),
+        edit_message_caption=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    update = SimpleNamespace(callback_query=query, effective_user=SimpleNamespace(id=42))
+    context = SimpleNamespace(
+        user_data={
+            "spread_pages": {
+                "token": "abc123",
+                "pages": ["Первая", "Вторая"],
+                "media": True,
+            }
+        },
+        bot=SimpleNamespace(send_message=AsyncMock()),
+    )
+
+    await spread_page_callback(update, context)
+
+    query.edit_message_caption.assert_awaited_once()
+    query.edit_message_text.assert_not_awaited()

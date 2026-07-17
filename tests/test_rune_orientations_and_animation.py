@@ -13,7 +13,7 @@ from rune_text_repository import (
     random_orientation,
     yes_no_draw,
 )
-from rune_collage import build_spread_collage
+from rune_collage import BADGE_GAP, BADGE_HEIGHT, PADDING, build_single_rune_card, build_spread_collage
 from runes_data import NON_REVERSIBLE_RUNE_KEYS, RUNES
 from year_rasklad import build_month_interpretation
 from spread_engine_approved import build_unified_spread, build_unified_spread_pages
@@ -97,6 +97,21 @@ def test_three_card_spread_is_one_horizontal_triptych():
         assert collage.height == 820
 
 
+def test_reversed_single_card_rotates_artwork_and_adds_position_badge(tmp_path):
+    source_path = tmp_path / "orientation.png"
+    source = Image.new("RGB", (20, 40), "red")
+    for y in range(20, 40):
+        for x in range(20):
+            source.putpixel((x, y), (0, 0, 255))
+    source.save(source_path)
+
+    result_path = build_single_rune_card(str(source_path), "light", "перевёрнутое")
+    with Image.open(result_path) as result:
+        artwork_top = PADDING + BADGE_HEIGHT + BADGE_GAP + 20
+        pixel = result.getpixel((result.width // 2, artwork_top))
+        assert pixel[2] > pixel[0]
+
+
 def test_three_card_text_uses_past_present_and_conditional_future():
     draws = [
         ({"key": "fehu", "name": "Феху"}, "up"),
@@ -164,4 +179,11 @@ def test_all_sphere_pages_fit_telegram_message_limit():
         for question in questions:
             pages = build_unified_spread_pages(question, draws, palette, "Дмитрий")
             assert len(pages) == 3
-            assert all(0 < len(page) < 4096 for page in pages)
+            assert all(0 < len(page) <= 1000 for page in pages)
+
+
+def test_legacy_spread_address_is_normalized_to_informal_voice():
+    from rune_text_repository import _normalize_user_address
+
+    text = _normalize_user_address("Это заставит вас вернуться к вашей опоре и быть рядом с вами.")
+    assert text == "Это заставит тебя вернуться к твоей опоре и быть рядом с тобой."

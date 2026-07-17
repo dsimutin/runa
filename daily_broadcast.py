@@ -81,6 +81,9 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
             continue
 
         position_label = orientation_label(orientation, rune["key"])
+        if image_path:
+            from rune_collage import build_single_rune_card
+            image_path = build_single_rune_card(image_path, palette, position_label)
         try:
             streak = get_streak(user_id)
         except Exception:
@@ -91,19 +94,13 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             from telegram import ReplyKeyboardRemove
             if image_path:
-                # Photo first — no caption, so it displays full-size without truncation
-                short_caption = f"<b>{rune['name']}</b> · {position_label}"
+                # One compact media message keeps the client at the beginning
+                # of the reading instead of below a separate photo.
                 await _bot.send_cached_photo(
                     context.bot.send_photo,
                     image_path,
                     chat_id=user_id,
-                    caption=short_caption,
-                    parse_mode="HTML",
-                )
-                # Full text as a separate message; hide keyboard so chat stays clean
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=text,
+                    caption=text,
                     parse_mode="HTML",
                     reply_markup=ReplyKeyboardRemove(),
                 )
