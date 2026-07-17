@@ -85,7 +85,7 @@ def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
             base.append(["💠 Премиум", "⚙️ Настройки"])
     except Exception:
         base.append(["💠 Премиум", "⚙️ Настройки"])
-    base.append(["ℹ️ Помощь"])
+    base.append(["📜 Значения рун", "ℹ️ Помощь"])
     return ReplyKeyboardMarkup(base, resize_keyboard=True)
 ALLOWED_OPERATOR_USERNAMES = {"mrgrief", "richstewardess"}
 PREMIUM_DIR_CANDIDATES = ["premium", "Premium", "Премиум", "премиум"]
@@ -209,6 +209,7 @@ async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAUL
                 "❓ <b>Вопрос (да/нет)</b> — короткий ответ одной картой\n"
                 "🔮 <b>Расклад</b> — разбор ситуации на три карты\n"
                 "🕯 <b>Личный расклад</b> — живой ответ человека\n"
+                "📜 <b>Значения рун</b> — отдельный справочник\n"
                 "⚙️ <b>Настройки</b> — сменить колоду\n\n"
                 "Можно нажать кнопку ниже."
             ),
@@ -456,6 +457,18 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if text == "🌞 Руна дня":
         await product_runtime.product_runa_command(update, context)
+        return
+    if text == "📜 Значения рун":
+        from runes_data import RUNES
+        rune_pairs = [(rune["key"], rune["name"]) for rune in RUNES if rune["key"] != "wyrd"]
+        await update.effective_message.reply_text(
+            "📜 <b>Традиционные значения рун</b>\n\n"
+            "Это отдельный справочник по символике и происхождению рун. "
+            "Он не заменяет и не уточняет полученный расклад.\n\n"
+            "Выбери руну:",
+            reply_markup=product_runtime.rune_info_keyboard(rune_pairs),
+            parse_mode="HTML",
+        )
         return
     if text in {"❓ Вопрос", "❓ Задать вопрос", "❓ Вопрос (да/нет)"}:
         from trigger_questions import TRIGGER_QUESTIONS
@@ -1134,7 +1147,7 @@ async def trigger_question_callback(update: Update, context: ContextTypes.DEFAUL
 
 
 async def rune_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the optional 'ℹ️ О руне' button — traditional/etymological meaning."""
+    """Show a traditional/etymological meaning selected in the reference."""
     query = update.callback_query
     if not query or not update.effective_user:
         return

@@ -1,5 +1,6 @@
 """Расклад на год — 12 рун на 12 месяцев."""
 import hashlib
+import re
 from datetime import date
 from typing import Any, Dict, List
 
@@ -10,6 +11,20 @@ MONTH_NAMES = [
     "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 ]
+
+
+def build_month_interpretation(rune_key: str, palette: str) -> str:
+    """Return a month-scale reading, never a recycled card-of-the-day text."""
+    from rune_decks_approved import get_deck_meaning
+
+    meaning = get_deck_meaning(rune_key, palette, False)
+    body = meaning["text"]
+    body = re.sub(r"\bСейчас\b", "В этом месяце", body)
+    body = re.sub(r"\bсейчас\b", "в этом месяце", body)
+    body = re.sub(r"\bСегодня\b", "В течение месяца", body)
+    body = re.sub(r"\bсегодня\b", "в течение месяца", body)
+    advice = meaning["advice"].strip()
+    return f"<b>Тема месяца</b>\n{body}\n\n<b>Ориентир месяца</b>\n{advice}"
 
 
 def _generate_year_runes(user_id: int, year: int, runes: List[Dict[str, Any]]) -> List[str]:
@@ -73,7 +88,6 @@ async def send_year_rasklad(update, context) -> None:
 async def send_rune_year_details(update, context, user_id: int, year: int, month_num: int) -> None:
     """Show interpretation for a specific month with navigation."""
     import bot as _bot
-    from rune_text_repository import get_daily_text
     from runes_data import RUNES, get_rune_by_name
 
     query = update.callback_query
@@ -90,7 +104,7 @@ async def send_rune_year_details(update, context, user_id: int, year: int, month
     is_current = year == today.year and month_num == today.month
     marker = "✅" if is_past else ("▶️" if is_current else "·")
 
-    interpretation = get_daily_text(rune["key"], palette, "up")
+    interpretation = build_month_interpretation(rune["key"], palette)
     message_text = (
         f"{marker} <b>{MONTH_NAMES[month_num - 1]} {year}</b> — {rune_name}\n\n"
         f"{interpretation}"

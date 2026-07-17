@@ -453,6 +453,7 @@ def short_help() -> str:
         "🌞 <b>Руна дня</b> — одна карта с фокусом на сегодня\n"
         "❓ <b>Вопрос (да/нет)</b> — одна руна, короткий ответ по ситуации\n"
         "🔮 <b>Расклад</b> — три карты: прошлое / настоящее / будущее\n"
+        "📜 <b>Значения рун</b> — отдельный справочник по традиционной символике\n"
         "🕯 <b>Личный расклад</b> — живой ответ человека на твой вопрос\n"
         "💠 <b>Премиум</b> — уникальная колода и 3 бесплатных личных расклада в месяц\n\n"
         "<b>Дополнительные команды:</b>\n"
@@ -692,15 +693,6 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
             return
 
     await send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
-    try:
-        from product_runtime import rune_info_keyboard
-        pairs = [(r["key"], r["name"]) for r, _ in rune_draws]
-        await update.effective_message.reply_text(
-            "Хочешь традиционное значение этих рун?",
-            reply_markup=rune_info_keyboard(pairs),
-        )
-    except Exception:
-        logger.exception("Failed to send rune-info buttons for spread")
 
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

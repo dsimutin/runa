@@ -194,14 +194,12 @@ def onboarding_keyboard(step: int) -> InlineKeyboardMarkup:
 
 
 def rune_info_keyboard(rune_pairs: list[tuple[str, str]]) -> InlineKeyboardMarkup:
-    """Build the optional 'ℹ️ О руне' inline button(s).
+    """Build the traditional rune reference keyboard.
 
-    rune_pairs: list of (rune_key, rune_display_name). One button per rune,
-    up to 3 per row. Kept as a separate follow-up message/keyboard so it
-    never competes with the reply keyboard already on the reading message.
+    rune_pairs: list of (rune_key, rune_display_name), up to 3 per row.
     """
     buttons = [
-        InlineKeyboardButton(f"ℹ️ {name}", callback_data=f"rune_info:{key}")
+        InlineKeyboardButton(name, callback_data=f"rune_info:{key}")
         for key, name in rune_pairs
     ]
     rows = [buttons[i:i + 3] for i in range(0, len(buttons), 3)]
@@ -347,13 +345,6 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         streak = 0
     text = build_daily_card_text(bot.user_name(update), palette, main, orientation, today, streak)
     await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
-    try:
-        await update.effective_message.reply_text(
-            "Хочешь традиционное значение этой руны?",
-            reply_markup=rune_info_keyboard([(main["key"], main["name"])]),
-        )
-    except Exception:
-        bot.logger.exception("Failed to send rune-info button")
 
 
 def product_yes_no_text(
@@ -420,13 +411,6 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
         bot.user_name(update), question, rune, orientation_label(orientation, rune["key"]), sphere_data
     )
     await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
-    try:
-        await update.effective_message.reply_text(
-            "Хочешь традиционное значение этой руны?",
-            reply_markup=rune_info_keyboard([(rune["key"], rune["name"])]),
-        )
-    except Exception:
-        bot.logger.exception("Failed to send rune-info button")
     if not await bot.ensure_profile_ready(update, context):
         return
     palette = bot.get_user_palette(update)

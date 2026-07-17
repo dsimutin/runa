@@ -9,6 +9,7 @@ from rune_text_repository import (
     yes_no_draw,
 )
 from runes_data import NON_REVERSIBLE_RUNE_KEYS, RUNES
+from year_rasklad import build_month_interpretation
 
 
 def test_non_reversible_runes_never_draw_reversed():
@@ -46,3 +47,14 @@ def test_all_three_decks_have_every_card_and_algiz_is_not_othala():
     premium_algiz = (Path("premium") / "15-algiz.jpg").read_bytes()
     premium_othala = (Path("premium") / "24-othala.jpg").read_bytes()
     assert premium_algiz != premium_othala
+
+
+def test_year_spread_uses_month_language_not_daily_card_copy():
+    for palette in ("light", "dark", "premium"):
+        for rune in RUNES:
+            text = build_month_interpretation(rune["key"], palette)
+            lowered = text.lower()
+            assert "вопрос дня" not in lowered
+            assert "сегодня" not in lowered
+            assert "тема месяца" in lowered
+            assert "ориентир месяца" in lowered
