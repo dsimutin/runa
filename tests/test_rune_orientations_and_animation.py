@@ -1,8 +1,10 @@
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageStat
 
 from rune_text_repository import (
+    draw_yes_no_rune,
+    get_sphere_answer,
     detect_question_sphere,
     is_reversible,
     normalize_orientation,
@@ -21,7 +23,7 @@ def test_non_reversible_runes_never_draw_reversed():
     for rune_key in NON_REVERSIBLE_RUNE_KEYS:
         assert normalize_orientation(rune_key, "rev") == "up"
         assert {random_orientation(rune_key) for _ in range(50)} == {"up"}
-        assert orientation_label("rev", rune_key) == "положение не меняется"
+        assert orientation_label("rev", rune_key) == "необратимая"
         assert orientation_symbol(rune_key, "rev") == "◆"
 
 
@@ -40,6 +42,15 @@ def test_yes_no_for_symmetric_runes_is_not_forced_to_yes():
     assert {yes_no_draw("isa")[0] for _ in range(20)} == {"up"}
 
 
+def test_blank_rune_participates_and_returns_a_neutral_yes_no_answer():
+    only_blank = [{"key": "wyrd", "name": "Пустая руна"}]
+    assert draw_yes_no_rune(only_blank)["key"] == "wyrd"
+    assert yes_no_draw("wyrd") == ("up", "unknown")
+    answer = get_sphere_answer("wyrd", "premium", "relationships", "unknown")
+    assert answer["answer_label"] == "Нет ясного ответа"
+    assert answer["sphere_label"] == "Отношения"
+
+
 def test_all_three_decks_have_every_card_and_algiz_is_not_othala():
     for palette in ("light", "dark", "premium"):
         for rune in RUNES:
@@ -52,6 +63,18 @@ def test_all_three_decks_have_every_card_and_algiz_is_not_othala():
     premium_algiz = (Path("premium") / "15-algiz.jpg").read_bytes()
     premium_othala = (Path("premium") / "24-othala.jpg").read_bytes()
     assert premium_algiz != premium_othala
+
+
+def test_each_deck_keeps_a_cohesive_brightness_range():
+    ranges = {"light": (0.78, 0.87), "dark": (0.025, 0.065), "premium": (0.58, 0.74)}
+    for palette, (minimum, maximum) in ranges.items():
+        paths = sorted(Path(palette).glob("*.jpg")) + sorted(Path(palette).glob("*.JPG"))
+        assert len(paths) == 25
+        for path in paths:
+            with Image.open(path) as image:
+                sample = image.convert("RGB").resize((1, 1))
+                mean = sum(ImageStat.Stat(sample).mean) / (3 * 255)
+            assert minimum <= mean <= maximum, f"{path} brightness {mean:.3f} is outside its deck"
 
 
 def test_year_spread_uses_month_language_not_daily_card_copy():
@@ -67,7 +90,7 @@ def test_year_spread_uses_month_language_not_daily_card_copy():
 
 def test_three_card_spread_is_one_horizontal_triptych():
     paths = ["light/01-fehu.jpg", "light/02-uruz.jpg", "light/03-thurisaz.jpg"]
-    labels = ["прямое", "перевёрнутое", "положение не меняется"]
+    labels = ["прямое", "перевёрнутое", "необратимая"]
     collage_path = build_spread_collage(paths, "light", labels)
     with Image.open(collage_path) as collage:
         assert collage.width > collage.height

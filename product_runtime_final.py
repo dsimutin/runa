@@ -478,7 +478,7 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if text == "📜 Значения рун":
         from runes_data import RUNES
-        rune_pairs = [(rune["key"], rune["name"]) for rune in RUNES if rune["key"] != "wyrd"]
+        rune_pairs = [(rune["key"], rune["name"]) for rune in RUNES]
         await update.effective_message.reply_text(
             "📜 <b>Традиционные значения рун</b>\n\n"
             "Это отдельный справочник по символике и происхождению рун. "

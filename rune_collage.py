@@ -24,17 +24,17 @@ BADGE_COLOURS = {
     "light": {
         "прямое": (180, 139, 64),
         "перевёрнутое": (137, 91, 112),
-        "положение не меняется": (121, 113, 102),
+        "необратимая": (121, 113, 102),
     },
     "dark": {
         "прямое": (78, 65, 47),
         "перевёрнутое": (82, 49, 78),
-        "положение не меняется": (54, 61, 70),
+        "необратимая": (54, 61, 70),
     },
     "premium": {
         "прямое": (153, 126, 172),
         "перевёрнутое": (99, 68, 126),
-        "положение не меняется": (105, 110, 132),
+        "необратимая": (105, 110, 132),
     },
 }
 BADGE_OUTLINES = {
@@ -49,7 +49,7 @@ def _badge_text(label: str) -> str:
         return "ПРЯМАЯ"
     if label == "перевёрнутое":
         return "ПЕРЕВЁРНУТАЯ"
-    return "НЕ МЕНЯЕТСЯ"
+    return "НЕОБРАТИМАЯ"
 
 
 def build_spread_collage(image_paths: list[str], palette: str, position_labels: list[str]) -> str:
@@ -85,7 +85,7 @@ def build_spread_collage(image_paths: list[str], palette: str, position_labels: 
     x = PADDING
     for card, label in zip(cards, position_labels):
         palette_colours = BADGE_COLOURS.get(palette, BADGE_COLOURS["light"])
-        colour = palette_colours.get(label, palette_colours["положение не меняется"])
+        colour = palette_colours.get(label, palette_colours["необратимая"])
         draw.rounded_rectangle(
             (x, PADDING, x + card.width, PADDING + BADGE_HEIGHT),
             radius=12,

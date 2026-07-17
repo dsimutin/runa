@@ -213,7 +213,7 @@ def is_reversible(rune_key: str) -> bool:
 
 def orientation_label(orientation: str, rune_key: str = "") -> str:
     if rune_key and not is_reversible(rune_key):
-        return "положение не меняется"
+        return "необратимая"
     return "прямое" if orientation == "up" else "перевёрнутое"
 
 
@@ -232,6 +232,8 @@ def yes_no_draw(rune_key: str) -> tuple[str, str]:
     remains upright.  This prevents symmetric runes from becoming automatic
     "yes" answers.
     """
+    if normalize_rune_key(rune_key) == "wyrd":
+        return "up", "unknown"
     orientation = random_orientation(rune_key)
     if is_reversible(rune_key):
         return orientation, "yes" if orientation == "up" else "no"
@@ -249,7 +251,7 @@ def draw_distinct_runes_with_orientations(runes: List[Dict[str, Any]], count: in
 
 
 def draw_yes_no_rune(runes: List[Dict[str, Any]]) -> Dict[str, Any]:
-    available = set(sphere_answer_texts().keys())
+    available = set(sphere_answer_texts().keys()) | {"wyrd"}
     eligible = [rune for rune in runes if normalize_rune_key(rune.get("key", "")) in available]
     if not eligible:
         eligible = runes
@@ -338,6 +340,20 @@ def get_sphere_answer(rune_key: str, palette: str, sphere: str, answer_kind: str
     key = normalize_rune_key(rune_key)
     palette = normalize_palette(palette)
     sphere = (sphere or "decision").strip().lower()
+    if key == "wyrd":
+        return {
+            "short_desc": (
+                "Пустая руна показывает неизвестную переменную: ситуация ещё не сложилась "
+                "настолько, чтобы ответ был честно определён."
+            ),
+            "answer": (
+                "Сейчас нет ясного «да» или «нет». Не заполняй паузу догадками: "
+                "дождись новых фактов и задай вопрос снова позже."
+            ),
+            "sphere": sphere,
+            "sphere_label": SPHERE_LABELS.get(sphere, "Принятие решений"),
+            "answer_label": "Нет ясного ответа",
+        }
     answer_kind = "answer_yes" if answer_kind == "yes" else "answer_no"
 
     data = sphere_answer_texts()

@@ -366,7 +366,7 @@ def product_yes_no_text(
     key = palette_key if palette_key in HUMAN_QUESTION_OPENINGS else "light"
     opening = random.choice(HUMAN_QUESTION_OPENINGS[key]).format(name=name)
     closing = random.choice(HUMAN_QUESTION_CLOSINGS[key])
-    answer_icon = "✅" if sphere_data["answer_label"] == "Да" else "🚫"
+    answer_icon = {"Да": "✅", "Нет": "🚫"}.get(sphere_data["answer_label"], "◻️")
     rune_line = f"{rune['name']} · {orientation_text}" if orientation_text else rune["name"]
     return (
         f"{opening}\n\n"
