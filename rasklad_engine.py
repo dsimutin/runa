@@ -4,6 +4,7 @@ import random
 from rune_text_repository import (
     POSITION_LABELS,
     get_rasklad_text,
+    orientation_symbol,
 )
 
 
@@ -67,7 +68,7 @@ def generate_rasklad(
         rune, orientation = draw
         data = get_rasklad_text(rune["key"], palette, orientation, position)
         position_label = POSITION_LABELS[position]
-        arrow = "↑" if orientation == "up" else "↓"
+        arrow = orientation_symbol(rune["key"], orientation)
         lines.extend(
             [
                 f"{index}️⃣ <b>{position_label} — {rune['name']} {arrow}</b>",

@@ -21,6 +21,7 @@ from database import (
     set_broadcast_enabled,
 )
 from runes_data import RUNES, get_rune_by_name
+from rune_text_repository import orientation_label
 from weekly_questions import question_for_rune, rune_of_week
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
             errors += 1
             continue
 
-        orientation_label = "перевёрнутое" if orientation == "rev" else "прямое"
+        position_label = orientation_label(orientation, rune["key"])
         try:
             streak = get_streak(user_id)
         except Exception:
@@ -70,7 +71,7 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
             from telegram import ReplyKeyboardRemove
             if image_path:
                 # Photo first — no caption, so it displays full-size without truncation
-                short_caption = f"<b>{rune['name']}</b> · {orientation_label}"
+                short_caption = f"<b>{rune['name']}</b> · {position_label}"
                 await context.bot.send_photo(
                     chat_id=user_id,
                     photo=open(image_path, "rb"),

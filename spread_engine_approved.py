@@ -122,7 +122,8 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
     groups = [group_of(k) for k in keys]
     meanings = [get_deck_meaning(k, deck, o == "rev") for k, o in zip(keys, orientations)]
     names = [rune_name(r) for r in runes]
-    arrows = ["↑" if o == "up" else "↓" for o in orientations]
+    from rune_text_repository import orientation_symbol
+    arrows = [orientation_symbol(k, o) for k, o in zip(keys, orientations)]
     cards = " · ".join(f"{escape(name_)} {arrow}" for name_, arrow in zip(names, arrows))
     safe_question = escape(short_sentence(question, 120))
     first = escape(short_sentence(meanings[0]["text"], 260))

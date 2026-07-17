@@ -7,6 +7,7 @@ from rune_text_data import (
     rune_day_texts,
     sphere_answer_texts,
 )
+from runes_data import NON_REVERSIBLE_RUNE_KEYS
 
 PALETTES = {"light", "dark", "premium"}
 ORIENTATIONS = {"up", "rev"}
@@ -161,7 +162,7 @@ def normalize_palette(palette: str) -> str:
 
 def normalize_orientation(rune_key: str, orientation: str) -> str:
     key = normalize_rune_key(rune_key)
-    if key == "wyrd":
+    if key in NON_REVERSIBLE_RUNE_KEYS:
         return "up"
     orientation = (orientation or "up").strip().lower()
     return orientation if orientation in ORIENTATIONS else "up"
@@ -201,13 +202,40 @@ def daily_texts() -> Dict[str, Any]:
 
 def random_orientation(rune_key: str) -> str:
     key = normalize_rune_key(rune_key)
-    if key == "wyrd":
+    if key in NON_REVERSIBLE_RUNE_KEYS:
         return "up"
     return random.choice(["up", "rev"])
 
 
-def orientation_label(orientation: str) -> str:
+def is_reversible(rune_key: str) -> bool:
+    return normalize_rune_key(rune_key) not in NON_REVERSIBLE_RUNE_KEYS
+
+
+def orientation_label(orientation: str, rune_key: str = "") -> str:
+    if rune_key and not is_reversible(rune_key):
+        return "положение не меняется"
     return "прямое" if orientation == "up" else "перевёрнутое"
+
+
+def orientation_symbol(rune_key: str, orientation: str) -> str:
+    if not is_reversible(rune_key):
+        return "◆"
+    return "↑" if orientation == "up" else "↓"
+
+
+def yes_no_draw(rune_key: str) -> tuple[str, str]:
+    """Return visual orientation and answer polarity for a yes/no draw.
+
+    For reversible glyphs the established behaviour remains intact: upright
+    means yes and reversed means no.  A non-reversible glyph has no honest
+    visual reversal, so its polarity is drawn independently while the card
+    remains upright.  This prevents symmetric runes from becoming automatic
+    "yes" answers.
+    """
+    orientation = random_orientation(rune_key)
+    if is_reversible(rune_key):
+        return orientation, "yes" if orientation == "up" else "no"
+    return orientation, random.choice(["yes", "no"])
 
 
 def draw_rune_with_orientation(runes: List[Dict[str, Any]]) -> tuple[Dict[str, Any], str]:

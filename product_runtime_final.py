@@ -1099,23 +1099,22 @@ async def trigger_question_callback(update: Update, context: ContextTypes.DEFAUL
                 await query.answer()
 
                 from philosophical_answers import get_truth_answer
-                from rune_text_repository import random_orientation, orientation_label
+                from rune_text_repository import orientation_label, yes_no_draw
 
-                # Draw a rune and use its orientation to determine yes/no —
-                # same rule as the rest of the yes/no flow, so this doesn't
-                # run its own disconnected coin flip.
+                # Use the same polarity rule as the rest of the yes/no flow;
+                # symmetric runes remain visually upright.
                 from runes_data import RUNES
                 rune = product_runtime.draw_yes_no_rune(RUNES)
-                orientation = random_orientation(rune["key"])
+                orientation, answer_kind = yes_no_draw(rune["key"])
                 palette = bot.get_user_palette(update)
                 image_path = bot.get_rune_image_path(rune, palette)
 
-                is_yes = orientation == "up"
+                is_yes = answer_kind == "yes"
                 philosophical_answer = get_truth_answer(is_yes)
 
                 message_text = (
                     f"❓ <b>{question}</b>\n\n{philosophical_answer}\n\n"
-                    f"<i>Руна: {rune['name']} · {orientation_label(orientation)}</i>"
+                    f"<i>Руна: {rune['name']} · {orientation_label(orientation, rune['key'])}</i>"
                 )
 
                 await query.edit_message_text(message_text, parse_mode="HTML")

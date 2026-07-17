@@ -6,7 +6,7 @@ from datetime import date
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ReplyKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
@@ -290,7 +290,7 @@ def format_daily_message(name: str, rune: Dict[str, Any], palette: str, orientat
     return (
         f"🌞 <b>{name}, карта дня</b>\n\n"
         f"<b>Карта:</b> {rune['name']}\n"
-        f"<b>Положение:</b> {orientation_label(orientation)}\n"
+        f"<b>Положение:</b> {orientation_label(orientation, rune['key'])}\n"
         f"<b>Колода:</b> {PALETTE_LABELS.get(palette, palette)}\n\n"
         f"{text}"
     )
@@ -360,11 +360,47 @@ async def send_private_or_group(
 
     parse_mode = "HTML" if wants_html(text) else None
     plain_text = strip_html(text)
+    palette = get_user_palette(update) if image_path and reading_mode else "light"
 
     reply_markup = READING_KEYBOARD if reading_mode else MAIN_KEYBOARD
 
+    async def reveal_card(send_animation, target_text: str, mode: str | None):
+        """Show one-pass shimmer, then replace it with the original photo."""
+        from rune_animation import REVEAL_SECONDS, build_reveal_animation
+
+        caption = target_text if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH else None
+        animation = build_reveal_animation(image_path, palette)
+        revealed = await send_animation(
+            animation=animation,
+            caption=caption,
+            parse_mode=mode if caption else None,
+            reply_markup=reply_markup if caption else None,
+        )
+        await asyncio.sleep(REVEAL_SECONDS)
+        try:
+            with open(image_path, "rb") as image_file:
+                await revealed.edit_media(
+                    media=InputMediaPhoto(media=image_file, caption=caption, parse_mode=mode if caption else None),
+                    reply_markup=reply_markup if caption else None,
+                )
+        except (OSError, TelegramError):
+            try:
+                await revealed.delete()
+            except TelegramError:
+                pass
+            raise
+        if caption is None:
+            await _send_text_message(revealed, target_text, reply_markup=reply_markup, parse_mode=mode)
+        return revealed
+
     async def send_to_private(target_text: str, mode: str | None) -> None:
         if image_path:
+            if reading_mode:
+                try:
+                    await reveal_card(message.reply_animation, target_text, mode)
+                    return
+                except (OSError, TelegramError):
+                    logger.exception("Rune reveal animation failed; sending static photo")
             with open(image_path, "rb") as image_file:
                 if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
                     await message.reply_photo(photo=image_file, caption=target_text, reply_markup=reply_markup, parse_mode=mode)
@@ -376,6 +412,15 @@ async def send_private_or_group(
 
     async def send_to_group_private(target_text: str, mode: str | None) -> None:
         if image_path:
+            if reading_mode:
+                async def send_animation(**kwargs):
+                    return await context.bot.send_animation(chat_id=user.id, **kwargs)
+                try:
+                    await reveal_card(send_animation, target_text, mode)
+                    await message.reply_text("Отправил ответ тебе в личку ✨")
+                    return
+                except (OSError, TelegramError):
+                    logger.exception("Private rune reveal animation failed; sending static photo")
             with open(image_path, "rb") as image_file:
                 if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
                     await context.bot.send_photo(chat_id=user.id, photo=image_file, caption=target_text, parse_mode=mode)

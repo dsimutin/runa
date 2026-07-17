@@ -8,6 +8,8 @@ import psycopg2
 import psycopg2.extras
 import psycopg2.pool
 
+from rune_text_repository import normalize_orientation, random_orientation
+
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
@@ -342,9 +344,7 @@ def set_user_palette(user_id: int, palette: str) -> None:
 
 
 def _random_orientation_for_rune(rune: Dict[str, Any]) -> str:
-    if rune.get("key") in {"wyrd", "blank"} or rune.get("name") == "Пустая руна":
-        return "up"
-    return random.choice(["up", "rev"])
+    return random_orientation(rune.get("key", ""))
 
 
 def get_or_create_daily_card(user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
@@ -360,7 +360,8 @@ def get_or_create_daily_card(user_id: int, day: str, runes: List[Dict[str, Any]]
                 row = cur.fetchone()
 
                 if row and row[1] in DAILY_ORIENTATIONS:
-                    orientation = "up" if row[0] == "Пустая руна" else row[1]
+                    rune = next((r for r in runes if r["name"] == row[0]), None)
+                    orientation = normalize_orientation(rune.get("key", "") if rune else "", row[1])
                     if orientation != row[1]:
                         cur.execute(
                             "UPDATE daily_runes SET aux_rune = %s WHERE user_id = %s AND date = %s",

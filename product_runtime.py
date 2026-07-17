@@ -421,12 +421,11 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
             pass
     await reading_pause(update, context, 0.03)
     palette = bot.get_user_palette(update)
-    from rune_text_repository import draw_yes_no_rune, random_orientation
+    from rune_text_repository import draw_yes_no_rune, yes_no_draw
     rune = draw_yes_no_rune(RUNES)
-    # The verdict follows the rune's own orientation (upright -> да-tilt,
-    # reversed -> нет-tilt), so the drawn card and the answer are actually
-    # the same event, not two independent random draws.
-    orientation = random_orientation(rune["key"])
+    # Reversible cards use their orientation for polarity. Symmetric cards
+    # stay visually upright and draw polarity independently.
+    orientation, answer_kind = yes_no_draw(rune["key"])
     image_path = bot.get_rune_image_path(rune, palette)
     if not image_path:
         if loading_msg:
@@ -438,7 +437,6 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
         return
     from rune_text_repository import detect_question_sphere, get_sphere_answer, orientation_label
     sphere = detect_question_sphere(question)
-    answer_kind = "yes" if orientation == "up" else "no"
     try:
         sphere_data = get_sphere_answer(rune["key"], palette, sphere, answer_kind)
     except KeyError:
@@ -453,7 +451,7 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
         }
     sphere_data["palette"] = palette
     text = product_yes_no_text(
-        bot.user_name(update), question, rune, orientation_label(orientation), sphere_data
+        bot.user_name(update), question, rune, orientation_label(orientation, rune["key"]), sphere_data
     )
     if loading_msg:
         try:
