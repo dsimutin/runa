@@ -336,9 +336,9 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     if not query or not update.effective_user:
         return
-    await query.answer()
     parts = query.data.split(":")
     if len(parts) != 3 or parts[0] != "settings" or parts[1] != "deck":
+        await query.answer("Эта кнопка устарела.", show_alert=True)
         return
     palette = parts[2]
     if palette == "premium":
@@ -351,6 +351,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 reply_markup=bot.main_keyboard_for(update.effective_user.id),
             )
             return
+    await query.answer()
     try:
         await asyncio.to_thread(set_user_palette, update.effective_user.id, palette)
     except bot.DatabaseError:

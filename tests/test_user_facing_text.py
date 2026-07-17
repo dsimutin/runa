@@ -3,6 +3,7 @@ from pathlib import Path
 import bot
 import human_reading
 import product_runtime_final
+import premium_subscription
 from product_runtime import product_yes_no_text
 from product_runtime import build_daily_card_text
 from question_guard import classify_question, guarded_question_response
@@ -61,6 +62,60 @@ def test_relationship_callback_accepts_two_part_button_payload():
     ]
     assert 'len(parts) >= 2' in branch
     assert 'context.user_data.get("relationship_person", "")' in branch
+
+
+def test_trial_menu_keeps_settings_and_is_not_persistent(monkeypatch):
+    monkeypatch.setattr(premium_subscription, "get_premium_state", lambda _user_id: (True, True))
+    keyboard = product_runtime_final.build_main_keyboard(123)
+    labels = {button.text for row in keyboard.keyboard for button in row}
+    assert "⚙️ Настройки" in labels
+    assert "🗓 Расклад на год" in labels
+    assert keyboard.is_persistent is False
+
+
+def test_all_main_menu_buttons_have_text_routes(monkeypatch):
+    routed_labels = {
+        "🌞 Руна дня",
+        "❓ Вопрос (да/нет)",
+        "🔮 Расклад",
+        "🕯 Личный расклад",
+        "🗓 Расклад на год",
+        "👥 Взаимоотношения",
+        "💠 Премиум",
+        "⚙️ Настройки",
+        "📜 Значения рун",
+        "ℹ️ Помощь",
+    }
+    for premium_state in ((False, False), (True, True), (True, False)):
+        monkeypatch.setattr(
+            premium_subscription,
+            "get_premium_state",
+            lambda _user_id, state=premium_state: state,
+        )
+        keyboard = product_runtime_final.build_main_keyboard(123)
+        labels = {button.text for row in keyboard.keyboard for button in row}
+        assert labels <= routed_labels
+
+
+def test_every_inline_button_family_has_a_registered_handler():
+    source = Path(product_runtime_final.__file__).read_text(encoding="utf-8")
+    expected_patterns = (
+        r'^onboarding:',
+        r'^settings:deck:',
+        r'^spread_page:',
+        r'^reading:menu$',
+        r'^trigger_q:',
+        r'^rune_info:',
+        r'^weekly_day:',
+        r'^weekly_rasklad:',
+        r'^year_rune:|^year_rasklad_back:',
+        r'^rel_type:',
+        r'^human_reading:',
+        r'^premium:',
+        r'^op:',
+    )
+    for pattern in expected_patterns:
+        assert f'pattern=r"{pattern}"' in source
 
 
 def test_question_guard_handles_facts_meta_past_lives_and_death_safely():
