@@ -205,6 +205,8 @@ def spread_page_markup(token: str, page: int, total: int):
 
 
 async def spread_page_callback(update, context) -> None:
+    from telegram.error import TelegramError
+
     query = update.callback_query
     if not query:
         return
@@ -222,11 +224,21 @@ async def spread_page_callback(update, context) -> None:
         await query.answer("Страница не найдена.", show_alert=True)
         return
     await query.answer()
-    await query.edit_message_text(
-        pages[page],
-        parse_mode="HTML",
-        reply_markup=spread_page_markup(token, page, len(pages)),
-    )
+    try:
+        await query.edit_message_text(
+            pages[page],
+            parse_mode="HTML",
+            reply_markup=spread_page_markup(token, page, len(pages)),
+        )
+    except TelegramError:
+        # An old Telegram client/message can occasionally reject editing.
+        # Continue the reading in a new message instead of losing the page.
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=pages[page],
+            parse_mode="HTML",
+            reply_markup=spread_page_markup(token, page, len(pages)),
+        )
 
 
 async def send_approved_rasklad(update, context, question: str) -> None:
@@ -250,17 +262,30 @@ async def send_approved_rasklad(update, context, question: str) -> None:
     from rune_collage import build_spread_collage
     from rune_text_repository import orientation_label
     collage_labels = [orientation_label(orientation, rune["key"]) for rune, orientation in rune_draws]
-    image_path = build_spread_collage(image_paths, deck, collage_labels)
     pages = build_unified_spread_pages(question, rune_draws, deck, bot.user_name(update))
-    await bot.send_private_or_group(
-        update, context, "🔮 Три руны: прошлое · настоящее · будущее", image_path=image_path, reading_mode=True
-    )
+    try:
+        image_path = build_spread_collage(image_paths, deck, collage_labels)
+    except Exception:
+        bot.logger.exception("Failed to build three-rune collage; sending text fallback")
+        image_path = None
+    if image_path:
+        await bot.send_private_or_group(
+            update, context, "🔮 Три руны: прошлое · настоящее · будущее", image_path=image_path, reading_mode=True
+        )
     import secrets
     token = secrets.token_hex(4)
     context.user_data["spread_pages"] = {"token": token, "pages": pages}
-    await context.bot.send_message(
-        chat_id=update.effective_user.id,
-        text=pages[0],
-        parse_mode="HTML",
-        reply_markup=spread_page_markup(token, 0, len(pages)),
-    )
+    try:
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=pages[0],
+            parse_mode="HTML",
+            reply_markup=spread_page_markup(token, 0, len(pages)),
+        )
+    except Exception:
+        bot.logger.exception("Failed to send paginated spread; sending plain fallback")
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=bot.strip_html(build_unified_spread(question, rune_draws, deck, bot.user_name(update))),
+            reply_markup=bot.main_keyboard_for(update.effective_user.id),
+        )

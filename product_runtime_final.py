@@ -20,6 +20,7 @@ from daily_broadcast import (
 from history_command import history_command
 from pair_rasklad import pair_rasklad_command
 from year_rasklad import send_year_rasklad
+from spread_engine_approved import send_approved_rasklad, spread_page_callback
 from human_reading import (
     HUMAN_READING_BUTTON,
     HUMAN_READING_CANCEL_TEXT,
@@ -583,7 +584,7 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if state == bot.STATE_WAITING_RASKLAD:
         context.user_data.pop("state", None)
-        await product_runtime.bot.send_rasklad(update, context, text)
+        await send_approved_rasklad(update, context, text)
         return
     await update.effective_message.reply_text("Выбери действие на клавиатуре. Или напиши /help, если потерялся.", reply_markup=_kb(update) if bot.is_private(update) else bot.private_link_markup(context))
 
@@ -1104,7 +1105,7 @@ async def weekly_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_reply_markup(reply_markup=None)
     except TelegramError:
         pass
-    await product_runtime.bot.send_rasklad(update, context, question)
+    await send_approved_rasklad(update, context, question)
 
 
 async def relationship_type_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1282,7 +1283,6 @@ def final_build_application():
     app.add_handler(CommandHandler("menu", show_menu_command))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
-    from spread_engine_approved import spread_page_callback
     app.add_handler(CallbackQueryHandler(spread_page_callback, pattern=r"^spread_page:"))
     app.add_handler(CallbackQueryHandler(trigger_question_callback, pattern=r"^trigger_q:"))
     app.add_handler(CallbackQueryHandler(rune_info_callback, pattern=r"^rune_info:"))

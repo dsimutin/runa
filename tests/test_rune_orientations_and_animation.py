@@ -110,3 +110,35 @@ def test_spread_uses_detected_sphere_and_is_split_from_the_beginning():
     assert "2️⃣ <b>Настоящее" in pages[1]
     assert "3️⃣ <b>Будущее" in pages[2]
     assert "Итог расклада" in pages[3]
+
+
+def test_every_rune_deck_orientation_and_position_has_safe_spread_text():
+    from rune_text_repository import get_rasklad_text
+
+    for rune in RUNES:
+        orientations = ("up", "rev") if is_reversible(rune["key"]) else ("up",)
+        for palette in ("light", "dark", "premium"):
+            for orientation in orientations:
+                for position in ("past", "present", "future"):
+                    assert get_rasklad_text(rune["key"], palette, orientation, position)["text"].strip()
+
+
+def test_all_sphere_pages_fit_telegram_message_limit():
+    draws = [
+        ({"key": "fehu", "name": "Феху"}, "up"),
+        ({"key": "uruz", "name": "Уруз"}, "rev"),
+        ({"key": "thurisaz", "name": "Турисаз"}, "up"),
+    ]
+    questions = (
+        "Вернётся ли бывший партнёр?",
+        "Стоит ли менять работу?",
+        "Стоит ли брать кредит?",
+        "Что происходит со здоровьем?",
+        "Когда будет результат?",
+        "Как поступить?",
+    )
+    for palette in ("light", "dark", "premium"):
+        for question in questions:
+            pages = build_unified_spread_pages(question, draws, palette, "Дмитрий")
+            assert len(pages) == 4
+            assert all(0 < len(page) < 4096 for page in pages)
