@@ -4,7 +4,7 @@ import bot
 import human_reading
 import product_runtime_final
 from product_runtime import product_yes_no_text
-from question_guard import guarded_question_response
+from question_guard import classify_question, guarded_question_response
 from premium_subscription import PREMIUM_BENEFITS
 
 
@@ -35,13 +35,32 @@ def test_yes_no_menu_asks_for_own_question_without_suggestions():
 
 
 def test_question_guard_handles_facts_meta_past_lives_and_death_safely():
-    assert "календар" in guarded_question_response("Завтра воскресенье?").lower()
-    assert "я бот" in guarded_question_response("Ты человек?").lower()
-    assert "кош" in guarded_question_response("Я был кошкой?").lower()
+    objective_facts = (
+        "Завтра воскресенье?",
+        "Сколько сейчас времени?",
+        "Какая столица Франции?",
+        "2 + 2?",
+        "Земля плоская?",
+    )
+    assert all(classify_question(question) == "objective_fact" for question in objective_facts)
+    assert classify_question("Ты человек?") == "bot_meta"
+    assert classify_question("Сколько тебе лет?") == "bot_meta"
+    assert classify_question("Я был кошкой?") == "unverifiable"
+    assert classify_question("Кем я была в прошлой жизни?") == "unverifiable"
+    assert classify_question("Я беременна?") == "medical_fact"
+    assert classify_question("У меня рак?") == "medical_fact"
     death = guarded_question_response("Я умру завтра?")
     assert "не буду предсказывать" in death.lower()
     assert "112" in death
-    assert guarded_question_response("Стоит ли мне менять работу?") is None
+    valid_questions = (
+        "Стоит ли мне менять работу?",
+        "Он вернётся?",
+        "Что происходит в наших отношениях?",
+        "Сколько времени мне ждать его решения?",
+        "Как мне позаботиться о здоровье?",
+        "Будет ли у меня новая работа?",
+    )
+    assert all(classify_question(question) is None for question in valid_questions)
 
 
 def test_long_answers_are_split_at_paragraphs_within_telegram_limit():
