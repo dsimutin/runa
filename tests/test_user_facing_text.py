@@ -119,3 +119,9 @@ def test_yes_no_answer_uses_consistent_sections():
     assert text.startswith("❓ <b>Ответ на вопрос</b>")
     assert "🔎 <b>Что показывает руна</b>" in text
     assert "✅ <b>Ответ</b>" in text
+
+
+def test_reading_uses_compact_inline_menu_instead_of_large_reply_keyboard():
+    button = bot.READING_KEYBOARD.inline_keyboard[0][0]
+    assert button.text == "↩️ Меню"
+    assert button.callback_data == "reading:menu"

@@ -196,7 +196,9 @@ def spread_page_markup(token: str, page: int, total: int):
         buttons.append(InlineKeyboardButton("← Назад", callback_data=f"spread_page:{token}:{page - 1}"))
     if page + 1 < total:
         buttons.append(InlineKeyboardButton("Далее →", callback_data=f"spread_page:{token}:{page + 1}"))
-    return InlineKeyboardMarkup([buttons]) if buttons else None
+    rows = [buttons] if buttons else []
+    rows.append([InlineKeyboardButton("↩️ Меню", callback_data="reading:menu")])
+    return InlineKeyboardMarkup(rows)
 
 
 async def spread_page_callback(update, context) -> None:
@@ -246,6 +248,7 @@ async def spread_page_callback(update, context) -> None:
 async def send_approved_rasklad(update, context, question: str) -> None:
     import bot
     import time
+    from telegram import ReplyKeyboardRemove
 
     from question_guard import guarded_question_response
     guarded_response = guarded_question_response(question)
@@ -260,6 +263,7 @@ async def send_approved_rasklad(update, context, question: str) -> None:
             status_message = await context.bot.send_message(
                 chat_id=update.effective_user.id,
                 text="🔮 Подбираю три руны и собираю расклад…",
+                reply_markup=ReplyKeyboardRemove(),
             )
         except Exception:
             bot.logger.debug("Could not send spread progress message", exc_info=True)

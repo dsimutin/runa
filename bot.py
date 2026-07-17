@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction
 from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
@@ -137,8 +137,11 @@ def main_keyboard_for(user_id: int) -> ReplyKeyboardMarkup:
         return MAIN_KEYBOARD_FACTORY(user_id)
     return MAIN_KEYBOARD
 
-# Shown after a rune reading so the phone keyboard doesn't pop up (ReplyKeyboardRemove triggers it)
-READING_KEYBOARD = ReplyKeyboardMarkup([["↩ Меню"]], resize_keyboard=True)
+# Inline control used after readings. The large reply keyboard is explicitly
+# removed during the loading message, so it cannot cover half the result.
+READING_KEYBOARD = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("↩️ Меню", callback_data="reading:menu")]]
+)
 
 
 def strip_html(text: str) -> str:
@@ -493,7 +496,7 @@ async def send_private_or_group(
         )
         loading = None
         try:
-            loading = await send_message(text=frames[0])
+            loading = await send_message(text=frames[0], reply_markup=ReplyKeyboardRemove())
             for frame in frames[1:]:
                 await asyncio.sleep(0.32)
                 await loading.edit_text(frame)

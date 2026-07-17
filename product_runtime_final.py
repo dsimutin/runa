@@ -68,6 +68,19 @@ VERSION_MARKER = "RUNA FINAL 2026-05-07-6"
 HIDE_KEYBOARD_BUTTON = "🙈 Скрыть меню"
 
 
+async def reading_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Restore the full reply keyboard only when the reader asks for it."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+    await context.bot.send_message(
+        chat_id=update.effective_user.id,
+        text="Меню открыто.",
+        reply_markup=build_main_keyboard(update.effective_user.id),
+    )
+
+
 def _kb(update: Update) -> ReplyKeyboardMarkup:
     """Shortcut: dynamic keyboard for the current user."""
     uid = update.effective_user.id if update.effective_user else 0
@@ -1315,6 +1328,7 @@ def final_build_application():
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
     app.add_handler(CallbackQueryHandler(spread_page_callback, pattern=r"^spread_page:"))
+    app.add_handler(CallbackQueryHandler(reading_menu_callback, pattern=r"^reading:menu$"))
     app.add_handler(CallbackQueryHandler(trigger_question_callback, pattern=r"^trigger_q:"))
     app.add_handler(CallbackQueryHandler(rune_info_callback, pattern=r"^rune_info:"))
     app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))
