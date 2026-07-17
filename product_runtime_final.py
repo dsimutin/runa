@@ -26,8 +26,10 @@ from human_reading import (
     HUMAN_READING_PAID_PROMPT,
     HUMAN_READING_TEXT,
     PAYMENT_AMOUNT,
+    PAYMENT_CARD_DISPLAY,
     PAYMENT_CANCEL_CALLBACK,
     PAYMENT_CONFIRM_CALLBACK,
+    PAYMENT_PHONE_DISPLAY,
 )
 from premium_subscription import (
     get_premium_info_text,
@@ -223,6 +225,16 @@ def _payment_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("✅ Я оплатил", callback_data=PAYMENT_CONFIRM_CALLBACK)],
         [InlineKeyboardButton("✖ Отмена", callback_data=PAYMENT_CANCEL_CALLBACK)],
     ])
+
+
+def premium_card_payment_text() -> str:
+    return (
+        f"💳 <b>Оплата премиума — {PREMIUM_PRICE_RUB} ₽</b>\n\n"
+        f"Карта: <code>{PAYMENT_CARD_DISPLAY}</code>\n"
+        f"СБП: <code>{PAYMENT_PHONE_DISPLAY}</code>\n\n"
+        f"Сумма точно: <b>{PREMIUM_PRICE_RUB} ₽</b>\n\n"
+        "После оплаты нажми «Я оплатил» — оператор проверит и активирует подписку."
+    )
 
 
 async def human_reading_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -796,20 +808,13 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     reply_markup=_kb(update),
                 )
         else:
-            from human_reading import PAYMENT_CARD, PAYMENT_PHONE
             manual_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Я оплатил", callback_data="premium:paid:card")],
                 [InlineKeyboardButton("✖ Отмена", callback_data="premium:close")],
             ])
             await context.bot.send_message(
                 chat_id=user.id,
-                text=(
-                    f"💳 <b>Оплата премиума — {PREMIUM_PRICE_RUB} ₽</b>\n\n"
-                    f"Карта (нажми чтобы скопировать):\n<pre>{PAYMENT_CARD}</pre>\n"
-                    f"СБП по номеру:\n<pre>{PAYMENT_PHONE}</pre>\n"
-                    f"Сумма точно: <b>{PREMIUM_PRICE_RUB} ₽</b>\n\n"
-                    "После оплаты нажми «Я оплатил» — оператор проверит и активирует подписку."
-                ),
+                text=premium_card_payment_text(),
                 parse_mode=ParseMode.HTML,
                 reply_markup=manual_kb,
             )
