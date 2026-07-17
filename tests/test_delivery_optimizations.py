@@ -7,6 +7,7 @@ import psycopg2
 
 import bot
 import database
+import neon_persistence
 
 
 @pytest.mark.asyncio
@@ -89,3 +90,25 @@ def test_database_context_replaces_stale_neon_connection():
     assert pool.returned[0] == (stale, True)
     assert pool.returned[-1] == (fresh, False)
     assert fresh.committed
+
+
+@pytest.mark.asyncio
+async def test_neon_persistence_refreshes_and_saves_user_state():
+    persistence = neon_persistence.NeonPersistence()
+    user_data = {"state": "waiting_rasklad"}
+
+    with (
+        patch(
+            "neon_persistence.load_all_user_states",
+            return_value={42: {"state": "waiting_rasklad"}},
+        ),
+        patch("neon_persistence.save_user_state") as save_state,
+    ):
+        loaded = await persistence.get_user_data()
+        assert loaded == {42: {"state": "waiting_rasklad"}}
+        await persistence.refresh_user_data(42, user_data)
+        assert user_data == {"state": "waiting_rasklad"}
+        user_data["spread_pages"] = {"token": "abc", "pages": ["one", "two"]}
+        await persistence.update_user_data(42, user_data)
+
+    save_state.assert_called_once_with(42, user_data)

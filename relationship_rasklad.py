@@ -1,5 +1,6 @@
 """Relationship reading module — for personal and professional relationships."""
 
+import asyncio
 from datetime import date
 
 import bot as _bot
@@ -40,8 +41,8 @@ async def _build_relationship_text(update, context, person_name: str, rel_type: 
 
     # Use same rune drawing as pair rasklad but with type context
     key_suffix = f":{rel_type}"
-    rune1_name, rune2_name, rune3_name = get_pair_rasklad_runes(
-        user_id, person_name + key_suffix, today, RUNES
+    rune1_name, rune2_name, rune3_name = await asyncio.to_thread(
+        get_pair_rasklad_runes, user_id, person_name + key_suffix, today, RUNES
     )
 
     rune1 = get_rune_by_name(rune1_name)
@@ -79,13 +80,11 @@ async def _build_relationship_text(update, context, person_name: str, rel_type: 
     if message and _bot.is_private(update):
         await message.reply_text(message_text, parse_mode="HTML")
         if image_path:
-            with open(image_path, "rb") as image_file:
-                await message.reply_photo(photo=image_file)
+            await _bot.send_cached_photo(message.reply_photo, image_path)
     else:
         await context.bot.send_message(chat_id=user_id, text=message_text, parse_mode="HTML")
         if image_path:
-            with open(image_path, "rb") as image_file:
-                await context.bot.send_photo(chat_id=user_id, photo=image_file)
+            await _bot.send_cached_photo(context.bot.send_photo, image_path, chat_id=user_id)
 
 
 async def relationship_type_callback(update, context) -> None:

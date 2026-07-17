@@ -4,6 +4,7 @@ import hmac
 import logging
 import os
 import random
+import time
 from collections import OrderedDict
 from datetime import date
 from pathlib import Path
@@ -335,16 +336,16 @@ async def ensure_profile_ready(update: Update, context: ContextTypes.DEFAULT_TYP
     if not is_private(update):
         return True
     try:
-        profile = get_user_profile(user.id)
+        profile = await asyncio.to_thread(get_user_profile, user.id)
         current_name = user_name(update)
         if not profile or profile.get("preferred_name") != current_name:
-            ensure_user(user.id, current_name)
-            profile = get_user_profile(user.id)
+            await asyncio.to_thread(ensure_user, user.id, current_name)
+            profile = await asyncio.to_thread(get_user_profile, user.id)
         if profile and profile.get("palette"):
             return True
         step = profile.get("onboarding_step", 0) if profile else 0
         if step <= 0:
-            start_onboarding(user.id)
+            await asyncio.to_thread(start_onboarding, user.id)
             step = 1
         await message.reply_text(build_onboarding_question(step, user_name(update)), reply_markup=onboarding_keyboard(step))
         return False
@@ -874,6 +875,73 @@ async def _run_webhook_with_health(app: Application) -> None:
 
     processed_update_ids: OrderedDict[int, None] = OrderedDict()
     in_flight_updates: dict[int, asyncio.Task] = {}
+    user_update_locks: dict[int, asyncio.Lock] = {}
+
+    async def process_claimed_update(update: Update) -> None:
+        from database import (
+            claim_telegram_update,
+            finish_telegram_update,
+            save_user_state_and_finish_update,
+        )
+
+        update_id = update.update_id
+        started_at = time.perf_counter()
+        claim_started = time.perf_counter()
+        claim_task = asyncio.create_task(asyncio.to_thread(claim_telegram_update, update_id))
+        typing_task = None
+        if update.effective_chat:
+            typing_task = asyncio.create_task(
+                app.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
+            )
+        claimed = await claim_task
+        if typing_task:
+            try:
+                await typing_task
+            except TelegramError:
+                pass
+        claim_ms = (time.perf_counter() - claim_started) * 1000
+        if not claimed:
+            logger.info("Duplicate update skipped update_id=%s claim_ms=%.1f", update_id, claim_ms)
+            return
+        user_id = update.effective_user.id if update.effective_user else 0
+        lock = user_update_locks.setdefault(user_id, asyncio.Lock())
+        handled = False
+        try:
+            async with lock:
+                await app.process_update(update)
+                handled = True
+                if user_id:
+                    # Persist state and acknowledge the update in one Neon
+                    # transaction before Cloud Run returns the response.
+                    for attempt in range(2):
+                        try:
+                            await asyncio.to_thread(
+                                save_user_state_and_finish_update,
+                                user_id,
+                                dict(app.user_data.get(user_id, {})),
+                                update_id,
+                            )
+                            break
+                        except DatabaseError:
+                            if attempt == 1:
+                                logger.exception(
+                                    "User state persistence failed user_id=%s update_id=%s",
+                                    user_id,
+                                    update_id,
+                                )
+                    else:
+                        handled = False
+        finally:
+            if not handled or not user_id:
+                await asyncio.to_thread(finish_telegram_update, update_id, handled)
+            logger.info(
+                "Update processed update_id=%s user_id=%s success=%s claim_ms=%.1f total_ms=%.1f",
+                update_id,
+                user_id,
+                handled,
+                claim_ms,
+                (time.perf_counter() - started_at) * 1000,
+            )
 
     async def telegram_webhook(request: StarletteRequest) -> Response:
         data = await request.json()
@@ -889,7 +957,7 @@ async def _run_webhook_with_health(app: Application) -> None:
             return Response()
         task = in_flight_updates.get(update_id)
         if task is None:
-            task = asyncio.create_task(app.process_update(update))
+            task = asyncio.create_task(process_claimed_update(update))
             in_flight_updates[update_id] = task
         try:
             await asyncio.shield(task)

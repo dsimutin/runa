@@ -16,4 +16,4 @@ RUN useradd --create-home --uid 10001 runa \
 
 USER runa
 
-CMD ["python", "product_runtime_final.py"]
+CMD ["python", "app.py"]

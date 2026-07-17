@@ -278,12 +278,17 @@ async def send_approved_rasklad(update, context, question: str) -> None:
     from rune_collage import build_spread_collage
     from rune_text_repository import orientation_label
     collage_labels = [orientation_label(orientation, rune["key"]) for rune, orientation in rune_draws]
+    text_started_at = time.perf_counter()
     pages = build_unified_spread_pages(question, rune_draws, deck, bot.user_name(update))
+    text_seconds = time.perf_counter() - text_started_at
+    collage_started_at = time.perf_counter()
     try:
         image_path = build_spread_collage(image_paths, deck, collage_labels)
     except Exception:
         bot.logger.exception("Failed to build three-rune collage; sending text fallback")
         image_path = None
+    collage_seconds = time.perf_counter() - collage_started_at
+    send_started_at = time.perf_counter()
     if image_path:
         await bot.send_private_or_group(
             update,
@@ -316,4 +321,10 @@ async def send_approved_rasklad(update, context, question: str) -> None:
             reply_markup=bot.main_keyboard_for(update.effective_user.id),
         )
     finally:
-        bot.logger.info("Three-rune spread delivered in %.2fs", time.perf_counter() - started_at)
+        bot.logger.info(
+            "Three-rune spread delivered total=%.2fs text=%.3fs collage=%.3fs telegram=%.2fs",
+            time.perf_counter() - started_at,
+            text_seconds,
+            collage_seconds,
+            time.perf_counter() - send_started_at,
+        )

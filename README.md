@@ -20,7 +20,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env
-python product_runtime_final.py
+python app.py
 ```
 
 Без `WEBHOOK_URL` бот запускается в polling-режиме. При заданном `WEBHOOK_URL` запускаются webhook и `/health` на порту `PORT`.

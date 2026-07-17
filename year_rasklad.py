@@ -1,4 +1,5 @@
 """Расклад на год — 12 рун на 12 месяцев."""
+import asyncio
 import hashlib
 import re
 from datetime import date
@@ -71,7 +72,7 @@ async def send_year_rasklad(update, context) -> None:
 
     user_id = update.effective_user.id
     year = date.today().year
-    rune_names = get_year_runes(user_id, year, RUNES)
+    rune_names = await asyncio.to_thread(get_year_runes, user_id, year, RUNES)
 
     text = f"🗓 <b>Расклад на {year} год</b>\n\nНажми на месяц — увидишь трактовку руны."
     keyboard = _build_year_keyboard(rune_names, user_id, year)
@@ -95,7 +96,7 @@ async def send_rune_year_details(update, context, user_id: int, year: int, month
         await query.answer()
 
     palette = _bot.get_user_palette(update)
-    rune_names = get_year_runes(user_id, year, RUNES)
+    rune_names = await asyncio.to_thread(get_year_runes, user_id, year, RUNES)
     rune_name = rune_names[month_num - 1]
     rune = get_rune_by_name(rune_name)
 
@@ -143,7 +144,7 @@ async def send_year_rasklad_from_callback(update, context, user_id: int, year: i
     if query:
         await query.answer()
 
-    rune_names = get_year_runes(user_id, year, RUNES)
+    rune_names = await asyncio.to_thread(get_year_runes, user_id, year, RUNES)
     text = f"🗓 <b>Расклад на {year} год</b>\n\nНажми на месяц — увидишь трактовку руны."
     keyboard = _build_year_keyboard(rune_names, user_id, year)
 

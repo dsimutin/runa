@@ -6,7 +6,7 @@ from datetime import date
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
-from telegram.ext import CallbackQueryHandler, ContextTypes
+from telegram.ext import ContextTypes
 
 import bot
 from database import set_user_palette
@@ -21,15 +21,13 @@ QUESTION_BUTTON = "❓ Вопрос (да/нет)"
 OLD_QUESTION_BUTTONS = {"❓ Вопрос", "❓ Задать вопрос", QUESTION_BUTTON}
 PALETTE_NAMES = {"light": "Светлая", "dark": "Тёмная", "premium": "Премиум"}
 
-bot.DECK_DIRS = {"light": "light", "dark": "dark", "premium": "premium"}
-
-bot.MAIN_KEYBOARD = ReplyKeyboardMarkup(
+PRODUCT_MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["🌞 Руна дня", QUESTION_BUTTON], ["🔮 Расклад", HUMAN_READING_BUTTON], [SETTINGS_BUTTON, "💠 Премиум"], ["ℹ️ Помощь"]],
     resize_keyboard=True,
     is_persistent=True,
 )
 
-bot.ONBOARDING_QUESTIONS = [
+PRODUCT_ONBOARDING_QUESTIONS = [
     {"text": "Ты входишь в незнакомое пространство. Что считываешь первым?", "a": "Атмосферу, свет, воздух, внутреннее ощущение", "b": "Границы, правила, риски и кто управляет ситуацией"},
     {"text": "Когда внутри нет ясности, что тебе ближе?", "a": "Пауза и мягкое прояснение", "b": "Прямой ответ и действие"},
     {"text": "Какого ответа ты ждёшь от рун?", "a": "Бережного ориентира и поддержки", "b": "Честного предупреждения без прикрас"},
@@ -183,9 +181,6 @@ def get_user_palette(update: Update) -> str:
     return "light"
 
 
-bot.get_user_palette = get_user_palette
-
-
 def onboarding_keyboard(step: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("A", callback_data=f"onboarding:{step}:light")],
@@ -206,16 +201,10 @@ def rune_info_keyboard(rune_pairs: list[tuple[str, str]]) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(rows)
 
 
-bot.onboarding_keyboard = onboarding_keyboard
-
-
 def build_onboarding_question(step: int, name: str) -> str:
     q = bot.ONBOARDING_QUESTIONS[step - 1]
     total = len(bot.ONBOARDING_QUESTIONS)
     return f"{name}, настроим твою колоду\n\nВопрос {step}/{total}\n{q['text']}\n\nA — {q['a']}\nB — {q['b']}"
-
-
-bot.build_onboarding_question = build_onboarding_question
 
 
 def onboarding_result_text(palette: str) -> str:
@@ -226,9 +215,6 @@ def onboarding_result_text(palette: str) -> str:
         "premium": "Глубокий разбор, уникальные карты и приоритетный доступ к личным раскладам.",
     }
     return f"{titles.get(palette, 'Колода настроена')}\n\n{descriptions.get(palette, '')}\n\nКолоду можно сменить позже в ⚙️ Настройках."
-
-
-bot.onboarding_result_text = onboarding_result_text
 
 
 def product_rune_day_full_text(name: str, main: dict, palette: str) -> str:
@@ -327,7 +313,9 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     today = date.today().isoformat()
     try:
-        rune_name, orientation = bot.get_or_create_daily_card(update.effective_user.id, today, RUNES)
+        rune_name, orientation = await asyncio.to_thread(
+            bot.get_or_create_daily_card, update.effective_user.id, today, RUNES
+        )
     except bot.DatabaseError:
         bot.logger.exception("Failed to get daily rune")
         await bot.send_private_or_group(update, context, "Не получилось достать руну дня. Попробуй позже.")
@@ -340,7 +328,7 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     try:
         from database import get_streak
-        streak = get_streak(update.effective_user.id)
+        streak = await asyncio.to_thread(get_streak, update.effective_user.id)
     except Exception:
         streak = 0
     text = build_daily_card_text(bot.user_name(update), palette, main, orientation, today, streak)
@@ -464,7 +452,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             return
     try:
-        set_user_palette(update.effective_user.id, palette)
+        await asyncio.to_thread(set_user_palette, update.effective_user.id, palette)
     except bot.DatabaseError:
         await query.edit_message_text("Не получилось сменить колоду. Попробуй позже.")
         return
@@ -495,7 +483,6 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
 
 old_text_router = bot.text_router
 old_build_template_rasklad = bot.build_template_rasklad
-old_build_application = bot.build_application
 
 
 async def product_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -539,19 +526,22 @@ def patched_short_help() -> str:
     )
 
 
-def patched_build_application():
-    app = old_build_application()
-    app.add_handler(CallbackQueryHandler(settings_callback, pattern=r"^settings:deck:"))
-    return app
-
-
-bot.start_command = product_start_command
-bot.runa_command = product_runa_command
-bot.send_one_rune_answer = product_send_one_rune_answer
-bot.text_router = product_text_router
-bot.build_template_rasklad = product_build_template_rasklad
-bot.short_help = patched_short_help
-bot.build_application = patched_build_application
+def configure_bot_runtime() -> None:
+    """Explicitly install the product behaviour used by the final runtime."""
+    bot.DECK_DIRS = {"light": "light", "dark": "dark", "premium": "premium"}
+    bot.MAIN_KEYBOARD = PRODUCT_MAIN_KEYBOARD
+    bot.ONBOARDING_QUESTIONS = PRODUCT_ONBOARDING_QUESTIONS
+    bot.get_user_palette = get_user_palette
+    bot.onboarding_keyboard = onboarding_keyboard
+    bot.build_onboarding_question = build_onboarding_question
+    bot.onboarding_result_text = onboarding_result_text
+    bot.start_command = product_start_command
+    bot.runa_command = product_runa_command
+    bot.send_one_rune_answer = product_send_one_rune_answer
+    bot.text_router = product_text_router
+    bot.build_template_rasklad = product_build_template_rasklad
+    bot.short_help = patched_short_help
 
 if __name__ == "__main__":
+    configure_bot_runtime()
     bot.main()

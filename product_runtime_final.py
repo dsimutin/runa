@@ -1,3 +1,4 @@
+import asyncio
 import re
 from pathlib import Path
 
@@ -56,6 +57,11 @@ from support_requests import (
     list_operator_ids,
     register_operator,
 )
+
+# Explicit runtime composition. This used to happen implicitly in
+# sitecustomize.py before the application module was even imported.
+product_runtime.configure_bot_runtime()
+bot.send_rasklad = send_approved_rasklad
 
 VERSION_MARKER = "RUNA FINAL 2026-05-07-6"
 
@@ -192,12 +198,12 @@ async def final_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     name = bot.user_name(update)
     try:
-        profile = bot.get_user_profile(update.effective_user.id)
+        profile = await asyncio.to_thread(bot.get_user_profile, update.effective_user.id)
         if not profile or profile.get("preferred_name") != name:
-            bot.ensure_user(update.effective_user.id, name)
-            profile = bot.get_user_profile(update.effective_user.id)
+            await asyncio.to_thread(bot.ensure_user, update.effective_user.id, name)
+            profile = await asyncio.to_thread(bot.get_user_profile, update.effective_user.id)
         if not profile or not profile.get("palette"):
-            bot.start_onboarding(update.effective_user.id)
+            await asyncio.to_thread(bot.start_onboarding, update.effective_user.id)
             await update.effective_message.reply_text(product_runtime.build_onboarding_question(1, name), reply_markup=product_runtime.onboarding_keyboard(1))
             return
     except bot.DatabaseError:
@@ -215,7 +221,12 @@ async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAUL
     try:
         _, step_raw, answer = query.data.split(":", 2)
         int(step_raw)
-        result = bot.save_onboarding_answer(update.effective_user.id, answer, len(bot.ONBOARDING_QUESTIONS))
+        result = await asyncio.to_thread(
+            bot.save_onboarding_answer,
+            update.effective_user.id,
+            answer,
+            len(bot.ONBOARDING_QUESTIONS),
+        )
     except Exception:
         bot.logger.exception("Final onboarding failed")
         await query.edit_message_text("Ответ не сохранился. Нажми /start и попробуем заново.")
@@ -1253,7 +1264,15 @@ async def show_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 def final_build_application():
     if not bot.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Add it in environment variables.")
-    app = bot.Application.builder().token(bot.BOT_TOKEN).post_init(bot.post_init).build()
+    from neon_persistence import NeonPersistence
+
+    app = (
+        bot.Application.builder()
+        .token(bot.BOT_TOKEN)
+        .persistence(NeonPersistence())
+        .post_init(bot.post_init)
+        .build()
+    )
 
     async def warm_databases() -> None:
         """Warm Neon after the HTTP server starts, not on the cold-start path."""
@@ -1268,15 +1287,11 @@ def final_build_application():
 
     async def scheduled_maintenance() -> str:
         """Run all daily maintenance from one authenticated Cloud Scheduler call."""
-        import asyncio
-        from datetime import date as _date
         from types import SimpleNamespace
-        from database import claim_scheduled_run
 
-        run_key = f"daily-maintenance:{_date.today().isoformat()}"
-        claimed = await asyncio.to_thread(claim_scheduled_run, run_key)
-        if not claimed:
-            return "Already processed"
+        # Each recipient is claimed independently in daily_broadcast. This
+        # lets a retry resume after a partial failure without duplicating
+        # messages that were already delivered.
         job_context = SimpleNamespace(bot=app.bot)
         await send_daily_rune(job_context)
         await send_weekly_question(job_context)
@@ -1336,7 +1351,6 @@ def final_build_application():
     return app
 
 
-bot.get_rune_image_path = robust_get_rune_image_path
 bot.build_application = final_build_application
 product_runtime.human_reading_command = human_reading_command
 product_runtime.handle_human_request = handle_human_request

@@ -5,6 +5,7 @@ Default send time: 09:00 Moscow time (UTC+3 = UTC 06:00).
 Users can opt out with /unsubscribe and back in with /subscribe.
 """
 
+import asyncio
 import logging
 from datetime import date, time, timezone, timedelta
 
@@ -14,6 +15,8 @@ from telegram.ext import ContextTypes
 import bot as _bot
 from database import (
     DatabaseError,
+    claim_scheduled_delivery,
+    finish_scheduled_delivery,
     get_broadcast_users,
     get_expiring_premium_users,
     get_or_create_daily_card,
@@ -31,6 +34,21 @@ BROADCAST_TIME = time(6, 0, tzinfo=timezone.utc)
 MOSCOW_TZ = timezone(timedelta(hours=3))
 
 
+async def _claim_delivery(kind: str, delivery_date: str, user_id: int) -> bool:
+    try:
+        return await asyncio.to_thread(claim_scheduled_delivery, kind, delivery_date, user_id)
+    except DatabaseError:
+        logger.exception("Failed to claim %s delivery for user_id=%s", kind, user_id)
+        return False
+
+
+async def _finish_delivery(kind: str, delivery_date: str, user_id: int, success: bool) -> None:
+    try:
+        await asyncio.to_thread(finish_scheduled_delivery, kind, delivery_date, user_id, success)
+    except DatabaseError:
+        logger.exception("Failed to finish %s delivery for user_id=%s", kind, user_id)
+
+
 async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Job callback: send today's rune to all subscribed users."""
     today = date.today().isoformat()
@@ -45,6 +63,8 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for user in users:
         user_id = user["user_id"]
+        if not await _claim_delivery("daily-rune", today, user_id):
+            continue
         name = user["preferred_name"] or "друг"
         palette = user["palette"] or "light"
 
@@ -57,6 +77,7 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
         except (DatabaseError, KeyError):
             logger.exception("Failed to build rune for user_id=%s", user_id)
             errors += 1
+            await _finish_delivery("daily-rune", today, user_id, False)
             continue
 
         position_label = orientation_label(orientation, rune["key"])
@@ -94,6 +115,7 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
                     reply_markup=ReplyKeyboardRemove(),
                 )
             sent += 1
+            await _finish_delivery("daily-rune", today, user_id, True)
         except Forbidden:
             # User blocked the bot — silently disable their broadcast
             logger.info("User %s blocked bot, disabling broadcast", user_id)
@@ -102,9 +124,11 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
             except DatabaseError:
                 pass
             blocked += 1
+            await _finish_delivery("daily-rune", today, user_id, True)
         except TelegramError:
             logger.exception("Failed to send broadcast to user_id=%s", user_id)
             errors += 1
+            await _finish_delivery("daily-rune", today, user_id, False)
 
     logger.info(
         "Daily broadcast done: sent=%d blocked=%d errors=%d",
@@ -157,6 +181,8 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for user in eligible:
         user_id = user["user_id"]
+        if not await _claim_delivery("weekly-question", today_str, user_id):
+            continue
         palette = user.get("palette") or "light"
         image_path = _bot.get_rune_image_path(weekly_rune, palette)
         text = (
@@ -186,15 +212,18 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
                     reply_markup=kb,
                 )
             sent += 1
+            await _finish_delivery("weekly-question", today_str, user_id, True)
         except Forbidden:
             try:
                 set_broadcast_enabled(user_id, False)
             except DatabaseError:
                 pass
             blocked += 1
+            await _finish_delivery("weekly-question", today_str, user_id, True)
         except TelegramError:
             logger.exception("Failed to send weekly question to user_id=%s", user_id)
             errors += 1
+            await _finish_delivery("weekly-question", today_str, user_id, False)
 
     logger.info("Weekly question done: sent=%d blocked=%d errors=%d", sent, blocked, errors)
 
@@ -211,6 +240,9 @@ async def send_premium_expiry_warnings(context: ContextTypes.DEFAULT_TYPE) -> No
 
     for row in rows:
         user_id, name, expires_at = row["user_id"], row["preferred_name"], row["premium_expires_at"]
+        delivery_date = today.isoformat()
+        if not await _claim_delivery("premium-expiry", delivery_date, user_id):
+            continue
         name = name or "друг"
         try:
             exp_date = date.fromisoformat(expires_at)
@@ -225,8 +257,10 @@ async def send_premium_expiry_warnings(context: ContextTypes.DEFAULT_TYPE) -> No
                 parse_mode="HTML",
                 reply_markup=_bot.main_keyboard_for(user_id),
             )
+            await _finish_delivery("premium-expiry", delivery_date, user_id, True)
         except Exception:
             logger.exception("Failed to send expiry warning to user_id=%s", user_id)
+            await _finish_delivery("premium-expiry", delivery_date, user_id, False)
 
 
 async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -255,6 +289,9 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for user in users:
         user_id = user["user_id"]
+        delivery_date = f"{today.year:04d}-{today.month:02d}"
+        if not await _claim_delivery("monthly-rune", delivery_date, user_id):
+            continue
         name = user["preferred_name"] or "друг"
         palette = user["palette"] or "light"
         palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
@@ -284,9 +321,11 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
                     reply_markup=ReplyKeyboardRemove(),
                 )
             sent += 1
+            await _finish_delivery("monthly-rune", delivery_date, user_id, True)
         except Exception:
             logger.exception("Failed to send monthly rune to user_id=%s", user_id)
             errors += 1
+            await _finish_delivery("monthly-rune", delivery_date, user_id, False)
 
     logger.info("Monthly rune done: sent=%d errors=%d", sent, errors)
 

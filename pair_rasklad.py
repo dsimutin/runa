@@ -1,5 +1,6 @@
 """Pair reading module — /pair <name> command."""
 
+import asyncio
 from datetime import date
 
 import bot as _bot
@@ -17,8 +18,8 @@ async def _build_pair_text(update, context, partner_name: str) -> None:
     palette = _bot.get_user_palette(update)
     today = date.today().isoformat()
 
-    rune1_name, rune2_name, rune3_name = get_pair_rasklad_runes(
-        user_id, partner_name, today, RUNES
+    rune1_name, rune2_name, rune3_name = await asyncio.to_thread(
+        get_pair_rasklad_runes, user_id, partner_name, today, RUNES
     )
 
     rune1 = get_rune_by_name(rune1_name)
