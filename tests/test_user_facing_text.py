@@ -35,6 +35,34 @@ def test_yes_no_menu_asks_for_own_question_without_suggestions():
     assert "Напиши свой вопрос" in branch
 
 
+def test_question_flows_hide_non_persistent_reply_keyboard():
+    keyboard = product_runtime_final.build_main_keyboard(352086154)
+    assert keyboard.is_persistent is False
+
+    source = Path(product_runtime_final.__file__).read_text(encoding="utf-8")
+    question_branch = source[
+        source.index('if text in {"❓ Вопрос"') : source.index('if text == "🔮 Расклад"')
+    ]
+    spread_branch = source[
+        source.index('if text == "🔮 Расклад"') : source.index(
+            'if text == product_runtime.SETTINGS_BUTTON'
+        )
+    ]
+    assert "ReplyKeyboardRemove()" in question_branch
+    assert "ReplyKeyboardRemove()" in spread_branch
+
+
+def test_relationship_callback_accepts_two_part_button_payload():
+    source = Path(product_runtime_final.__file__).read_text(encoding="utf-8")
+    branch = source[
+        source.index("async def relationship_type_callback") : source.index(
+            "async def trigger_question_callback"
+        )
+    ]
+    assert 'len(parts) >= 2' in branch
+    assert 'context.user_data.get("relationship_person", "")' in branch
+
+
 def test_question_guard_handles_facts_meta_past_lives_and_death_safely():
     objective_facts = (
         "Завтра воскресенье?",

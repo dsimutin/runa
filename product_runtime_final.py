@@ -74,6 +74,10 @@ async def reading_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if not query or not update.effective_user:
         return
     await query.answer()
+    # Give Telegram time to dismiss the inline-button tap before replacing it
+    # with the reply keyboard. This prevents the same tap from landing on a
+    # newly appeared menu item (most noticeably "Settings" on mobile).
+    await asyncio.sleep(0.25)
     await context.bot.send_message(
         chat_id=update.effective_user.id,
         text="Меню открыто.",
@@ -107,7 +111,7 @@ def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     except Exception:
         base.append(["💠 Премиум", "⚙️ Настройки"])
     base.append(["📜 Значения рун", "ℹ️ Помощь"])
-    return ReplyKeyboardMarkup(base, resize_keyboard=True, is_persistent=True)
+    return ReplyKeyboardMarkup(base, resize_keyboard=True, is_persistent=False)
 
 
 # bot.py owns the common sending helper; give it the product-aware keyboard
@@ -520,13 +524,16 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.effective_message.reply_text(
             "❓ <b>Напиши свой вопрос</b> одним сообщением.\n\n"
             "Лучше о ситуации, решении или отношениях, на которые ты можешь повлиять.",
-            reply_markup=_kb(update) if bot.is_private(update) else None,
+            reply_markup=ReplyKeyboardRemove() if bot.is_private(update) else None,
             parse_mode="HTML",
         )
         return
     if text == "🔮 Расклад":
         context.user_data["state"] = bot.STATE_WAITING_RASKLAD
-        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты на ситуацию.", reply_markup=_kb(update) if bot.is_private(update) else None)
+        await update.effective_message.reply_text(
+            "🔮 Напиши вопрос — раскину три карты на ситуацию.",
+            reply_markup=ReplyKeyboardRemove() if bot.is_private(update) else None,
+        )
         return
     if text == product_runtime.SETTINGS_BUTTON:
         await product_runtime.settings_command(update, context)
@@ -559,7 +566,7 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             "Три карты: твоя энергия, энергия другого человека и то, что между вами.\n\n"
             "Напиши имя или описание человека:\n"
             "<i>Анна (подруга) · Андрей (коллега) · мой парень</i>",
-            reply_markup=build_main_keyboard(user_id),
+            reply_markup=ReplyKeyboardRemove(),
             parse_mode="HTML"
         )
         return
@@ -576,7 +583,7 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             "Три карты: твоя энергия, энергия другого человека и то, что между вами.\n\n"
             "Напиши имя или описание человека:\n"
             "<i>Анна (подруга) · Андрей (коллега) · мой парень</i>",
-            reply_markup=build_main_keyboard(user_id),
+            reply_markup=ReplyKeyboardRemove(),
             parse_mode="HTML"
         )
         return
@@ -1135,9 +1142,16 @@ async def relationship_type_callback(update: Update, context: ContextTypes.DEFAU
 
     try:
         parts = query.data.split(":", 2)
-        if parts[0] == "rel_type" and len(parts) == 3:
+        if parts[0] == "rel_type" and len(parts) >= 2:
             rel_type = parts[1]  # personal or business
-            person_name = parts[2]
+            person_name = (
+                parts[2]
+                if len(parts) == 3
+                else context.user_data.get("relationship_person", "")
+            )
+            if not person_name:
+                await query.answer("Напиши имя ещё раз.", show_alert=True)
+                return
 
             await query.answer()
             await query.edit_message_text(f"⏳ Выбираю карты для {person_name}...")
