@@ -243,7 +243,18 @@ async def spread_page_callback(update, context) -> None:
 
 async def send_approved_rasklad(update, context, question: str) -> None:
     import bot
+    import time
 
+    started_at = time.perf_counter()
+    status_message = None
+    if update.effective_user:
+        try:
+            status_message = await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text="🔮 Подбираю три руны и собираю расклад…",
+            )
+        except Exception:
+            bot.logger.debug("Could not send spread progress message", exc_info=True)
     chat = update.effective_chat
     if chat:
         try:
@@ -257,6 +268,11 @@ async def send_approved_rasklad(update, context, question: str) -> None:
     rune_draws = draw_distinct_runes_with_orientations(bot.RUNES, 3)
     image_paths = [bot.get_rune_image_path(rune, deck) for rune, _ in rune_draws]
     if not all(image_paths):
+        if status_message:
+            try:
+                await status_message.delete()
+            except Exception:
+                pass
         await bot.send_missing_image_error(update, context, rune_draws[image_paths.index(None)][0], deck)
         return
     from rune_collage import build_spread_collage
@@ -270,11 +286,21 @@ async def send_approved_rasklad(update, context, question: str) -> None:
         image_path = None
     if image_path:
         await bot.send_private_or_group(
-            update, context, "🔮 Три руны: прошлое · настоящее · будущее", image_path=image_path, reading_mode=True
+            update,
+            context,
+            "🔮 Три руны: прошлое · настоящее · будущее",
+            image_path=image_path,
+            reading_mode=True,
+            show_shuffle=False,
         )
     import secrets
     token = secrets.token_hex(4)
     context.user_data["spread_pages"] = {"token": token, "pages": pages}
+    if status_message:
+        try:
+            await status_message.delete()
+        except Exception:
+            bot.logger.debug("Could not remove spread progress message", exc_info=True)
     try:
         await context.bot.send_message(
             chat_id=update.effective_user.id,
@@ -289,3 +315,5 @@ async def send_approved_rasklad(update, context, question: str) -> None:
             text=bot.strip_html(build_unified_spread(question, rune_draws, deck, bot.user_name(update))),
             reply_markup=bot.main_keyboard_for(update.effective_user.id),
         )
+    finally:
+        bot.logger.info("Three-rune spread delivered in %.2fs", time.perf_counter() - started_at)

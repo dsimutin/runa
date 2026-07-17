@@ -360,6 +360,7 @@ async def send_private_or_group(
     *,
     image_path: str | None = None,
     reading_mode: bool = False,
+    show_shuffle: bool = True,
 ) -> None:
     message = update.effective_message
     user = update.effective_user
@@ -405,7 +406,7 @@ async def send_private_or_group(
 
     async def send_to_private(target_text: str, mode: str | None) -> None:
         if image_path:
-            if reading_mode:
+            if reading_mode and show_shuffle:
                 await private_shuffle()
             with open(image_path, "rb") as image_file:
                 if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
@@ -418,7 +419,7 @@ async def send_private_or_group(
 
     async def send_to_group_private(target_text: str, mode: str | None) -> None:
         if image_path:
-            if reading_mode:
+            if reading_mode and show_shuffle:
                 await group_private_shuffle()
             with open(image_path, "rb") as image_file:
                 if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
