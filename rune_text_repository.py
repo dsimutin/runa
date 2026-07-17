@@ -1,4 +1,5 @@
 import random
+import re
 from typing import Any, Dict, List
 
 from rune_text_data import (
@@ -9,6 +10,71 @@ from rune_text_data import (
 
 PALETTES = {"light", "dark", "premium"}
 ORIENTATIONS = {"up", "rev"}
+
+# The blank/Wyrd rune has no entry in the compiled daily-card dataset
+# (data/card_of_day_short.txt never included it — likely because it was
+# written before the blank rune was added to RUNES). Without this, drawing
+# Wyrd as the daily card produced an empty message body: get_daily_text
+# raised KeyError, and the KeyError fallback (bot.rune_text -> legacy
+# runes_interpretations, keyed 'blank' not 'wyrd') silently returned "".
+# Wyrd is drawn ~1/25 times, so this was a real, if infrequent, live bug.
+WYRD_DAILY_TEXT = {
+    "light": (
+        "Сегодня выпала пустая руна — знак того, что готового ответа пока нет, и это тоже ответ. "
+        "Не торопись заполнять неизвестность первой попавшейся версией событий.\n\n"
+        "Вопрос дня: Что откроется, если сегодня ты не будешь искать готовый ответ, а просто останешься с вопросом?"
+    ),
+    "dark": (
+        "Пустая руна — сигнал не действовать вслепую. Там, где нет ясности, лучше выждать, чем занять позицию наугад.\n\n"
+        "Вопрос дня: Где сегодня ты рискуешь принять решение только потому, что неизвестность неудобна?"
+    ),
+    "premium": (
+        "Пустая руна указывает на то, что ещё не приняло форму — не пустота, а пространство до появления знака. "
+        "Здесь нечего трактовать, только наблюдать.\n\n"
+        "Вопрос дня: Что в твоей жизни сейчас находится в этой же точке — до формы, до имени?"
+    ),
+}
+
+# Verdict-opener rotation for yes/no sphere answers.
+# IMPORTANT: every phrase here must carry the SAME unambiguous polarity as
+# the literal "Да."/"Нет." it replaces. This is variety of wording only —
+# never hedging, never turned into "maybe". The rest of the stored text
+# (reasoning) is untouched.
+YES_OPENERS = [
+    "Да.",
+    "Да, точно.",
+    "Да — можно.",
+    "Да, соглашайся.",
+    "Именно да.",
+    "Да, это тот случай.",
+    "Да, всё складывается.",
+    "Да, действуй.",
+]
+NO_OPENERS = [
+    "Нет.",
+    "Нет, не сейчас.",
+    "Нет — не в этом виде.",
+    "Нет, не стоит.",
+    "Именно нет.",
+    "Нет, придержи.",
+    "Нет, это не тот случай.",
+    "Нет, останови здесь.",
+]
+
+
+def _vary_verdict_opener(text: str, is_yes: bool) -> str:
+    """Swap a literal 'Да.'/'Нет.' opener for a random same-polarity variant.
+
+    Texts that already open with an alternate phrasing (e.g. 'Сейчас —',
+    'Время пришло') are left untouched — they're already varied and already
+    unambiguous for their field (answer_yes vs answer_no).
+    """
+    prefix = "Да." if is_yes else "Нет."
+    if not text.startswith(prefix):
+        return text
+    pool = YES_OPENERS if is_yes else NO_OPENERS
+    rest = text[len(prefix):]
+    return random.choice(pool) + rest
 
 # Maps alternative rune names used inside texts → canonical name from runes_data.py
 # Used to normalize text output so the name in the text matches the displayed card name.
@@ -101,6 +167,34 @@ def normalize_orientation(rune_key: str, orientation: str) -> str:
     return orientation if orientation in ORIENTATIONS else "up"
 
 
+def get_relationship_trio_texts(rune1_key: str, rune2_key: str, rune3_key: str, palette: str) -> Dict[str, str]:
+    """Texts for 'Ты' / 'Партнёр' / 'Между вами' readings (pair & relationship spreads).
+
+    IMPORTANT: this does NOT reuse the past/present/future spread texts.
+    Those are written as position-of-a-situation narratives (they literally
+    start with 'Прошлое:' / 'Настоящее:' / 'Будущее:') and made no sense
+    when relabelled as a description of a person.
+
+    'Ты' and 'Партнёр' use rune_person_texts — a dedicated set written
+    specifically to describe a trait/role a person carries in a relationship
+    (not a 'today' state like the daily card, not a situation stage like the
+    3-card spread). 'Между вами' uses the spread's future-position text with
+    its 'Будущее:' prefix stripped, since a trajectory framing genuinely fits
+    'where this connection is heading'.
+    """
+    from rune_person_texts import get_person_text
+
+    you_text = _normalize_rune_names_in_text(get_person_text(rune1_key, palette))
+    partner_text = _normalize_rune_names_in_text(get_person_text(rune2_key, palette))
+    between_raw = get_rasklad_text(rune3_key, palette, "up", "future")["text"]
+    between_text = re.sub(r"^Будущее:\s*", "", between_raw)
+    return {
+        "you": you_text,
+        "partner": partner_text,
+        "between": _normalize_rune_names_in_text(between_text),
+    }
+
+
 def daily_texts() -> Dict[str, Any]:
     return rune_day_texts()
 
@@ -138,6 +232,8 @@ def get_daily_text(rune_key: str, palette: str, orientation: str) -> str:
     key = normalize_rune_key(rune_key)
     palette = normalize_palette(palette)
     orientation = normalize_orientation(key, orientation)
+    if key == "wyrd":
+        return WYRD_DAILY_TEXT.get(palette, WYRD_DAILY_TEXT["light"])
     data = daily_texts()
     rune_data = data.get(key)
     if not rune_data:
@@ -146,8 +242,6 @@ def get_daily_text(rune_key: str, palette: str, orientation: str) -> str:
     text = rune_data.get(field)
     if text:
         return _normalize_rune_names_in_text(text)
-    if key == "wyrd":
-        return _normalize_rune_names_in_text(rune_data[f"{palette}_up"])
     raise KeyError(f"Daily text not found for rune={rune_key}, palette={palette}, orientation={orientation}")
 
 
@@ -210,10 +304,14 @@ def get_sphere_answer(rune_key: str, palette: str, sphere: str, answer_kind: str
     if not palette_data:
         raise KeyError(f"Palette text not found for rune={rune_key}, sphere={sphere}, palette={palette}")
 
+    is_yes = answer_kind == "answer_yes"
+    answer_text = _normalize_rune_names_in_text(palette_data.get(answer_kind, ""))
+    answer_text = _vary_verdict_opener(answer_text, is_yes)
+
     return {
         "short_desc": _normalize_rune_names_in_text(palette_data.get("short_desc", "")),
-        "answer": _normalize_rune_names_in_text(palette_data.get(answer_kind, "")),
+        "answer": answer_text,
         "sphere": sphere,
         "sphere_label": SPHERE_LABELS.get(sphere, "Принятие решений"),
-        "answer_label": "Да" if answer_kind == "answer_yes" else "Нет",
+        "answer_label": "Да" if is_yes else "Нет",
     }

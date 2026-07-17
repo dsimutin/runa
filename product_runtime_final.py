@@ -1094,19 +1094,24 @@ async def trigger_question_callback(update: Update, context: ContextTypes.DEFAUL
                 await query.answer()
 
                 from philosophical_answers import get_truth_answer
-                import random
+                from rune_text_repository import random_orientation, orientation_label
 
-                # Draw a rune to determine yes/no orientation
+                # Draw a rune and use its orientation to determine yes/no —
+                # same rule as the rest of the yes/no flow, so this doesn't
+                # run its own disconnected coin flip.
                 from runes_data import RUNES
                 rune = product_runtime.draw_yes_no_rune(RUNES)
+                orientation = random_orientation(rune["key"])
                 palette = bot.get_user_palette(update)
                 image_path = bot.get_rune_image_path(rune, palette)
 
-                # Determine if it's yes or no based on rune orientation
-                is_yes = random.random() < 0.5
+                is_yes = orientation == "up"
                 philosophical_answer = get_truth_answer(is_yes)
 
-                message_text = f"❓ <b>{question}</b>\n\n{philosophical_answer}\n\n<i>Руна: {rune['name']}</i>"
+                message_text = (
+                    f"❓ <b>{question}</b>\n\n{philosophical_answer}\n\n"
+                    f"<i>Руна: {rune['name']} · {orientation_label(orientation)}</i>"
+                )
 
                 await query.edit_message_text(message_text, parse_mode="HTML")
                 if image_path:
@@ -1122,6 +1127,25 @@ async def trigger_question_callback(update: Update, context: ContextTypes.DEFAUL
     except Exception:
         bot.logger.exception("Failed to handle trigger question callback")
         await query.answer("Что-то пошло не так.", show_alert=True)
+
+
+async def rune_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the optional 'ℹ️ О руне' button — traditional/etymological meaning."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    try:
+        await query.answer()
+        _, rune_key = query.data.split(":", 1)
+        from runes_data import get_rune_by_key
+        from rune_traditional import get_traditional_text
+        rune = get_rune_by_key(rune_key)
+        rune_name = rune["name"] if rune else rune_key
+        text = get_traditional_text(rune_key, rune_name)
+        await query.message.reply_text(text, parse_mode="HTML")
+    except Exception:
+        bot.logger.exception("Failed to handle rune_info callback")
+        await query.answer("Не получилось показать традиционное значение.", show_alert=True)
 
 
 async def year_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1205,6 +1229,7 @@ def final_build_application():
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
     app.add_handler(CallbackQueryHandler(trigger_question_callback, pattern=r"^trigger_q:"))
+    app.add_handler(CallbackQueryHandler(rune_info_callback, pattern=r"^rune_info:"))
     app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))
     app.add_handler(CallbackQueryHandler(weekly_rasklad_callback, pattern=r"^weekly_rasklad:"))
     app.add_handler(CallbackQueryHandler(year_rasklad_callback, pattern=r"^year_rune:|^year_rasklad_back:"))

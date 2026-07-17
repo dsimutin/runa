@@ -37,10 +37,36 @@ bot.ONBOARDING_QUESTIONS = [
 
 DAILY_PALETTE_ICON = {"light": "🌕", "dark": "🌑", "premium": "💠"}
 
+HUMAN_DAILY_OPENINGS = {
+    "light": [
+        "{icon} <b>{name}, руна дня</b>",
+        "{icon} <b>{name}, вот что сегодня рядом</b>",
+        "{icon} <b>{name}, на сегодня выпало это</b>",
+        "{icon} <b>{name}, тихий ориентир на день</b>",
+        "{icon} <b>{name}, сегодняшний знак</b>",
+    ],
+    "dark": [
+        "{icon} <b>{name}, руна дня</b>",
+        "{icon} <b>{name}, вот прямой сигнал на сегодня</b>",
+        "{icon} <b>{name}, сегодня расклад такой</b>",
+        "{icon} <b>{name}, факт дня</b>",
+        "{icon} <b>{name}, на сегодня — это</b>",
+    ],
+    "premium": [
+        "{icon} <b>{name}, руна дня</b>",
+        "{icon} <b>{name}, сегодняшний слой</b>",
+        "{icon} <b>{name}, вот что сегодня на поверхности</b>",
+        "{icon} <b>{name}, отправная точка дня</b>",
+        "{icon} <b>{name}, сегодняшний узел</b>",
+    ],
+}
 
-def _daily_opening(palette: str, name: str) -> str:
+
+def _daily_opening(palette: str, name: str, seed_parts: tuple = ()) -> str:
     icon = DAILY_PALETTE_ICON.get(palette, "🌕")
-    return f"{icon} <b>{name}, руна дня</b>"
+    pool = HUMAN_DAILY_OPENINGS.get(palette, HUMAN_DAILY_OPENINGS["light"])
+    template = stable_pick(pool, name, *seed_parts) if seed_parts else pool[0]
+    return template.format(icon=icon, name=name)
 
 HUMAN_DAILY_CLOSINGS = {
     "light": [
@@ -144,12 +170,6 @@ def random_alt() -> bool:
     return random.random() < ALT_RATE
 
 
-def rune_title(rune: dict, alt: bool) -> str:
-    if alt:
-        return f"<b>{rune['name']}</b>\n<u>↺ Перевёрнутое значение</u>"
-    return f"<b>{rune['name']}</b>\n<u>→ Прямое значение</u>"
-
-
 def get_user_palette(update: Update) -> str:
     user = update.effective_user
     if not user:
@@ -171,6 +191,21 @@ def onboarding_keyboard(step: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("A", callback_data=f"onboarding:{step}:light")],
         [InlineKeyboardButton("B", callback_data=f"onboarding:{step}:dark")],
     ])
+
+
+def rune_info_keyboard(rune_pairs: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    """Build the optional 'ℹ️ О руне' inline button(s).
+
+    rune_pairs: list of (rune_key, rune_display_name). One button per rune,
+    up to 3 per row. Kept as a separate follow-up message/keyboard so it
+    never competes with the reply keyboard already on the reading message.
+    """
+    buttons = [
+        InlineKeyboardButton(f"ℹ️ {name}", callback_data=f"rune_info:{key}")
+        for key, name in rune_pairs
+    ]
+    rows = [buttons[i:i + 3] for i in range(0, len(buttons), 3)]
+    return InlineKeyboardMarkup(rows)
 
 
 bot.onboarding_keyboard = onboarding_keyboard
@@ -228,20 +263,6 @@ def product_rune_day_full_text(name: str, main: dict, palette: str) -> str:
     return "\n\n".join(parts)
 
 
-def product_question_text(name: str, question: str, rune: dict, answer: str, palette: str, alt: bool) -> str:
-    key = palette if palette in HUMAN_QUESTION_OPENINGS else "light"
-    opening = stable_pick(HUMAN_QUESTION_OPENINGS[key], name, question, rune["key"], alt).format(name=name)
-    closing = stable_pick(HUMAN_QUESTION_CLOSINGS[key], name, question, rune["key"], alt, "closing")
-    body = alt_meaning(rune, palette) if alt else answer
-    return (
-        f"{opening}\n\n"
-        f"<i>Твой вопрос:</i> {question}\n\n"
-        f"{rune_title(rune, alt)}\n\n"
-        f"{body}\n\n"
-        f"{closing}"
-    )
-
-
 async def product_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.clear()
     if not update.effective_user or not update.effective_message:
@@ -262,6 +283,42 @@ async def product_start_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.effective_message.reply_text("Не получилось настроить профиль. Попробуй позже.", reply_markup=bot.MAIN_KEYBOARD)
         return
     await update.effective_message.reply_text(f"{name}, меню готово.\n\nВыбери действие ниже.", reply_markup=bot.MAIN_KEYBOARD)
+
+
+def build_daily_card_text(
+    name: str,
+    palette: str,
+    rune: dict,
+    orientation: str,
+    day: str,
+    streak: int = 0,
+) -> str:
+    """Single source of truth for the daily-card message text.
+
+    Used by both the on-demand '🌞 Руна дня' button (product_runa_command)
+    and the 09:00 broadcast (daily_broadcast.send_daily_rune) so the two
+    can never drift into different formats again.
+    """
+    from rune_text_repository import get_daily_text
+
+    try:
+        day_text = get_daily_text(rune["key"], palette, orientation)
+    except KeyError:
+        day_text = bot.rune_text(rune, palette).get("short_desc", "")
+
+    opening = _daily_opening(palette, name, (rune["key"], orientation, day))
+    closing = stable_pick(
+        HUMAN_DAILY_CLOSINGS.get(palette, HUMAN_DAILY_CLOSINGS["light"]),
+        name, rune["key"], orientation, "closing", day,
+    )
+
+    if streak >= 2:
+        streak_word = "день" if streak == 1 else "дня" if 2 <= streak <= 4 else "дней"
+        streak_line = f"\n\n🔥 {streak} {streak_word} подряд"
+    else:
+        streak_line = ""
+
+    return f"{opening}\n\n{day_text}\n\n{closing}{streak_line}"
 
 
 async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -300,30 +357,56 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
                 pass
         await bot.send_missing_image_error(update, context, main, palette)
         return
-    from rune_text_repository import get_daily_text
-    try:
-        day_text = get_daily_text(main["key"], palette, orientation)
-    except KeyError:
-        day_text = bot.rune_text(main, palette).get("short_desc", "")
-    opening = _daily_opening(palette, bot.user_name(update))
-    closing = stable_pick(HUMAN_DAILY_CLOSINGS.get(palette, HUMAN_DAILY_CLOSINGS["light"]), bot.user_name(update), main["key"], orientation, "closing", today)
     try:
         from database import get_streak
         streak = get_streak(update.effective_user.id)
-        if streak >= 2:
-            streak_word = "день" if streak == 1 else "дня" if 2 <= streak <= 4 else "дней"
-            streak_line = f"\n\n🔥 {streak} {streak_word} подряд"
-        else:
-            streak_line = ""
     except Exception:
-        streak_line = ""
-    text = f"{opening}\n\n{day_text}\n\n{closing}{streak_line}"
+        streak = 0
+    text = build_daily_card_text(bot.user_name(update), palette, main, orientation, today, streak)
     if loading_msg:
         try:
             await loading_msg.delete()
         except Exception:
             pass
     await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
+    try:
+        await update.effective_message.reply_text(
+            "Хочешь традиционное значение этой руны?",
+            reply_markup=rune_info_keyboard([(main["key"], main["name"])]),
+        )
+    except Exception:
+        bot.logger.exception("Failed to send rune-info button")
+
+
+def product_yes_no_text(
+    name: str,
+    question: str,
+    rune: dict,
+    orientation_text: str,
+    sphere_data: dict,
+) -> str:
+    """Format the yes/no one-rune answer using the opening/closing phrase
+    pools that already existed in this file but were never wired in.
+
+    The verdict (✅/🚫 + text starting with an unambiguous Да/Нет variant,
+    see _vary_verdict_opener) stays on its own line and is never replaced
+    or softened by the opening/closing framing — those only add context
+    before and after the actual answer.
+    """
+    palette_key = sphere_data.get("palette", "light")
+    key = palette_key if palette_key in HUMAN_QUESTION_OPENINGS else "light"
+    opening = random.choice(HUMAN_QUESTION_OPENINGS[key]).format(name=name)
+    closing = random.choice(HUMAN_QUESTION_CLOSINGS[key])
+    answer_icon = "✅" if sphere_data["answer_label"] == "Да" else "🚫"
+    rune_line = f"{rune['name']} · {orientation_text}" if orientation_text else rune["name"]
+    return (
+        f"{opening}\n\n"
+        f"<i>Твой вопрос:</i> {question}\n\n"
+        f"{rune_line}\n\n"
+        f"{sphere_data['short_desc']}\n\n"
+        f"{answer_icon} {sphere_data['answer']}\n\n"
+        f"{closing}"
+    )
 
 
 async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
@@ -338,7 +421,12 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
             pass
     await reading_pause(update, context, 0.03)
     palette = bot.get_user_palette(update)
-    rune = random.choice(RUNES)
+    from rune_text_repository import draw_yes_no_rune, random_orientation
+    rune = draw_yes_no_rune(RUNES)
+    # The verdict follows the rune's own orientation (upright -> да-tilt,
+    # reversed -> нет-tilt), so the drawn card and the answer are actually
+    # the same event, not two independent random draws.
+    orientation = random_orientation(rune["key"])
     image_path = bot.get_rune_image_path(rune, palette)
     if not image_path:
         if loading_msg:
@@ -348,10 +436,9 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
                 pass
         await bot.send_missing_image_error(update, context, rune, palette)
         return
-    from rune_text_repository import detect_question_sphere, get_sphere_answer
-    from bot import format_one_rune_answer
+    from rune_text_repository import detect_question_sphere, get_sphere_answer, orientation_label
     sphere = detect_question_sphere(question)
-    answer_kind = "yes" if random.random() < 0.5 else "no"
+    answer_kind = "yes" if orientation == "up" else "no"
     try:
         sphere_data = get_sphere_answer(rune["key"], palette, sphere, answer_kind)
     except KeyError:
@@ -364,13 +451,33 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
             "sphere_label": "Принятие решений",
             "answer_label": "Да" if answer_kind == "yes" else "Нет",
         }
-    text = format_one_rune_answer(bot.user_name(update), question, rune, sphere_data)
+    sphere_data["palette"] = palette
+    text = product_yes_no_text(
+        bot.user_name(update), question, rune, orientation_label(orientation), sphere_data
+    )
     if loading_msg:
         try:
             await loading_msg.delete()
         except Exception:
             pass
     await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
+    try:
+        await update.effective_message.reply_text(
+            "Хочешь традиционное значение этой руны?",
+            reply_markup=rune_info_keyboard([(rune["key"], rune["name"])]),
+        )
+    except Exception:
+        bot.logger.exception("Failed to send rune-info button")
+    if not await bot.ensure_profile_ready(update, context):
+        return
+    palette = bot.get_user_palette(update)
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🌕 Светлая", callback_data="settings:deck:light")],
+        [InlineKeyboardButton("🌑 Тёмная", callback_data="settings:deck:dark")],
+        [InlineKeyboardButton("💠 Премиум — только по подписке", callback_data="settings:deck:premium")],
+    ])
+    await bot.send_private_or_group(update, context, f"⚙️ Настройки\n\nТекущая колода: {PALETTE_NAMES.get(palette, 'Светлая')}\n\nСветлая и тёмная доступны всем. Премиум — только с активной подпиской.", image_path=None)
+    await update.effective_message.reply_text("Выбери колоду:", reply_markup=markup)
 
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -382,7 +489,14 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         [InlineKeyboardButton("🌑 Тёмная", callback_data="settings:deck:dark")],
         [InlineKeyboardButton("💠 Премиум — только по подписке", callback_data="settings:deck:premium")],
     ])
-    await bot.send_private_or_group(update, context, f"⚙️ Настройки\n\nТекущая колода: {PALETTE_NAMES.get(palette, 'Светлая')}\n\nСветлая и тёмная доступны всем. Премиум — только с активной подпиской.", image_path=None)
+    await bot.send_private_or_group(
+        update,
+        context,
+        "⚙️ Настройки\n\n"
+        f"Текущая колода: {PALETTE_NAMES.get(palette, 'Светлая')}\n\n"
+        "Светлая и тёмная доступны всем. Премиум — только с активной подпиской.",
+        image_path=None,
+    )
     await update.effective_message.reply_text("Выбери колоду:", reply_markup=markup)
 
 
