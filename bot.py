@@ -677,7 +677,8 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
         await send_missing_image_error(update, context, rune_draws[image_paths.index(None)][0], palette)
         return
     from rune_collage import build_spread_collage
-    image_path = build_spread_collage(image_paths, palette)
+    position_labels = [orientation_label(orientation, rune["key"]) for rune, orientation in rune_draws]
+    image_path = build_spread_collage(image_paths, palette, position_labels)
 
     try:
         from spread_engine_approved import build_unified_spread

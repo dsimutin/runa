@@ -119,12 +119,18 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
     keys = [rune_key(r) for r in runes]
     groups = [group_of(k) for k in keys]
     names = [rune_name(r) for r in runes]
-    from rune_text_repository import get_rasklad_text, orientation_symbol
-    arrows = [orientation_symbol(k, o) for k, o in zip(keys, orientations)]
+    from rune_text_repository import get_rasklad_text, orientation_label
+    orientation_labels = [orientation_label(o, k) for k, o in zip(keys, orientations)]
+    position_descriptions = [
+        "прямое положение" if label == "прямое"
+        else "перевёрнутое положение" if label == "перевёрнутое"
+        else label
+        for label in orientation_labels
+    ]
     position_names = ("Прошлое", "Настоящее", "Будущее")
     cards = " · ".join(
-        f"{position}: {escape(name_)} {arrow}"
-        for position, name_, arrow in zip(position_names, names, arrows)
+        f"{position}: {escape(name_)} — {description}"
+        for position, name_, description in zip(position_names, names, position_descriptions)
     )
     safe_question = escape(short_sentence(question, 120))
     position_keys = ("past", "present", "future")
@@ -140,10 +146,10 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
     return (
         f"{header}\n\n<i>{safe_question}</i>\n\n<b>{cards}</b>\n\n"
         f"{escape(intro_by_topic(topic))}\n\n"
-        f"1️⃣ <b>Прошлое — {escape(names[0])} {arrows[0]}</b>\n{first}\n\n"
-        f"2️⃣ <b>Настоящее — {escape(names[1])} {arrows[1]}</b>\n{second}\n\n"
+        f"1️⃣ <b>Прошлое — {escape(names[0])} ({position_descriptions[0]})</b>\n{first}\n\n"
+        f"2️⃣ <b>Настоящее — {escape(names[1])} ({position_descriptions[1]})</b>\n{second}\n\n"
         f"{bridge}\n\n"
-        f"3️⃣ <b>Будущее — {escape(names[2])} {arrows[2]}</b>\n"
+        f"3️⃣ <b>Будущее — {escape(names[2])} ({position_descriptions[2]})</b>\n"
         f"<i>Если текущая траектория сохранится:</i> {third}\n\n"
         f"───\n\n<b>{finish}</b>"
     )
@@ -168,6 +174,8 @@ async def send_approved_rasklad(update, context, question: str) -> None:
         await bot.send_missing_image_error(update, context, rune_draws[image_paths.index(None)][0], deck)
         return
     from rune_collage import build_spread_collage
-    image_path = build_spread_collage(image_paths, deck)
+    from rune_text_repository import orientation_label
+    collage_labels = [orientation_label(orientation, rune["key"]) for rune, orientation in rune_draws]
+    image_path = build_spread_collage(image_paths, deck, collage_labels)
     text = build_unified_spread(question, rune_draws, deck, bot.user_name(update))
     await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)

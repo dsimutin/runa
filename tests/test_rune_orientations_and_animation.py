@@ -66,10 +66,11 @@ def test_year_spread_uses_month_language_not_daily_card_copy():
 
 def test_three_card_spread_is_one_horizontal_triptych():
     paths = ["light/01-fehu.jpg", "light/02-uruz.jpg", "light/03-thurisaz.jpg"]
-    collage_path = build_spread_collage(paths, "light")
+    labels = ["прямое", "перевёрнутое", "положение не меняется"]
+    collage_path = build_spread_collage(paths, "light", labels)
     with Image.open(collage_path) as collage:
         assert collage.width > collage.height
-        assert collage.height == 756
+        assert collage.height == 820
 
 
 def test_three_card_text_uses_past_present_and_conditional_future():
@@ -79,7 +80,7 @@ def test_three_card_text_uses_past_present_and_conditional_future():
         ({"key": "thurisaz", "name": "Турисаз"}, "up"),
     ]
     text = build_unified_spread("Что происходит?", draws, "light", "Дмитрий")
-    assert "1️⃣ <b>Прошлое — Феху ↑</b>" in text
-    assert "2️⃣ <b>Настоящее — Уруз ↑</b>" in text
-    assert "3️⃣ <b>Будущее — Турисаз ↑</b>" in text
+    assert "1️⃣ <b>Прошлое — Феху (прямое положение)</b>" in text
+    assert "2️⃣ <b>Настоящее — Уруз (прямое положение)</b>" in text
+    assert "3️⃣ <b>Будущее — Турисаз (прямое положение)</b>" in text
     assert "Если текущая траектория сохранится:" in text
