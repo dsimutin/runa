@@ -72,9 +72,10 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
             if image_path:
                 # Photo first — no caption, so it displays full-size without truncation
                 short_caption = f"<b>{rune['name']}</b> · {position_label}"
-                await context.bot.send_photo(
+                await _bot.send_cached_photo(
+                    context.bot.send_photo,
+                    image_path,
                     chat_id=user_id,
-                    photo=open(image_path, "rb"),
                     caption=short_caption,
                     parse_mode="HTML",
                 )
@@ -169,9 +170,10 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
         ]])
         try:
             if image_path:
-                await context.bot.send_photo(
+                await _bot.send_cached_photo(
+                    context.bot.send_photo,
+                    image_path,
                     chat_id=user_id,
-                    photo=open(image_path, "rb"),
                     caption=text,
                     parse_mode="HTML",
                     reply_markup=kb,
@@ -268,8 +270,8 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             from telegram import ReplyKeyboardRemove
             if image_path:
-                await context.bot.send_photo(
-                    chat_id=user_id, photo=open(image_path, "rb"),
+                await _bot.send_cached_photo(
+                    context.bot.send_photo, image_path, chat_id=user_id,
                     caption=f"<b>{monthly_rune['name']}</b>", parse_mode="HTML",
                 )
                 await context.bot.send_message(

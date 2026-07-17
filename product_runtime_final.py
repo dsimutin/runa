@@ -192,8 +192,10 @@ async def final_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     name = bot.user_name(update)
     try:
-        bot.ensure_user(update.effective_user.id, name)
         profile = bot.get_user_profile(update.effective_user.id)
+        if not profile or profile.get("preferred_name") != name:
+            bot.ensure_user(update.effective_user.id, name)
+            profile = bot.get_user_profile(update.effective_user.id)
         if not profile or not profile.get("palette"):
             bot.start_onboarding(update.effective_user.id)
             await update.effective_message.reply_text(product_runtime.build_onboarding_question(1, name), reply_markup=product_runtime.onboarding_keyboard(1))
@@ -1170,7 +1172,11 @@ async def trigger_question_callback(update: Update, context: ContextTypes.DEFAUL
 
                 await query.edit_message_text(message_text, parse_mode="HTML")
                 if image_path:
-                    await context.bot.send_photo(chat_id=update.effective_user.id, photo=open(image_path, 'rb'))
+                    await bot.send_cached_photo(
+                        context.bot.send_photo,
+                        image_path,
+                        chat_id=update.effective_user.id,
+                    )
 
                 context.user_data.pop("state", None)
             else:
@@ -1259,6 +1265,26 @@ def final_build_application():
             bot.logger.exception("Background database warmup failed")
 
     app.bot_data["startup_warmup"] = warm_databases
+
+    async def scheduled_maintenance() -> str:
+        """Run all daily maintenance from one authenticated Cloud Scheduler call."""
+        import asyncio
+        from datetime import date as _date
+        from types import SimpleNamespace
+        from database import claim_scheduled_run
+
+        run_key = f"daily-maintenance:{_date.today().isoformat()}"
+        claimed = await asyncio.to_thread(claim_scheduled_run, run_key)
+        if not claimed:
+            return "Already processed"
+        job_context = SimpleNamespace(bot=app.bot)
+        await send_daily_rune(job_context)
+        await send_weekly_question(job_context)
+        await send_premium_expiry_warnings(job_context)
+        await send_monthly_rune(job_context)
+        return "OK"
+
+    app.bot_data["scheduled_maintenance"] = scheduled_maintenance
     app.add_handler(CommandHandler("start", final_start_command))
     app.add_handler(CommandHandler("help", product_runtime.bot.help_command))
     app.add_handler(CommandHandler("profile", product_runtime.bot.profile_command))
@@ -1296,18 +1322,17 @@ def final_build_application():
     app.add_handler(MessageHandler((filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, operator_media_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, final_text_router))
     app.add_error_handler(bot.error_handler)
-    # Daily broadcast job — 09:00 Moscow time every day
-    app.job_queue.run_daily(send_daily_rune, time=BROADCAST_TIME, name="daily_rune_broadcast")
-    # Weekly reflection question — runs daily at 07:00 UTC, filters by user's preferred day
-    from datetime import time as dtime, timezone
-    weekly_time = dtime(7, 0, tzinfo=timezone.utc)
-    app.job_queue.run_daily(send_weekly_question, time=weekly_time, name="weekly_question")
-    # Premium expiry warnings — check daily at 08:00 Moscow (05:00 UTC)
-    expiry_time = dtime(5, 0, tzinfo=timezone.utc)
-    app.job_queue.run_daily(send_premium_expiry_warnings, time=expiry_time, name="premium_expiry_warnings")
-    # Monthly rune — runs daily at 07:00 UTC, acts only on day==1
-    monthly_time = dtime(7, 0, tzinfo=timezone.utc)
-    app.job_queue.run_daily(send_monthly_rune, time=monthly_time, name="monthly_rune")
+    if not bot.SCHEDULER_SECRET:
+        # Local/polling fallback. In Cloud Run, configure SCHEDULER_SECRET and
+        # invoke /tasks/scheduled so work happens inside a billable request.
+        app.job_queue.run_daily(send_daily_rune, time=BROADCAST_TIME, name="daily_rune_broadcast")
+        from datetime import time as dtime, timezone
+        weekly_time = dtime(7, 0, tzinfo=timezone.utc)
+        app.job_queue.run_daily(send_weekly_question, time=weekly_time, name="weekly_question")
+        expiry_time = dtime(5, 0, tzinfo=timezone.utc)
+        app.job_queue.run_daily(send_premium_expiry_warnings, time=expiry_time, name="premium_expiry_warnings")
+        monthly_time = dtime(7, 0, tzinfo=timezone.utc)
+        app.job_queue.run_daily(send_monthly_rune, time=monthly_time, name="monthly_rune")
     return app
 
 

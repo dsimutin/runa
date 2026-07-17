@@ -1,8 +1,12 @@
 import asyncio
+import hashlib
+import hmac
 import logging
 import os
 import random
+from collections import OrderedDict
 from datetime import date
+from pathlib import Path
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
@@ -42,6 +46,7 @@ PORT = int(os.getenv("PORT", "10000"))
 WEBHOOK_URL = (os.getenv("WEBHOOK_URL") or os.getenv("RENDER_EXTERNAL_URL", "")).strip().rstrip("/")
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "webhook").strip().strip("/") or "webhook"
 IS_CLOUD_RUN = bool(os.getenv("K_SERVICE"))
+SCHEDULER_SECRET = os.getenv("SCHEDULER_SECRET", "").strip()
 
 
 def parse_admin_ids(raw_value: str) -> set[int]:
@@ -61,6 +66,7 @@ ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DECK_DIRS = {"light": "light", "dark": "dark", "premium": "premium"}
 MAX_PHOTO_CAPTION_LENGTH = 1000
+_telegram_file_ids: dict[str, str | None] = {}
 
 STATE_WAITING_ASK = "waiting_ask"
 STATE_WAITING_RASKLAD = "waiting_rasklad"
@@ -329,8 +335,11 @@ async def ensure_profile_ready(update: Update, context: ContextTypes.DEFAULT_TYP
     if not is_private(update):
         return True
     try:
-        ensure_user(user.id, user_name(update))
         profile = get_user_profile(user.id)
+        current_name = user_name(update)
+        if not profile or profile.get("preferred_name") != current_name:
+            ensure_user(user.id, current_name)
+            profile = get_user_profile(user.id)
         if profile and profile.get("palette"):
             return True
         step = profile.get("onboarding_step", 0) if profile else 0
@@ -351,6 +360,59 @@ async def _send_text_message(message, text: str, reply_markup=None, parse_mode: 
 
 async def _send_bot_text(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str, parse_mode: str | None = None) -> None:
     await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+
+
+def _image_asset_key(image_path: str) -> str:
+    path = Path(image_path)
+    stat = path.stat()
+    try:
+        name = str(path.resolve().relative_to(Path(BASE_DIR).resolve()))
+        version = str(stat.st_mtime_ns)
+    except ValueError:
+        name = path.name
+        # Generated collage names already contain a content digest. Their
+        # mtime changes after every cold start, so excluding it lets the
+        # persistent Telegram cache survive across Cloud Run instances.
+        version = "generated"
+    signature = f"{name}:{stat.st_size}:{version}"
+    return hashlib.sha256(signature.encode()).hexdigest()
+
+
+async def send_cached_photo(send_photo, image_path: str, **kwargs):
+    """Send a local image, reusing Telegram's file_id after its first upload."""
+    from database import delete_telegram_file_id, get_telegram_file_id, set_telegram_file_id
+
+    asset_key = _image_asset_key(image_path)
+    if asset_key not in _telegram_file_ids:
+        try:
+            _telegram_file_ids[asset_key] = await asyncio.to_thread(get_telegram_file_id, asset_key)
+        except DatabaseError:
+            logger.debug("Telegram file cache lookup failed", exc_info=True)
+            _telegram_file_ids[asset_key] = None
+
+    cached_file_id = _telegram_file_ids.get(asset_key)
+    if cached_file_id:
+        try:
+            return await send_photo(photo=cached_file_id, **kwargs)
+        except BadRequest:
+            logger.info("Cached Telegram file_id expired; uploading asset again")
+            _telegram_file_ids[asset_key] = None
+            try:
+                await asyncio.to_thread(delete_telegram_file_id, asset_key)
+            except DatabaseError:
+                pass
+
+    with open(image_path, "rb") as image_file:
+        sent = await send_photo(photo=image_file, **kwargs)
+    photos = getattr(sent, "photo", None) or []
+    if photos:
+        file_id = photos[-1].file_id
+        _telegram_file_ids[asset_key] = file_id
+        try:
+            await asyncio.to_thread(set_telegram_file_id, asset_key, file_id)
+        except DatabaseError:
+            logger.debug("Telegram file cache write failed", exc_info=True)
+    return sent
 
 
 async def send_private_or_group(
@@ -408,12 +470,11 @@ async def send_private_or_group(
         if image_path:
             if reading_mode and show_shuffle:
                 await private_shuffle()
-            with open(image_path, "rb") as image_file:
-                if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
-                    await message.reply_photo(photo=image_file, caption=target_text, reply_markup=reply_markup, parse_mode=mode)
-                else:
-                    await message.reply_photo(photo=image_file)
-                    await _send_text_message(message, target_text, reply_markup=reply_markup, parse_mode=mode)
+            if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
+                await send_cached_photo(message.reply_photo, image_path, caption=target_text, reply_markup=reply_markup, parse_mode=mode)
+            else:
+                await send_cached_photo(message.reply_photo, image_path)
+                await _send_text_message(message, target_text, reply_markup=reply_markup, parse_mode=mode)
         else:
             await _send_text_message(message, target_text, reply_markup=reply_markup, parse_mode=mode)
 
@@ -421,12 +482,11 @@ async def send_private_or_group(
         if image_path:
             if reading_mode and show_shuffle:
                 await group_private_shuffle()
-            with open(image_path, "rb") as image_file:
-                if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
-                    await context.bot.send_photo(chat_id=user.id, photo=image_file, caption=target_text, parse_mode=mode)
-                else:
-                    await context.bot.send_photo(chat_id=user.id, photo=image_file)
-                    await _send_bot_text(context, user.id, target_text, parse_mode=mode)
+            if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
+                await send_cached_photo(context.bot.send_photo, image_path, chat_id=user.id, caption=target_text, parse_mode=mode)
+            else:
+                await send_cached_photo(context.bot.send_photo, image_path, chat_id=user.id)
+                await _send_bot_text(context, user.id, target_text, parse_mode=mode)
         else:
             await _send_bot_text(context, user.id, target_text, parse_mode=mode)
         await message.reply_text("Отправил ответ тебе в личку ✨")
@@ -812,6 +872,9 @@ async def _run_webhook_with_health(app: Application) -> None:
     from starlette.responses import PlainTextResponse, Response
     from starlette.routing import Route
 
+    processed_update_ids: OrderedDict[int, None] = OrderedDict()
+    in_flight_updates: dict[int, asyncio.Task] = {}
+
     async def telegram_webhook(request: StarletteRequest) -> Response:
         data = await request.json()
         # Keep the Cloud Run request open while PTB handles the update.
@@ -820,15 +883,45 @@ async def _run_webhook_with_health(app: Application) -> None:
         # therefore made image composition and Telegram sends run as
         # background work, which could stretch a spread from seconds to
         # minutes on a scale-to-zero instance.
-        await app.process_update(Update.de_json(data=data, bot=app.bot))
+        update = Update.de_json(data=data, bot=app.bot)
+        update_id = update.update_id
+        if update_id in processed_update_ids:
+            return Response()
+        task = in_flight_updates.get(update_id)
+        if task is None:
+            task = asyncio.create_task(app.process_update(update))
+            in_flight_updates[update_id] = task
+        try:
+            await asyncio.shield(task)
+        except Exception:
+            in_flight_updates.pop(update_id, None)
+            raise
+        in_flight_updates.pop(update_id, None)
+        processed_update_ids[update_id] = None
+        processed_update_ids.move_to_end(update_id)
+        while len(processed_update_ids) > 4096:
+            processed_update_ids.popitem(last=False)
         return Response()
 
     async def health(_: StarletteRequest) -> PlainTextResponse:
         return PlainTextResponse("OK")
 
+    async def scheduled_tasks(request: StarletteRequest) -> PlainTextResponse:
+        supplied = request.headers.get("x-runa-scheduler-secret", "")
+        if not SCHEDULER_SECRET:
+            return PlainTextResponse("Scheduler secret is not configured", status_code=503)
+        if not hmac.compare_digest(supplied, SCHEDULER_SECRET):
+            return PlainTextResponse("Forbidden", status_code=403)
+        callback = app.bot_data.get("scheduled_maintenance")
+        if not callback:
+            return PlainTextResponse("Scheduled maintenance is not configured", status_code=503)
+        result = await callback()
+        return PlainTextResponse(result or "OK")
+
     starlette_app = Starlette(routes=[
         Route(f"/{WEBHOOK_PATH}", telegram_webhook, methods=["POST"]),
         Route("/health", health, methods=["GET"]),
+        Route("/tasks/scheduled", scheduled_tasks, methods=["POST"]),
     ])
 
     config = uvicorn.Config(app=starlette_app, host="0.0.0.0", port=PORT, log_level="warning")

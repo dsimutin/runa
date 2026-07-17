@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import time
 from contextlib import contextmanager
 from typing import Any, Dict, List, Tuple
 
@@ -16,6 +17,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
 _schema_initialized = False
 _pool: psycopg2.pool.ThreadedConnectionPool | None = None
+_profile_cache: dict[int, tuple[float, Dict[str, Any] | None]] = {}
+_PROFILE_CACHE_TTL = 60.0
 
 
 class DatabaseError(Exception):
@@ -147,6 +150,23 @@ def ensure_schema(conn) -> None:
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_file_cache (
+                asset_key  TEXT PRIMARY KEY,
+                file_id    TEXT NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scheduled_runs (
+                run_key    TEXT PRIMARY KEY,
+                claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
     _schema_initialized = True
 
 
@@ -172,11 +192,15 @@ def ensure_user(user_id: int, preferred_name: str) -> None:
                     """,
                     (user_id, preferred_name or "друг"),
                 )
+        _profile_cache.pop(user_id, None)
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
 
 def get_user_profile(user_id: int) -> Dict[str, Any] | None:
+    cached = _profile_cache.get(user_id)
+    if cached and time.monotonic() - cached[0] < _PROFILE_CACHE_TTL:
+        return cached[1].copy() if cached[1] else None
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -192,8 +216,9 @@ def get_user_profile(user_id: int) -> Dict[str, Any] | None:
                 )
                 row = cur.fetchone()
                 if not row:
+                    _profile_cache[user_id] = (time.monotonic(), None)
                     return None
-                return {
+                profile = {
                     "preferred_name": row[0],
                     "palette": row[1],
                     "psychotype": row[2],
@@ -202,6 +227,63 @@ def get_user_profile(user_id: int) -> Dict[str, Any] | None:
                     "onboarding_score_dark": row[5] or 0,
                     "onboarding_score_premium": row[6] or 0,
                 }
+                _profile_cache[user_id] = (time.monotonic(), profile)
+                return profile.copy()
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def get_telegram_file_id(asset_key: str) -> str | None:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT file_id FROM telegram_file_cache WHERE asset_key = %s", (asset_key,))
+                row = cur.fetchone()
+                return row[0] if row else None
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def set_telegram_file_id(asset_key: str, file_id: str) -> None:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO telegram_file_cache (asset_key, file_id, updated_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (asset_key) DO UPDATE
+                    SET file_id = EXCLUDED.file_id, updated_at = NOW()
+                    """,
+                    (asset_key, file_id),
+                )
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def delete_telegram_file_id(asset_key: str) -> None:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM telegram_file_cache WHERE asset_key = %s", (asset_key,))
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def claim_scheduled_run(run_key: str) -> bool:
+    """Atomically claim a scheduled run; false means it already ran."""
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO scheduled_runs (run_key) VALUES (%s) ON CONFLICT DO NOTHING",
+                    (run_key,),
+                )
+                return cur.rowcount == 1
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
@@ -224,6 +306,7 @@ def start_onboarding(user_id: int) -> None:
                     """,
                     (user_id,),
                 )
+        _profile_cache.pop(user_id, None)
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
@@ -326,6 +409,8 @@ def save_onboarding_answer(user_id: int, answer: str, total_questions: int) -> D
                 }
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
+    finally:
+        _profile_cache.pop(user_id, None)
 
 
 def set_user_palette(user_id: int, palette: str) -> None:
@@ -339,6 +424,7 @@ def set_user_palette(user_id: int, palette: str) -> None:
                     "UPDATE users SET palette = %s, psychotype = %s WHERE user_id = %s",
                     (palette, _psychotype_for_palette(palette), user_id),
                 )
+        _profile_cache.pop(user_id, None)
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
