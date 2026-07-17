@@ -97,7 +97,7 @@ def test_three_card_spread_is_one_horizontal_triptych():
         assert collage.height == 820
 
 
-def test_reversed_single_card_rotates_artwork_and_adds_position_badge(tmp_path):
+def test_reversed_single_card_keeps_artwork_upright_and_adds_position_badge(tmp_path):
     source_path = tmp_path / "orientation.png"
     source = Image.new("RGB", (20, 40), "red")
     for y in range(20, 40):
@@ -109,7 +109,7 @@ def test_reversed_single_card_rotates_artwork_and_adds_position_badge(tmp_path):
     with Image.open(result_path) as result:
         artwork_top = PADDING + BADGE_HEIGHT + BADGE_GAP + 20
         pixel = result.getpixel((result.width // 2, artwork_top))
-        assert pixel[2] > pixel[0]
+        assert pixel[0] > pixel[2]
 
 
 def test_three_card_text_uses_past_present_and_conditional_future():

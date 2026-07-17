@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 CARD_HEIGHT = 720
-COLLAGE_VERSION = "3"
+COLLAGE_VERSION = "4"
 GAP = 14
 PADDING = 18
 BADGE_HEIGHT = 54
@@ -52,11 +52,9 @@ def _badge_text(label: str) -> str:
     return "НЕОБРАТИМАЯ"
 
 
-def _load_card(path: Path, label: str, height: int = CARD_HEIGHT) -> Image.Image:
+def _load_card(path: Path, _label: str, height: int = CARD_HEIGHT) -> Image.Image:
     with Image.open(path) as source:
         card = ImageOps.exif_transpose(source).convert("RGB")
-        if label == "перевёрнутое":
-            card = card.rotate(180)
         width = round(card.width * height / card.height)
         return card.resize((width, height), Image.Resampling.LANCZOS)
 
@@ -85,10 +83,10 @@ def _draw_badge(draw: ImageDraw.ImageDraw, x: int, width: int, palette: str, lab
 
 
 def build_single_rune_card(image_path: str, palette: str, position_label: str) -> str:
-    """Build a labelled card and rotate the artwork for reversed runes."""
+    """Build a labelled card while keeping printed artwork upright."""
     source_path = Path(image_path)
     digest = hashlib.sha256(
-        f"single-1|{source_path}:{source_path.stat().st_mtime_ns}|{palette}|{position_label}".encode()
+        f"single-2|{source_path}:{source_path.stat().st_mtime_ns}|{palette}|{position_label}".encode()
     ).hexdigest()[:20]
     output_path = Path("/tmp") / f"runa-single-{digest}.jpg"
     if output_path.is_file():
