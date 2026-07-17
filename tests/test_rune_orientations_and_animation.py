@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from PIL import Image
+
 from rune_text_repository import (
     is_reversible,
     normalize_orientation,
@@ -8,8 +10,10 @@ from rune_text_repository import (
     random_orientation,
     yes_no_draw,
 )
+from rune_collage import build_spread_collage
 from runes_data import NON_REVERSIBLE_RUNE_KEYS, RUNES
 from year_rasklad import build_month_interpretation
+from spread_engine_approved import build_unified_spread
 
 
 def test_non_reversible_runes_never_draw_reversed():
@@ -58,3 +62,24 @@ def test_year_spread_uses_month_language_not_daily_card_copy():
             assert "сегодня" not in lowered
             assert "тема месяца" in lowered
             assert "ориентир месяца" in lowered
+
+
+def test_three_card_spread_is_one_horizontal_triptych():
+    paths = ["light/01-fehu.jpg", "light/02-uruz.jpg", "light/03-thurisaz.jpg"]
+    collage_path = build_spread_collage(paths, "light")
+    with Image.open(collage_path) as collage:
+        assert collage.width > collage.height
+        assert collage.height == 756
+
+
+def test_three_card_text_uses_past_present_and_conditional_future():
+    draws = [
+        ({"key": "fehu", "name": "Феху"}, "up"),
+        ({"key": "uruz", "name": "Уруз"}, "up"),
+        ({"key": "thurisaz", "name": "Турисаз"}, "up"),
+    ]
+    text = build_unified_spread("Что происходит?", draws, "light", "Дмитрий")
+    assert "1️⃣ <b>Прошлое — Феху ↑</b>" in text
+    assert "2️⃣ <b>Настоящее — Уруз ↑</b>" in text
+    assert "3️⃣ <b>Будущее — Турисаз ↑</b>" in text
+    assert "Если текущая траектория сохранится:" in text

@@ -672,10 +672,12 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
     name = user_name(update)
     palette = get_user_palette(update)
     rune_draws = draw_distinct_runes_with_orientations(RUNES, 3)
-    image_path = get_rune_image_path(rune_draws[2][0], palette)
-    if not image_path:
-        await send_missing_image_error(update, context, rune_draws[2][0], palette)
+    image_paths = [get_rune_image_path(rune, palette) for rune, _ in rune_draws]
+    if not all(image_paths):
+        await send_missing_image_error(update, context, rune_draws[image_paths.index(None)][0], palette)
         return
+    from rune_collage import build_spread_collage
+    image_path = build_spread_collage(image_paths, palette)
 
     try:
         from spread_engine_approved import build_unified_spread

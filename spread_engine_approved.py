@@ -1,7 +1,6 @@
 from html import escape
+import re
 from typing import Any
-
-from rune_decks_approved import get_deck_meaning
 
 TOPIC_KEYWORDS = {
     "love": ["вместе", "отнош", "люб", "чувств", "партнер", "партнёр", "бывш", "верн", "брак", "пара", "скуч", "напиш"],
@@ -106,10 +105,9 @@ def final_text(topic: str, last_group: str) -> str:
 def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], str]], deck: str = "premium", name: str = "") -> str:
     """rune_draws: list of (rune_dict, orientation) — orientation is 'up' or 'rev'.
 
-    Orientation genuinely changes the reading: it selects the upright vs
-    reversed text/advice from rune_decks_approved (both were already
-    written and present in the data, just never wired to a real draw),
-    and is shown next to each card name.
+    Orientation and temporal position both change the reading. Each card uses
+    its dedicated past/present/future text, and the future is framed as a
+    trajectory rather than a fixed prediction.
 
     `name`, if given, is used once in the header only — deliberately not
     threaded through every line, to avoid the message reading like it's
@@ -120,19 +118,35 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
     topic = detect_topic(question)
     keys = [rune_key(r) for r in runes]
     groups = [group_of(k) for k in keys]
-    meanings = [get_deck_meaning(k, deck, o == "rev") for k, o in zip(keys, orientations)]
     names = [rune_name(r) for r in runes]
-    from rune_text_repository import orientation_symbol
+    from rune_text_repository import get_rasklad_text, orientation_symbol
     arrows = [orientation_symbol(k, o) for k, o in zip(keys, orientations)]
-    cards = " · ".join(f"{escape(name_)} {arrow}" for name_, arrow in zip(names, arrows))
+    position_names = ("Прошлое", "Настоящее", "Будущее")
+    cards = " · ".join(
+        f"{position}: {escape(name_)} {arrow}"
+        for position, name_, arrow in zip(position_names, names, arrows)
+    )
     safe_question = escape(short_sentence(question, 120))
-    first = escape(short_sentence(meanings[0]["text"], 260))
-    second = escape(short_sentence(meanings[1]["text"], 260))
-    third = escape(short_sentence(meanings[2]["text"], 260))
+    position_keys = ("past", "present", "future")
+    position_texts = []
+    for key, orientation, position, label in zip(keys, orientations, position_keys, position_names):
+        raw = get_rasklad_text(key, deck, orientation, position)["text"]
+        raw = re.sub(rf"^{label}:\s*", "", raw, flags=re.IGNORECASE)
+        position_texts.append(escape(short_sentence(raw, 360)))
+    first, second, third = position_texts
     bridge = escape(bridge_text(groups, topic))
     finish = escape(final_text(topic, groups[2]))
     header = f"🔮 <b>{escape(name)}, расклад</b>" if name else "🔮 <b>Расклад</b>"
-    return f"{header}\n\n<i>{safe_question}</i>\n\n<b>{cards}</b>\n\n{escape(intro_by_topic(topic))}\n\n{first}\n\n{second}\n\n{bridge}\n\n───\n\n{third}\n\n───\n\n<b>{finish}</b>"
+    return (
+        f"{header}\n\n<i>{safe_question}</i>\n\n<b>{cards}</b>\n\n"
+        f"{escape(intro_by_topic(topic))}\n\n"
+        f"1️⃣ <b>Прошлое — {escape(names[0])} {arrows[0]}</b>\n{first}\n\n"
+        f"2️⃣ <b>Настоящее — {escape(names[1])} {arrows[1]}</b>\n{second}\n\n"
+        f"{bridge}\n\n"
+        f"3️⃣ <b>Будущее — {escape(names[2])} {arrows[2]}</b>\n"
+        f"<i>Если текущая траектория сохранится:</i> {third}\n\n"
+        f"───\n\n<b>{finish}</b>"
+    )
 
 
 async def send_approved_rasklad(update, context, question: str) -> None:
@@ -149,6 +163,11 @@ async def send_approved_rasklad(update, context, question: str) -> None:
         deck = "premium"
     from rune_text_repository import draw_distinct_runes_with_orientations
     rune_draws = draw_distinct_runes_with_orientations(bot.RUNES, 3)
-    image_path = bot.get_rune_image_path(rune_draws[2][0], deck)
+    image_paths = [bot.get_rune_image_path(rune, deck) for rune, _ in rune_draws]
+    if not all(image_paths):
+        await bot.send_missing_image_error(update, context, rune_draws[image_paths.index(None)][0], deck)
+        return
+    from rune_collage import build_spread_collage
+    image_path = build_spread_collage(image_paths, deck)
     text = build_unified_spread(question, rune_draws, deck, bot.user_name(update))
-    await bot.send_private_or_group(update, context, text, image_path=image_path)
+    await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
