@@ -127,12 +127,12 @@ def test_spread_uses_detected_sphere_and_is_split_from_the_beginning():
         ({"key": "thurisaz", "name": "Турисаз"}, "up"),
     ]
     pages = build_unified_spread_pages("Что происходит на работе?", draws, "light", "Дмитрий")
-    assert len(pages) == 4
+    assert len(pages) == 3
     assert "Сфера вопроса:</b> Работа" in pages[0]
     assert "1️⃣ <b>Прошлое" in pages[0]
     assert "2️⃣ <b>Настоящее" in pages[1]
     assert "3️⃣ <b>Будущее" in pages[2]
-    assert "Итог расклада" in pages[3]
+    assert "Итог расклада" in pages[2]
 
 
 def test_every_rune_deck_orientation_and_position_has_safe_spread_text():
@@ -163,5 +163,5 @@ def test_all_sphere_pages_fit_telegram_message_limit():
     for palette in ("light", "dark", "premium"):
         for question in questions:
             pages = build_unified_spread_pages(question, draws, palette, "Дмитрий")
-            assert len(pages) == 4
+            assert len(pages) == 3
             assert all(0 < len(page) < 4096 for page in pages)

@@ -190,7 +190,10 @@ def build_unified_spread_pages(
     present = full[starts[1]:starts[2]].rstrip()
     future = full[starts[2]:starts[3]].rstrip()
     summary = full[starts[3]:].replace("───", "🧭 <b>Итог расклада</b>", 1).strip()
-    return [f"{header}\n\n{past}", present, future, summary]
+    # The conclusion belongs to the projected trajectory: showing it together
+    # with the third rune makes the reading finish naturally without a separate
+    # fourth screen that can feel detached from the future it summarises.
+    return [f"{header}\n\n{past}", present, f"{future}\n\n{summary}"]
 
 
 def spread_page_markup(token: str, page: int, total: int):
