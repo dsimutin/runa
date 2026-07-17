@@ -98,6 +98,18 @@ def is_operator_chat(update: Update) -> bool:
     return bool(chat and chat.id in bot.ADMIN_IDS and chat.type != "private")
 
 
+def is_operator_reply(update: Update) -> bool:
+    """Accept request replies in an operator group or an admin's private chat.
+
+    A private admin chat must only be intercepted when the message is an
+    actual reply to a request notification. Otherwise the admin must still be
+    able to use the bot as an ordinary user.
+    """
+    if extract_request_id_from_reply(update) is None:
+        return False
+    return is_operator_chat(update) or is_authorized_operator(update)
+
+
 def is_authorized_operator(update: Update) -> bool:
     user = update.effective_user
     if not user:
@@ -404,7 +416,7 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
                 chat_id=user_id,
                 photo=photo_file_id,
                 caption=caption,
-                reply_markup=_kb(update),
+                reply_markup=build_main_keyboard(user_id),
             )
         elif message.document:
             caption = (message.caption or "").strip() or None
@@ -412,13 +424,13 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
                 chat_id=user_id,
                 document=message.document.file_id,
                 caption=caption,
-                reply_markup=_kb(update),
+                reply_markup=build_main_keyboard(user_id),
             )
         elif message.text:
             await context.bot.send_message(
                 chat_id=user_id,
                 text=message.text.strip(),
-                reply_markup=_kb(update),
+                reply_markup=build_main_keyboard(user_id),
             )
         else:
             await message.reply_text("Поддерживаются текст, фото и документ. Пришли реплаем на заявку.")
@@ -432,7 +444,7 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def operator_media_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_operator_chat(update):
+    if not is_operator_reply(update):
         return
     await handle_operator_reply(update, context)
 
@@ -441,7 +453,7 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     text = (update.effective_message.text or "").strip()
     state = context.user_data.get("state")
     user_id = update.effective_user.id if update.effective_user else 0
-    if is_operator_chat(update):
+    if is_operator_reply(update):
         await handle_operator_reply(update, context)
         return
     if text == HIDE_KEYBOARD_BUTTON:
