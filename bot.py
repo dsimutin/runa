@@ -6,7 +6,7 @@ from datetime import date
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
@@ -360,47 +360,45 @@ async def send_private_or_group(
 
     parse_mode = "HTML" if wants_html(text) else None
     plain_text = strip_html(text)
-    palette = get_user_palette(update) if image_path and reading_mode else "light"
-
     reply_markup = READING_KEYBOARD if reading_mode else MAIN_KEYBOARD
 
-    async def reveal_card(send_animation, target_text: str, mode: str | None):
-        """Show one-pass shimmer, then replace it with the original photo."""
-        from rune_animation import REVEAL_SECONDS, build_reveal_animation
-
-        caption = target_text if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH else None
-        animation = build_reveal_animation(image_path, palette)
-        revealed = await send_animation(
-            animation=animation,
-            caption=caption,
-            parse_mode=mode if caption else None,
-            reply_markup=reply_markup if caption else None,
+    async def show_shuffle(send_message) -> None:
+        """Brief anticipation without replacing or re-sending the final card."""
+        frames = (
+            "🔮 ᚠ · ᚱ · ᚨ  Перемешиваю руны…",
+            "🔮 ᚱ · ᚨ · ᚠ  Слушаю вопрос…",
+            "🔮 ᚨ · ᚠ · ᚱ  Руна выбрана",
         )
-        await asyncio.sleep(REVEAL_SECONDS)
+        loading = None
         try:
-            with open(image_path, "rb") as image_file:
-                await revealed.edit_media(
-                    media=InputMediaPhoto(media=image_file, caption=caption, parse_mode=mode if caption else None),
-                    reply_markup=reply_markup if caption else None,
-                )
-        except (OSError, TelegramError):
-            try:
-                await revealed.delete()
-            except TelegramError:
-                pass
-            raise
-        if caption is None:
-            await _send_text_message(revealed, target_text, reply_markup=reply_markup, parse_mode=mode)
-        return revealed
+            loading = await send_message(text=frames[0])
+            for frame in frames[1:]:
+                await asyncio.sleep(0.32)
+                await loading.edit_text(frame)
+            await asyncio.sleep(0.28)
+        except TelegramError:
+            logger.debug("Rune shuffle animation unavailable", exc_info=True)
+        finally:
+            if loading:
+                try:
+                    await loading.delete()
+                except TelegramError:
+                    pass
+
+    async def private_shuffle() -> None:
+        async def send_message(**kwargs):
+            return await message.reply_text(**kwargs)
+        await show_shuffle(send_message)
+
+    async def group_private_shuffle() -> None:
+        async def send_message(**kwargs):
+            return await context.bot.send_message(chat_id=user.id, **kwargs)
+        await show_shuffle(send_message)
 
     async def send_to_private(target_text: str, mode: str | None) -> None:
         if image_path:
             if reading_mode:
-                try:
-                    await reveal_card(message.reply_animation, target_text, mode)
-                    return
-                except (OSError, TelegramError):
-                    logger.exception("Rune reveal animation failed; sending static photo")
+                await private_shuffle()
             with open(image_path, "rb") as image_file:
                 if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
                     await message.reply_photo(photo=image_file, caption=target_text, reply_markup=reply_markup, parse_mode=mode)
@@ -413,14 +411,7 @@ async def send_private_or_group(
     async def send_to_group_private(target_text: str, mode: str | None) -> None:
         if image_path:
             if reading_mode:
-                async def send_animation(**kwargs):
-                    return await context.bot.send_animation(chat_id=user.id, **kwargs)
-                try:
-                    await reveal_card(send_animation, target_text, mode)
-                    await message.reply_text("Отправил ответ тебе в личку ✨")
-                    return
-                except (OSError, TelegramError):
-                    logger.exception("Private rune reveal animation failed; sending static photo")
+                await group_private_shuffle()
             with open(image_path, "rb") as image_file:
                 if len(target_text) <= MAX_PHOTO_CAPTION_LENGTH:
                     await context.bot.send_photo(chat_id=user.id, photo=image_file, caption=target_text, parse_mode=mode)

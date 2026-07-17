@@ -327,34 +327,17 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     if not await bot.ensure_profile_ready(update, context):
         return
-    message = update.effective_message
-    loading_msg = None
-    if message and bot.is_private(update):
-        try:
-            loading_msg = await message.reply_text("🌀 Перемешиваю руны...")
-        except Exception:
-            pass
     today = date.today().isoformat()
     try:
         rune_name, orientation = bot.get_or_create_daily_card(update.effective_user.id, today, RUNES)
     except bot.DatabaseError:
         bot.logger.exception("Failed to get daily rune")
-        if loading_msg:
-            try:
-                await loading_msg.delete()
-            except Exception:
-                pass
         await bot.send_private_or_group(update, context, "Не получилось достать руну дня. Попробуй позже.")
         return
     palette = bot.get_user_palette(update)
     main = get_rune_by_name(rune_name)
     image_path = bot.get_rune_image_path(main, palette)
     if not image_path:
-        if loading_msg:
-            try:
-                await loading_msg.delete()
-            except Exception:
-                pass
         await bot.send_missing_image_error(update, context, main, palette)
         return
     try:
@@ -363,11 +346,6 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception:
         streak = 0
     text = build_daily_card_text(bot.user_name(update), palette, main, orientation, today, streak)
-    if loading_msg:
-        try:
-            await loading_msg.delete()
-        except Exception:
-            pass
     await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
     try:
         await update.effective_message.reply_text(
@@ -412,13 +390,6 @@ def product_yes_no_text(
 async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEFAULT_TYPE, question: str) -> None:
     if not await bot.ensure_profile_ready(update, context):
         return
-    message = update.effective_message
-    loading_msg = None
-    if message and bot.is_private(update):
-        try:
-            loading_msg = await message.reply_text("🔮 Руны говорят...")
-        except Exception:
-            pass
     await reading_pause(update, context, 0.03)
     palette = bot.get_user_palette(update)
     from rune_text_repository import draw_yes_no_rune, yes_no_draw
@@ -428,11 +399,6 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
     orientation, answer_kind = yes_no_draw(rune["key"])
     image_path = bot.get_rune_image_path(rune, palette)
     if not image_path:
-        if loading_msg:
-            try:
-                await loading_msg.delete()
-            except Exception:
-                pass
         await bot.send_missing_image_error(update, context, rune, palette)
         return
     from rune_text_repository import detect_question_sphere, get_sphere_answer, orientation_label
@@ -453,11 +419,6 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
     text = product_yes_no_text(
         bot.user_name(update), question, rune, orientation_label(orientation, rune["key"]), sphere_data
     )
-    if loading_msg:
-        try:
-            await loading_msg.delete()
-        except Exception:
-            pass
     await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
     try:
         await update.effective_message.reply_text(

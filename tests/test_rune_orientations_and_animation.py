@@ -1,8 +1,5 @@
 from pathlib import Path
 
-from PIL import Image
-
-from rune_animation import FRAME_COUNT, build_reveal_animation
 from rune_text_repository import (
     is_reversible,
     normalize_orientation,
@@ -35,14 +32,6 @@ def test_yes_no_for_symmetric_runes_is_not_forced_to_yes():
     outcomes = {yes_no_draw("isa")[1] for _ in range(200)}
     assert outcomes == {"yes", "no"}
     assert {yes_no_draw("isa")[0] for _ in range(20)} == {"up"}
-
-
-def test_reveal_animation_is_compact_and_has_expected_frames():
-    animation = build_reveal_animation("light/15-algiz.jpg", "light")
-    assert len(animation.getvalue()) < 2_000_000
-    with Image.open(animation) as rendered:
-        assert rendered.n_frames == FRAME_COUNT
-        assert rendered.width == 360
 
 
 def test_all_three_decks_have_every_card_and_algiz_is_not_othala():
