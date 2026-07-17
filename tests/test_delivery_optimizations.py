@@ -3,8 +3,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import psycopg2
 
 import bot
+import database
 
 
 @pytest.mark.asyncio
@@ -37,3 +39,53 @@ def test_generated_collage_cache_key_survives_mtime_change(tmp_path: Path):
     collage.touch()
     second = bot._image_asset_key(str(collage))
     assert first == second
+
+
+def test_database_context_replaces_stale_neon_connection():
+    class StaleCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, _query):
+            raise psycopg2.OperationalError("SSL connection has been closed unexpectedly")
+
+    class Connection:
+        def __init__(self, stale=False):
+            self.stale = stale
+            self.committed = False
+
+        def cursor(self):
+            return StaleCursor()
+
+        def commit(self):
+            self.committed = True
+
+        def close(self):
+            pass
+
+    stale = Connection(stale=True)
+    fresh = Connection()
+
+    class Pool:
+        def __init__(self):
+            self.connections = [stale, fresh]
+            self.returned = []
+
+        def getconn(self):
+            return self.connections.pop(0)
+
+        def putconn(self, conn, close=False):
+            self.returned.append((conn, close))
+
+    pool = Pool()
+    database._connection_last_used.clear()
+    with patch("database._get_pool", return_value=pool):
+        with database._db() as conn:
+            assert conn is fresh
+
+    assert pool.returned[0] == (stale, True)
+    assert pool.returned[-1] == (fresh, False)
+    assert fresh.committed

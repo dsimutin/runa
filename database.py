@@ -19,6 +19,8 @@ _schema_initialized = False
 _pool: psycopg2.pool.ThreadedConnectionPool | None = None
 _profile_cache: dict[int, tuple[float, Dict[str, Any] | None]] = {}
 _PROFILE_CACHE_TTL = 60.0
+_connection_last_used: dict[int, float] = {}
+_CONNECTION_HEALTHCHECK_INTERVAL = 60.0
 
 
 class DatabaseError(Exception):
@@ -63,11 +65,35 @@ def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
 def _db():
     """Borrow a connection from the pool, commit on success, rollback/discard on error."""
     global _pool
+    pool = _get_pool()
     try:
-        conn = _get_pool().getconn()
+        conn = pool.getconn()
     except psycopg2.Error as exc:
         logger.error("DB connection failed: %s", exc)
         raise DatabaseError(f"Connection failed: {exc}") from exc
+
+    # Neon suspends compute and may close idle SSL connections. psycopg2's
+    # local `closed` flag does not notice that until the next query, so verify
+    # connections that have sat in the pool before handing them to callers.
+    last_used = _connection_last_used.get(id(conn), 0.0)
+    if time.monotonic() - last_used >= _CONNECTION_HEALTHCHECK_INTERVAL:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            logger.info("Discarding stale database connection")
+            _connection_last_used.pop(id(conn), None)
+            try:
+                pool.putconn(conn, close=True)
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            try:
+                conn = pool.getconn()
+            except psycopg2.Error as exc:
+                raise DatabaseError(f"Connection refresh failed: {exc}") from exc
     is_broken = False
     try:
         yield conn
@@ -90,9 +116,11 @@ def _db():
         try:
             if is_broken:
                 # Remove broken connection from pool; next getconn() creates a fresh one
-                _get_pool().putconn(conn, close=True)
+                _connection_last_used.pop(id(conn), None)
+                pool.putconn(conn, close=True)
             else:
-                _get_pool().putconn(conn)
+                _connection_last_used[id(conn)] = time.monotonic()
+                pool.putconn(conn)
         except Exception:
             try:
                 conn.close()
