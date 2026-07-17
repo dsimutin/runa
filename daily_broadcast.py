@@ -221,7 +221,7 @@ async def send_premium_expiry_warnings(context: ContextTypes.DEFAULT_TYPE) -> No
                     "Чтобы продлить подписку — нажми 💠 Премиум в меню или напиши /premium."
                 ),
                 parse_mode="HTML",
-                reply_markup=_bot.MAIN_KEYBOARD,
+                reply_markup=_bot.main_keyboard_for(user_id),
             )
         except Exception:
             logger.exception("Failed to send expiry warning to user_id=%s", user_id)
@@ -298,12 +298,12 @@ async def subscribe_command(update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except DatabaseError:
         await update.effective_message.reply_text(
             "Не получилось включить рассылку. Попробуй позже.",
-            reply_markup=_bot.MAIN_KEYBOARD,
+            reply_markup=_bot.main_keyboard_for(update.effective_user.id),
         )
         return
     await update.effective_message.reply_text(
         "🌞 Рассылка включена. Каждое утро в 9:00 буду присылать тебе руну дня.",
-        reply_markup=_bot.MAIN_KEYBOARD,
+        reply_markup=_bot.main_keyboard_for(update.effective_user.id),
     )
 
 
@@ -316,10 +316,10 @@ async def unsubscribe_command(update, context: ContextTypes.DEFAULT_TYPE) -> Non
     except DatabaseError:
         await update.effective_message.reply_text(
             "Не получилось отключить рассылку. Попробуй позже.",
-            reply_markup=_bot.MAIN_KEYBOARD,
+            reply_markup=_bot.main_keyboard_for(update.effective_user.id),
         )
         return
     await update.effective_message.reply_text(
         "Рассылка отключена. Чтобы снова получать руну дня — напиши /subscribe.",
-        reply_markup=_bot.MAIN_KEYBOARD,
+        reply_markup=_bot.main_keyboard_for(update.effective_user.id),
     )

@@ -16,7 +16,7 @@ async def history_command(update, context):
     if not history:
         await update.effective_message.reply_text(
             "Ты ещё не открывал руну дня. Нажми 🌞 Руна дня — начнём.",
-            reply_markup=_bot.MAIN_KEYBOARD,
+            reply_markup=_bot.main_keyboard_for(user_id),
         )
         return
 
@@ -39,4 +39,4 @@ async def history_command(update, context):
         f"{streak_line}"
     )
 
-    await update.effective_message.reply_text(text, parse_mode="HTML", reply_markup=_bot.MAIN_KEYBOARD)
+    await update.effective_message.reply_text(text, parse_mode="HTML", reply_markup=_bot.main_keyboard_for(user_id))

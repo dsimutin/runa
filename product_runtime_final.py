@@ -86,7 +86,12 @@ def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     except Exception:
         base.append(["💠 Премиум", "⚙️ Настройки"])
     base.append(["📜 Значения рун", "ℹ️ Помощь"])
-    return ReplyKeyboardMarkup(base, resize_keyboard=True)
+    return ReplyKeyboardMarkup(base, resize_keyboard=True, is_persistent=True)
+
+
+# bot.py owns the common sending helper; give it the product-aware keyboard
+# factory once this module is loaded, avoiding stale reduced keyboards.
+bot.MAIN_KEYBOARD_FACTORY = build_main_keyboard
 ALLOWED_OPERATOR_USERNAMES = {"mrgrief", "richstewardess"}
 PREMIUM_DIR_CANDIDATES = ["premium", "Premium", "Премиум", "премиум"]
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"]

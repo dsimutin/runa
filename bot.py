@@ -120,6 +120,14 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["🌞 Руна дня", "❓ Да / Нет"], ["🔮 Расклад", "ℹ️ Помощь"]],
     resize_keyboard=True,
 )
+MAIN_KEYBOARD_FACTORY = None
+
+
+def main_keyboard_for(user_id: int) -> ReplyKeyboardMarkup:
+    """Return the current product keyboard for the message recipient."""
+    if callable(MAIN_KEYBOARD_FACTORY):
+        return MAIN_KEYBOARD_FACTORY(user_id)
+    return MAIN_KEYBOARD
 
 # Shown after a rune reading so the phone keyboard doesn't pop up (ReplyKeyboardRemove triggers it)
 READING_KEYBOARD = ReplyKeyboardMarkup([["↩ Меню"]], resize_keyboard=True)
@@ -360,7 +368,7 @@ async def send_private_or_group(
 
     parse_mode = "HTML" if wants_html(text) else None
     plain_text = strip_html(text)
-    reply_markup = READING_KEYBOARD if reading_mode else MAIN_KEYBOARD
+    reply_markup = READING_KEYBOARD if reading_mode else main_keyboard_for(user.id)
 
     async def show_shuffle(send_message) -> None:
         """Brief anticipation without replacing or re-sending the final card."""
@@ -491,7 +499,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.effective_message.reply_text("Что-то пошло не так. Попробуй ещё раз через минуту.")
         return
 
-    await update.effective_message.reply_text(f"✦ {name}, твоя колода уже выбрана.\n\nС чего начнём?", reply_markup=MAIN_KEYBOARD)
+    await update.effective_message.reply_text(f"✦ {name}, твоя колода уже выбрана.\n\nС чего начнём?", reply_markup=main_keyboard_for(update.effective_user.id))
 
 
 async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -525,7 +533,7 @@ async def onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "🔮 Расклад — прошлое / настоящее / будущее\n\n"
                 "Выбери действие ниже"
             ),
-            reply_markup=MAIN_KEYBOARD,
+            reply_markup=main_keyboard_for(update.effective_user.id),
         )
         return
 
@@ -627,7 +635,7 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     question = " ".join(context.args).strip()
     if not question:
         context.user_data["state"] = STATE_WAITING_ASK
-        await update.effective_message.reply_text("❓ Напиши вопрос — отвечу Да / Нет одной картой.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
+        await update.effective_message.reply_text("❓ Напиши вопрос — отвечу Да / Нет одной картой.", reply_markup=main_keyboard_for(update.effective_user.id) if is_private(update) else None)
         return
 
     from product_runtime import product_send_one_rune_answer
@@ -642,7 +650,7 @@ async def rasklad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     question = " ".join(context.args).strip()
     if not question:
         context.user_data["state"] = STATE_WAITING_RASKLAD
-        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты: прошлое / настоящее / будущее.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
+        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты: прошлое / настоящее / будущее.", reply_markup=main_keyboard_for(update.effective_user.id) if is_private(update) else None)
         return
 
     await send_rasklad(update, context, question)
@@ -706,7 +714,7 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if text == "↩ Меню":
-        await update.effective_message.reply_text("Меню открыто.", reply_markup=MAIN_KEYBOARD)
+        await update.effective_message.reply_text("Меню открыто.", reply_markup=main_keyboard_for(update.effective_user.id))
         return
 
     if text == "🌞 Руна дня":
@@ -715,12 +723,12 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if text in {"❓ Вопрос", "❓ Задать вопрос", "❓ Да / Нет"}:
         context.user_data["state"] = STATE_WAITING_ASK
-        await update.effective_message.reply_text("❓ Напиши вопрос — отвечу Да / Нет одной картой.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
+        await update.effective_message.reply_text("❓ Напиши вопрос — отвечу Да / Нет одной картой.", reply_markup=main_keyboard_for(update.effective_user.id) if is_private(update) else None)
         return
 
     if text == "🔮 Расклад":
         context.user_data["state"] = STATE_WAITING_RASKLAD
-        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты: прошлое / настоящее / будущее.", reply_markup=MAIN_KEYBOARD if is_private(update) else None)
+        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты: прошлое / настоящее / будущее.", reply_markup=main_keyboard_for(update.effective_user.id) if is_private(update) else None)
         return
 
     if text == "ℹ️ Помощь":
@@ -741,7 +749,7 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     await update.effective_message.reply_text(
         "Выбери действие на клавиатуре. Или напиши /help, если потерялся.",
-        reply_markup=MAIN_KEYBOARD if is_private(update) else private_link_markup(context),
+        reply_markup=main_keyboard_for(update.effective_user.id) if is_private(update) else private_link_markup(context),
     )
 
 
@@ -754,7 +762,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         try:
             await message.reply_text(
                 "Что-то пошло не так. Попробуй ещё раз — обычно помогает 🙏",
-                reply_markup=MAIN_KEYBOARD,
+                reply_markup=main_keyboard_for(update.effective_user.id),
             )
         except Exception:
             pass

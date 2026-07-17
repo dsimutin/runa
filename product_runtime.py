@@ -278,9 +278,9 @@ async def product_start_command(update: Update, context: ContextTypes.DEFAULT_TY
             return
     except bot.DatabaseError:
         bot.logger.exception("Failed to start onboarding")
-        await update.effective_message.reply_text("Не получилось настроить профиль. Попробуй позже.", reply_markup=bot.MAIN_KEYBOARD)
+        await update.effective_message.reply_text("Не получилось настроить профиль. Попробуй позже.", reply_markup=bot.main_keyboard_for(update.effective_user.id))
         return
-    await update.effective_message.reply_text(f"{name}, меню готово.\n\nВыбери действие ниже.", reply_markup=bot.MAIN_KEYBOARD)
+    await update.effective_message.reply_text(f"{name}, меню готово.\n\nВыбери действие ниже.", reply_markup=bot.main_keyboard_for(update.effective_user.id))
 
 
 def build_daily_card_text(
@@ -460,7 +460,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await context.bot.send_message(
                 chat_id=update.effective_user.id,
                 text="💠 Премиум-колода доступна только с активной подпиской.\n\nНажми 💠 Премиум в меню, чтобы оформить.",
-                reply_markup=bot.MAIN_KEYBOARD,
+                reply_markup=bot.main_keyboard_for(update.effective_user.id),
             )
             return
     try:
@@ -469,7 +469,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.edit_message_text("Не получилось сменить колоду. Попробуй позже.")
         return
     await query.edit_message_text(f"Готово. Теперь используется колода: {PALETTE_NAMES.get(palette, palette)}.")
-    await context.bot.send_message(chat_id=update.effective_user.id, text="Меню обновлено.", reply_markup=bot.MAIN_KEYBOARD)
+    await context.bot.send_message(chat_id=update.effective_user.id, text="Меню обновлено.", reply_markup=bot.main_keyboard_for(update.effective_user.id))
 
 
 async def human_reading_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

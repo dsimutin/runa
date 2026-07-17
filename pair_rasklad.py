@@ -55,7 +55,7 @@ async def pair_rasklad_command(update, context):
             "/pair Анна\n"
             "/pair мой парень\n"
             "/pair подруга Маша",
-            reply_markup=_bot.MAIN_KEYBOARD,
+            reply_markup=_bot.main_keyboard_for(update.effective_user.id),
         )
         return
     partner_name = " ".join(context.args)

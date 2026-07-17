@@ -60,3 +60,13 @@ def test_private_admin_regular_message_is_not_intercepted():
     update = _private_reply_update(555, None)
     with patch.object(runtime.bot, "ADMIN_IDS", {555}):
         assert not runtime.is_operator_reply(update)
+
+
+def test_common_bot_sender_uses_product_keyboard_factory():
+    with patch("premium_subscription.is_premium_active", return_value=True), patch(
+        "premium_subscription.is_trial_active", return_value=False
+    ):
+        labels = {button.text for row in runtime.bot.main_keyboard_for(555).keyboard for button in row}
+    assert "🗓 Расклад на год" in labels
+    assert "👥 Взаимоотношения" in labels
+    assert "📜 Значения рун" in labels
