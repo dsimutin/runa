@@ -45,6 +45,11 @@ def get_premium_keyboard(user_id: int = 0) -> InlineKeyboardMarkup:
 
 def is_premium_active(user_id: int) -> bool:
     """Return True if paid premium OR trial is currently active."""
+    return get_premium_state(user_id)[0]
+
+
+def get_premium_state(user_id: int) -> tuple[bool, bool]:
+    """Return ``(active, trial)`` using one database round trip."""
     from database import get_premium_status
     status = get_premium_status(user_id)
 
@@ -52,7 +57,7 @@ def is_premium_active(user_id: int) -> bool:
     if expires_at:
         try:
             if date.fromisoformat(expires_at) > date.today():
-                return True
+                return True, False
         except ValueError:
             pass
 
@@ -60,34 +65,16 @@ def is_premium_active(user_id: int) -> bool:
     if trial_expires_at:
         try:
             if date.fromisoformat(trial_expires_at) > date.today():
-                return True
+                return True, True
         except ValueError:
             pass
 
-    return False
+    return False, False
 
 
 def is_trial_active(user_id: int) -> bool:
     """Return True if the user is on a trial (not paid premium)."""
-    from database import get_premium_status
-    status = get_premium_status(user_id)
-
-    expires_at = status.get("expires_at")
-    if expires_at:
-        try:
-            if date.fromisoformat(expires_at) > date.today():
-                return False
-        except ValueError:
-            pass
-
-    trial_expires_at = status.get("trial_expires_at")
-    if trial_expires_at:
-        try:
-            return date.fromisoformat(trial_expires_at) > date.today()
-        except ValueError:
-            pass
-
-    return False
+    return get_premium_state(user_id)[1]
 
 
 def is_trial_used(user_id: int) -> bool:

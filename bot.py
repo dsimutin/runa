@@ -830,16 +830,31 @@ async def _run_webhook_with_health(app: Application) -> None:
 
     async with app:
         await app.start()
+        warmup_task = None
+        warmup = app.bot_data.get("startup_warmup")
+        if warmup:
+            warmup_task = asyncio.create_task(warmup())
         if WEBHOOK_URL:
-            await app.bot.set_webhook(
-                url=f"{WEBHOOK_URL}/{WEBHOOK_PATH}",
-                allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True,
-            )
-            logger.info("Webhook set. Starting uvicorn with /health on :%s", PORT)
+            async def refresh_webhook() -> None:
+                try:
+                    await app.bot.set_webhook(
+                        url=f"{WEBHOOK_URL}/{WEBHOOK_PATH}",
+                        allowed_updates=Update.ALL_TYPES,
+                        drop_pending_updates=True,
+                    )
+                    logger.info("Webhook refreshed in background")
+                except Exception:
+                    logger.exception("Background webhook refresh failed")
+
+            webhook_task = asyncio.create_task(refresh_webhook())
+            logger.info("Starting uvicorn immediately; refreshing webhook in background")
         else:
+            webhook_task = None
             logger.info("Webhook URL is not configured yet; serving /health on :%s", PORT)
         await server.serve()
+        for task in (warmup_task, webhook_task):
+            if task and not task.done():
+                task.cancel()
         await app.stop()
 
 

@@ -70,14 +70,15 @@ def _kb(update: Update) -> ReplyKeyboardMarkup:
 
 def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     """Возвращает клавиатуру с учётом premium статуса пользователя."""
-    from premium_subscription import is_premium_active, is_trial_active
+    from premium_subscription import get_premium_state
     base = [
         ["🌞 Руна дня", "❓ Вопрос (да/нет)"],
         ["🔮 Расклад", "🕯 Личный расклад"],
     ]
     try:
-        if is_premium_active(user_id):
-            if is_trial_active(user_id):
+        premium_active, trial_active = get_premium_state(user_id)
+        if premium_active:
+            if trial_active:
                 base.append(["🗓 Расклад на год", "💠 Премиум"])
             else:
                 base.append(["🗓 Расклад на год", "👥 Взаимоотношения"])
@@ -1243,24 +1244,21 @@ async def show_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
-async def _keep_alive_ping(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Ping own /health endpoint every 10 min so Render free tier doesn't spin down."""
-    if not bot.WEBHOOK_URL:
-        return
-    import httpx
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.get(f"{bot.WEBHOOK_URL}/health")
-    except Exception:
-        pass
-
-
 def final_build_application():
     if not bot.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Add it in environment variables.")
-    bot.init_db()
-    init_support_db()
     app = bot.Application.builder().token(bot.BOT_TOKEN).post_init(bot.post_init).build()
+
+    async def warm_databases() -> None:
+        """Warm Neon after the HTTP server starts, not on the cold-start path."""
+        import asyncio
+        try:
+            await asyncio.to_thread(bot.init_db)
+            await asyncio.to_thread(init_support_db)
+        except Exception:
+            bot.logger.exception("Background database warmup failed")
+
+    app.bot_data["startup_warmup"] = warm_databases
     app.add_handler(CommandHandler("start", final_start_command))
     app.add_handler(CommandHandler("help", product_runtime.bot.help_command))
     app.add_handler(CommandHandler("profile", product_runtime.bot.profile_command))
@@ -1310,10 +1308,6 @@ def final_build_application():
     # Monthly rune — runs daily at 07:00 UTC, acts only on day==1
     monthly_time = dtime(7, 0, tzinfo=timezone.utc)
     app.job_queue.run_daily(send_monthly_rune, time=monthly_time, name="monthly_rune")
-    # Keep Render free tier awake: ping /health every 10 minutes
-    # Without this, Render spins down after 15 min idle → first webhook times out
-    from datetime import timedelta
-    app.job_queue.run_repeating(_keep_alive_ping, interval=timedelta(minutes=10), first=60, name="keep_alive")
     return app
 
 

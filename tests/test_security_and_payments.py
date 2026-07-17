@@ -63,10 +63,9 @@ def test_private_admin_regular_message_is_not_intercepted():
 
 
 def test_common_bot_sender_uses_product_keyboard_factory():
-    with patch("premium_subscription.is_premium_active", return_value=True), patch(
-        "premium_subscription.is_trial_active", return_value=False
-    ):
+    with patch("premium_subscription.get_premium_state", return_value=(True, False)) as state:
         labels = {button.text for row in runtime.bot.main_keyboard_for(555).keyboard for button in row}
+    state.assert_called_once_with(555)
     assert "🗓 Расклад на год" in labels
     assert "👥 Взаимоотношения" in labels
     assert "📜 Значения рун" in labels
