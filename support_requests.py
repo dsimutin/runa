@@ -1,4 +1,5 @@
 from datetime import datetime
+import threading
 from typing import Any, Dict, List
 
 import psycopg2
@@ -10,32 +11,43 @@ class SupportRequestError(Exception):
     pass
 
 
+_support_schema_initialized = False
+_support_schema_lock = threading.Lock()
+
+
 def _ensure_support_schema(conn) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS human_requests (
-                id               BIGSERIAL PRIMARY KEY,
-                user_id          BIGINT    NOT NULL,
-                question         TEXT      NOT NULL,
-                palette          TEXT      NOT NULL DEFAULT 'light',
-                status           TEXT      NOT NULL DEFAULT 'new',
-                operator_id      BIGINT,
-                operator_username TEXT,
-                created_at       TEXT      NOT NULL,
-                updated_at       TEXT      NOT NULL
+    global _support_schema_initialized
+    if _support_schema_initialized:
+        return
+    with _support_schema_lock:
+        if _support_schema_initialized:
+            return
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS human_requests (
+                    id               BIGSERIAL PRIMARY KEY,
+                    user_id          BIGINT    NOT NULL,
+                    question         TEXT      NOT NULL,
+                    palette          TEXT      NOT NULL DEFAULT 'light',
+                    status           TEXT      NOT NULL DEFAULT 'new',
+                    operator_id      BIGINT,
+                    operator_username TEXT,
+                    created_at       TEXT      NOT NULL,
+                    updated_at       TEXT      NOT NULL
+                )
+                """
             )
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS operators (
-                user_id      BIGINT PRIMARY KEY,
-                username     TEXT   NOT NULL,
-                registered_at TEXT  NOT NULL
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS operators (
+                    user_id      BIGINT PRIMARY KEY,
+                    username     TEXT   NOT NULL,
+                    registered_at TEXT  NOT NULL
+                )
+                """
             )
-            """
-        )
+        _support_schema_initialized = True
 
 
 def init_support_db() -> None:

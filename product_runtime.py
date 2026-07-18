@@ -228,7 +228,12 @@ async def product_runa_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     from rune_collage import build_single_rune_card
     from rune_text_repository import orientation_label
-    image_path = build_single_rune_card(image_path, palette, orientation_label(orientation, main["key"]))
+    image_path = await asyncio.to_thread(
+        build_single_rune_card,
+        image_path,
+        palette,
+        orientation_label(orientation, main["key"]),
+    )
     try:
         from database import get_streak
         streak = await asyncio.to_thread(get_streak, update.effective_user.id)
@@ -280,7 +285,12 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
         return
     from rune_text_repository import detect_question_sphere, get_sphere_answer, orientation_label
     from rune_collage import build_single_rune_card
-    image_path = build_single_rune_card(image_path, palette, orientation_label(orientation, rune["key"]))
+    image_path = await asyncio.to_thread(
+        build_single_rune_card,
+        image_path,
+        palette,
+        orientation_label(orientation, rune["key"]),
+    )
     sphere = detect_question_sphere(question)
     try:
         sphere_data = get_sphere_answer(rune["key"], palette, sphere, answer_kind)

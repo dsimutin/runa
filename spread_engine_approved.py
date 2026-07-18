@@ -1,3 +1,4 @@
+import asyncio
 from html import escape
 import re
 from typing import Any
@@ -295,7 +296,9 @@ async def send_approved_rasklad(update, context, question: str) -> None:
     text_seconds = time.perf_counter() - text_started_at
     collage_started_at = time.perf_counter()
     try:
-        image_path = build_spread_collage(image_paths, deck, collage_labels)
+        image_path = await asyncio.to_thread(
+            build_spread_collage, image_paths, deck, collage_labels
+        )
     except Exception:
         bot.logger.exception("Failed to build three-rune collage; sending text fallback")
         image_path = None

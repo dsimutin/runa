@@ -384,9 +384,11 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     palette = bot.get_user_palette(update)
     try:
-        init_support_db()
-        request_id = create_request(user.id, text, palette)
-        registered_operator_ids = list_operator_ids(ALLOWED_OPERATOR_USERNAMES)
+        await asyncio.to_thread(init_support_db)
+        request_id = await asyncio.to_thread(create_request, user.id, text, palette)
+        registered_operator_ids = await asyncio.to_thread(
+            list_operator_ids, ALLOWED_OPERATOR_USERNAMES
+        )
     except SupportRequestError:
         bot.logger.exception("Failed to create human reading request")
         await bot.send_private_or_group(update, context, "Не получилось создать заявку. Попробуй чуть позже.")
@@ -398,7 +400,7 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
     is_free = context.user_data.pop("human_reading_is_free", False)
     context.user_data.pop("human_reading_payment_pending", None)
     if is_free:
-        use_free_reading(user.id)
+        await asyncio.to_thread(use_free_reading, user.id)
         free_left = get_free_readings_left(user.id)
         payment_line = f"💠 Премиум — бесплатный расклад (осталось после этого: {free_left})"
     elif payment_claimed:
@@ -442,7 +444,7 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
         await message.reply_text("Чтобы ответ ушёл пользователю, нажми «Ответить» на сообщение заявки и пришли текст или фото.")
         return
     try:
-        request = get_request(request_id)
+        request = await asyncio.to_thread(get_request, request_id)
     except SupportRequestError:
         bot.logger.exception("Failed to load request from operator reply")
         await message.reply_text("Не получилось найти заявку.")
@@ -481,7 +483,7 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await message.reply_text("Поддерживаются текст, фото и документ. Пришли реплаем на заявку.")
             return
-        close_request(request_id)
+        await asyncio.to_thread(close_request, request_id)
     except (TelegramError, SupportRequestError):
         bot.logger.exception("Failed to send operator reply to user")
         await message.reply_text("Не получилось отправить ответ пользователю.")
@@ -652,7 +654,7 @@ async def activatepremium_command(update: Update, context: ContextTypes.DEFAULT_
         return
     target_id = int(context.args[0])
     try:
-        activate_premium(target_id)
+        await asyncio.to_thread(activate_premium, target_id)
     except Exception:
         bot.logger.exception("Failed to activate premium for user_id=%s", target_id)
         await update.effective_message.reply_text("Не удалось активировать. Проверь user_id.")
@@ -712,7 +714,7 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     request_id = int(context.args[0])
     answer_text = " ".join(context.args[1:]).strip()
     try:
-        request = get_request(request_id)
+        request = await asyncio.to_thread(get_request, request_id)
     except SupportRequestError:
         await update.effective_message.reply_text("Не получилось найти заявку.")
         return
@@ -724,7 +726,7 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     try:
         await context.bot.send_message(chat_id=request["user_id"], text=answer_text, reply_markup=build_main_keyboard(request["user_id"]))
-        close_request(request_id)
+        await asyncio.to_thread(close_request, request_id)
     except (TelegramError, SupportRequestError):
         await update.effective_message.reply_text("Не получилось отправить ответ пользователю.")
         return
@@ -760,7 +762,7 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     name = bot.user_name(update)
     if is_premium_active(user.id):
         from database import get_premium_status
-        status = get_premium_status(user.id)
+        status = await asyncio.to_thread(get_premium_status, user.id)
         expires_str = status.get("expires_at") or status.get("trial_expires_at", "")
         on_trial = is_trial_active(user.id)
         try:
@@ -818,7 +820,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
         await query.answer()
         try:
-            expires_at = activate_trial(user.id)
+            expires_at = await asyncio.to_thread(activate_trial, user.id)
         except Exception:
             bot.logger.exception("Failed to activate trial for user_id=%s", user.id)
             await context.bot.send_message(
@@ -996,7 +998,7 @@ def _valid_premium_payment(payload: str, currency: str, total_amount: int) -> bo
 async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     payment = update.message.successful_payment
     if _valid_premium_payment(payment.invoice_payload, payment.currency, payment.total_amount):
-        activate_premium(update.effective_user.id)
+        await asyncio.to_thread(activate_premium, update.effective_user.id)
         await update.message.reply_text(
             "💠 <b>Премиум активирован на месяц!</b>\n\n"
             "✅ Доступно:\n"
@@ -1027,7 +1029,9 @@ async def operator_action_callback(update: Update, context: ContextTypes.DEFAULT
         request_id = int(data.split(":")[2])
         op = update.effective_user
         try:
-            claim_request(request_id, op.id, op.username or str(op.id))
+            await asyncio.to_thread(
+                claim_request, request_id, op.id, op.username or str(op.id)
+            )
             await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Взято в работу", callback_data="op:noop")]
             ]))
@@ -1042,8 +1046,8 @@ async def operator_action_callback(update: Update, context: ContextTypes.DEFAULT
     if data.startswith("op:decline:"):
         request_id = int(data.split(":")[2])
         try:
-            req = get_request(request_id)
-            close_request(request_id)
+            req = await asyncio.to_thread(get_request, request_id)
+            await asyncio.to_thread(close_request, request_id)
             if req:
                 await context.bot.send_message(
                     chat_id=req["user_id"],
@@ -1064,7 +1068,7 @@ async def operator_action_callback(update: Update, context: ContextTypes.DEFAULT
     if data.startswith("op:premium_confirm:"):
         target_id = int(data.split(":")[2])
         try:
-            activate_premium(target_id)
+            await asyncio.to_thread(activate_premium, target_id)
             await context.bot.send_message(
                 chat_id=target_id,
                 text="💠 <b>Премиум активирован!</b>\n\nОплата подтверждена.",
@@ -1138,7 +1142,7 @@ async def weekly_day_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         day = int(query.data.split(":")[1])
         from database import set_weekly_question_day
-        set_weekly_question_day(update.effective_user.id, day)
+        await asyncio.to_thread(set_weekly_question_day, update.effective_user.id, day)
     except Exception:
         bot.logger.exception("Failed to set weekly_question_day")
         await query.edit_message_text("Не получилось сохранить. Попробуй ещё раз.")

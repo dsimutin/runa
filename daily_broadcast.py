@@ -53,7 +53,7 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Job callback: send today's rune to all subscribed users."""
     today = date.today().isoformat()
     try:
-        users = get_broadcast_users()
+        users = await asyncio.to_thread(get_broadcast_users)
     except DatabaseError:
         logger.exception("Failed to load broadcast users")
         return
@@ -69,8 +69,8 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
         palette = user["palette"] or "light"
 
         try:
-            rune_name, orientation = get_or_create_daily_card(
-                user_id, today, RUNES
+            rune_name, orientation = await asyncio.to_thread(
+                get_or_create_daily_card, user_id, today, RUNES
             )
             rune = get_rune_by_name(rune_name)
             image_path = _bot.get_rune_image_path(rune, palette)
@@ -83,9 +83,11 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
         position_label = orientation_label(orientation, rune["key"])
         if image_path:
             from rune_collage import build_single_rune_card
-            image_path = build_single_rune_card(image_path, palette, position_label)
+            image_path = await asyncio.to_thread(
+                build_single_rune_card, image_path, palette, position_label
+            )
         try:
-            streak = get_streak(user_id)
+            streak = await asyncio.to_thread(get_streak, user_id)
         except Exception:
             streak = 0
         from product_runtime import build_daily_card_text
@@ -117,7 +119,7 @@ async def send_daily_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
             # User blocked the bot — silently disable their broadcast
             logger.info("User %s blocked bot, disabling broadcast", user_id)
             try:
-                set_broadcast_enabled(user_id, False)
+                await asyncio.to_thread(set_broadcast_enabled, user_id, False)
             except DatabaseError:
                 pass
             blocked += 1
@@ -139,7 +141,6 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
     Runs daily; each user has a preferred weekday (weekly_question_day, 0=Mon…6=Sun).
     Only sends to users whose preferred day matches today.
     """
-    from database import get_premium_status
     from datetime import date as _date
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     from runes_data import RUNES
@@ -150,7 +151,7 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
     week = today.isocalendar()[1]
 
     try:
-        users = get_broadcast_users()
+        users = await asyncio.to_thread(get_broadcast_users)
     except DatabaseError:
         logger.exception("Failed to load broadcast users for weekly question")
         return
@@ -163,8 +164,7 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
     eligible = []
     for user in users:
         try:
-            status = get_premium_status(user["user_id"])
-            expires_at = status.get("expires_at") or ""
+            expires_at = user.get("premium_expires_at") or ""
             if not (expires_at and expires_at > today_str):
                 continue
             preferred_day = user.get("weekly_question_day", 6)
@@ -212,7 +212,7 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
             await _finish_delivery("weekly-question", today_str, user_id, True)
         except Forbidden:
             try:
-                set_broadcast_enabled(user_id, False)
+                await asyncio.to_thread(set_broadcast_enabled, user_id, False)
             except DatabaseError:
                 pass
             blocked += 1
@@ -230,7 +230,7 @@ async def send_premium_expiry_warnings(context: ContextTypes.DEFAULT_TYPE) -> No
     today = date.today()
     warn_dates = [(today + timedelta(days=d)).isoformat() for d in (1, 2, 3)]
     try:
-        rows = get_expiring_premium_users(warn_dates)
+        rows = await asyncio.to_thread(get_expiring_premium_users, warn_dates)
     except Exception:
         logger.exception("Failed to query expiring premium users")
         return
@@ -266,7 +266,7 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
     if today.day != 1:
         return  # Job runs daily, only acts on 1st
     try:
-        users = get_broadcast_users()
+        users = await asyncio.to_thread(get_broadcast_users)
     except DatabaseError:
         logger.exception("Failed to load users for monthly rune")
         return
@@ -332,7 +332,7 @@ async def subscribe_command(update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.effective_message:
         return
     try:
-        set_broadcast_enabled(update.effective_user.id, True)
+        await asyncio.to_thread(set_broadcast_enabled, update.effective_user.id, True)
     except DatabaseError:
         await update.effective_message.reply_text(
             "Не получилось включить рассылку. Попробуй позже.",
@@ -350,7 +350,7 @@ async def unsubscribe_command(update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not update.effective_user or not update.effective_message:
         return
     try:
-        set_broadcast_enabled(update.effective_user.id, False)
+        await asyncio.to_thread(set_broadcast_enabled, update.effective_user.id, False)
     except DatabaseError:
         await update.effective_message.reply_text(
             "Не получилось отключить рассылку. Попробуй позже.",

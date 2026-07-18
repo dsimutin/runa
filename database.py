@@ -5,6 +5,7 @@ import time
 import json
 from contextlib import contextmanager
 from typing import Any, Dict, List, Tuple
+from urllib.parse import quote
 
 import psycopg2
 import psycopg2.extras
@@ -49,6 +50,13 @@ def _conn_url() -> str:
         extra.append("keepalives_idle=10")
         extra.append("keepalives_interval=5")
         extra.append("keepalives_count=3")
+    if "options=" not in url:
+        # Bound server-side execution and lock waits. Normal queries finish in
+        # milliseconds; these limits only cut off pathological stalls.
+        extra.append(
+            "options="
+            + quote("-c statement_timeout=15000 -c lock_timeout=5000", safe="")
+        )
     if extra:
         sep = "&" if "?" in url else "?"
         url += sep + "&".join(extra)
@@ -774,7 +782,8 @@ def get_broadcast_users() -> List[Dict[str, Any]]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT user_id, preferred_name, palette, weekly_question_day
+                    SELECT user_id, preferred_name, palette, weekly_question_day,
+                           premium_expires_at
                     FROM users
                     WHERE palette IS NOT NULL AND broadcast_enabled = 1
                     """
@@ -786,6 +795,7 @@ def get_broadcast_users() -> List[Dict[str, Any]]:
                         "preferred_name": row[1],
                         "palette": row[2],
                         "weekly_question_day": row[3] if row[3] is not None else 6,
+                        "premium_expires_at": row[4],
                     }
                     for row in rows
                 ]

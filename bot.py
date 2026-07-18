@@ -476,7 +476,7 @@ async def send_private_or_group(
     *,
     image_path: str | None = None,
     reading_mode: bool = False,
-    show_shuffle: bool = True,
+    show_shuffle: bool = False,
 ) -> None:
     message = update.effective_message
     user = update.effective_user
@@ -488,19 +488,17 @@ async def send_private_or_group(
     reply_markup = READING_KEYBOARD if reading_mode else main_keyboard_for(user.id)
 
     async def show_shuffle(send_message) -> None:
-        """Brief anticipation without replacing or re-sending the final card."""
-        frames = (
-            "🔮 ᚠ · ᚱ · ᚨ  Перемешиваю руны…",
-            "🔮 ᚱ · ᚨ · ᚠ  Слушаю вопрос…",
-            "🔮 ᚨ · ᚠ · ᚱ  Руна выбрана",
-        )
+        """Show one progress message while the answer is prepared.
+
+        Timed edits looked animated, but added three Telegram API round trips
+        and almost a second of forced latency to every reading.
+        """
         loading = None
         try:
-            loading = await send_message(text=frames[0], reply_markup=ReplyKeyboardRemove())
-            for frame in frames[1:]:
-                await asyncio.sleep(0.32)
-                await loading.edit_text(frame)
-            await asyncio.sleep(0.28)
+            loading = await send_message(
+                text="🔮 Перемешиваю руны и готовлю ответ…",
+                reply_markup=ReplyKeyboardRemove(),
+            )
         except TelegramError:
             logger.debug("Rune shuffle animation unavailable", exc_info=True)
         finally:
@@ -812,7 +810,9 @@ async def send_rasklad(update: Update, context: ContextTypes.DEFAULT_TYPE, quest
         return
     from rune_collage import build_spread_collage
     position_labels = [orientation_label(orientation, rune["key"]) for rune, orientation in rune_draws]
-    image_path = build_spread_collage(image_paths, palette, position_labels)
+    image_path = await asyncio.to_thread(
+        build_spread_collage, image_paths, palette, position_labels
+    )
 
     try:
         from spread_engine_approved import build_unified_spread
@@ -1071,7 +1071,9 @@ async def _run_webhook_with_health(app: Application) -> None:
                     await app.bot.set_webhook(
                         url=f"{WEBHOOK_URL}/{WEBHOOK_PATH}",
                         allowed_updates=Update.ALL_TYPES,
-                        drop_pending_updates=True,
+                        # Database claims make retries idempotent; preserving
+                        # queued updates avoids losing messages during deploys.
+                        drop_pending_updates=False,
                     )
                     logger.info("Webhook refreshed in background")
                 except Exception:
