@@ -184,7 +184,7 @@ def test_yes_no_question_is_html_escaped():
         },
     )
     assert "&lt;Дима&gt;" in text
-    assert "Я &lt;прав?&gt;" in text
+    assert "Я &lt;прав?&gt;" not in text
     assert "Сфера:" not in text
 
 

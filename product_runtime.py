@@ -260,7 +260,6 @@ def product_yes_no_text(
         f"❓ <b>Ответ на вопрос</b>\n"
         f"{escape(name)}\n\n"
         f"ᚱ <b>{rune_name}</b>{position_line}\n\n"
-        f"<i>«{escape(question)}»</i>\n\n"
         f"🔎 <b>Что показывает руна</b>\n{escape(str(sphere_data['short_desc']))}\n\n"
         f"{answer_icon} <b>Ответ</b>\n{escape(str(sphere_data['answer']))}\n\n"
         f"<i>Это текущая тенденция, а не неизменный исход.</i>"

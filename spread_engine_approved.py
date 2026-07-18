@@ -140,7 +140,6 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
     from rune_text_repository import get_rasklad_text, orientation_label
     orientation_labels = [orientation_label(o, k) for k, o in zip(keys, orientations)]
     position_descriptions = orientation_labels
-    safe_question = escape(short_sentence(question, 120))
     position_keys = ("past", "present", "future")
     position_labels = ("Прошлое", "Настоящее", "Будущее")
     position_texts = []
@@ -154,8 +153,7 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
     header = "🔮 <b>Расклад на три руны</b>"
     person_line = f"\n<b>{escape(name)}</b>" if name else ""
     return (
-        f"{header}{person_line}\n\n❓ <b>Вопрос</b>\n<i>«{safe_question}»</i>\n\n"
-        f"{escape(intro_by_topic(topic))}\n\n"
+        f"{header}{person_line}\n\n{escape(intro_by_topic(topic))}\n\n"
         f"1️⃣ <b>Прошлое</b>\nᚱ <b>{escape(names[0])}</b>\n"
         f"<i>{position_descriptions[0]}</i>\n\n{first}\n\n"
         f"2️⃣ <b>Настоящее</b>\nᚱ <b>{escape(names[1])}</b>\n"

@@ -325,7 +325,7 @@ def format_one_rune_answer(
     answer_icon = "✅" if text_data['answer_label'] == "Да" else "🚫"
     rune_line = f"{rune['name']} · {orientation_text}" if orientation_text else rune['name']
     return (
-        f"❓ <b>Вопрос:</b> <i>{question}</i>\n\n"
+        f"❓ <b>Ответ на вопрос</b>\n\n"
         f"{rune_line}\n\n"
         f"{text_data['short_desc']}\n\n"
         f"{answer_icon} {text_data['answer']}"
