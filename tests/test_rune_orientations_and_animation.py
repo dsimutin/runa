@@ -143,7 +143,7 @@ def test_spread_uses_detected_sphere_and_is_split_from_the_beginning():
     ]
     pages = build_unified_spread_pages("Что происходит на работе?", draws, "light", "Дмитрий")
     assert len(pages) == 3
-    assert "🎯 <b>Сфера</b>\nРабота" in pages[0]
+    assert "Сфера" not in "\n".join(pages)
     assert "1️⃣ <b>Прошлое" in pages[0]
     assert "2️⃣ <b>Настоящее" in pages[1]
     assert "3️⃣ <b>Будущее" in pages[2]

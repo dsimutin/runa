@@ -153,11 +153,8 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
     finish = escape(final_text(topic, groups[2]))
     header = "🔮 <b>Расклад на три руны</b>"
     person_line = f"\n<b>{escape(name)}</b>" if name else ""
-    from rune_text_repository import SPHERE_LABELS, detect_question_sphere
-    sphere_label = escape(SPHERE_LABELS[detect_question_sphere(question)])
     return (
         f"{header}{person_line}\n\n❓ <b>Вопрос</b>\n<i>«{safe_question}»</i>\n\n"
-        f"🎯 <b>Сфера</b>\n{sphere_label}\n\n"
         f"{escape(intro_by_topic(topic))}\n\n"
         f"1️⃣ <b>Прошлое</b>\n{escape(names[0])} · {position_descriptions[0]}\n{first}\n\n"
         f"2️⃣ <b>Настоящее</b>\n{escape(names[1])} · {position_descriptions[1]}\n{second}\n\n"

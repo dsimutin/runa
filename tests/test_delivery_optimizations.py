@@ -207,3 +207,10 @@ def test_reading_path_has_no_forced_animation_delay_and_offloads_images():
 
     spread_source = Path(spread_page_callback.__code__.co_filename).read_text(encoding="utf-8")
     assert "await asyncio.to_thread(\n            build_spread_collage" in spread_source
+
+
+def test_internal_question_sphere_is_never_shown_in_readings():
+    product_source = Path(product_runtime.__file__).read_text(encoding="utf-8")
+    spread_source = Path(spread_page_callback.__code__.co_filename).read_text(encoding="utf-8")
+    assert '<b>Сфера</b>' not in product_source
+    assert '<b>Сфера</b>' not in spread_source
