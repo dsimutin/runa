@@ -253,12 +253,12 @@ def product_yes_no_text(
     sphere_data: dict,
 ) -> str:
     """Format a one-rune answer with the same hierarchy as other readings."""
+    del name  # Kept in the signature for compatibility; the result needs no repeated addressee.
     answer_icon = {"Да": "✅", "Нет": "🚫"}.get(sphere_data["answer_label"], "◻️")
     rune_name = escape(str(rune["name"]))
     position_line = f"\n<i>{escape(orientation_text)}</i>" if orientation_text else ""
     return (
-        f"❓ <b>Ответ на вопрос</b>\n"
-        f"{escape(name)}\n\n"
+        f"🔮 <b>Ответ руны</b>\n\n"
         f"ᚱ <b>{rune_name}</b>{position_line}\n\n"
         f"🔎 <b>Что показывает руна</b>\n{escape(str(sphere_data['short_desc']))}\n\n"
         f"{answer_icon} <b>Ответ</b>\n{escape(str(sphere_data['answer']))}\n\n"

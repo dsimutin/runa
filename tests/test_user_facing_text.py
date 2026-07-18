@@ -183,7 +183,7 @@ def test_yes_no_question_is_html_escaped():
             "answer": "Да.",
         },
     )
-    assert "&lt;Дима&gt;" in text
+    assert "&lt;Дима&gt;" not in text
     assert "Я &lt;прав?&gt;" not in text
     assert "Сфера:" not in text
 
@@ -226,7 +226,9 @@ def test_yes_no_answer_uses_consistent_sections():
             "answer": "Да. Можно действовать.",
         },
     )
-    assert text.startswith("❓ <b>Ответ на вопрос</b>")
+    assert text.startswith("🔮 <b>Ответ руны</b>")
+    assert "Дмитрий" not in text
+    assert "❓" not in text
     assert "🔎 <b>Что показывает руна</b>" in text
     assert "✅ <b>Ответ</b>" in text
 
