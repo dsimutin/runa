@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes
 import bot
 from database import set_user_palette
 from human_reading import HUMAN_READING_BUTTON, HUMAN_READING_TEXT
+from reading_format import reading_title, rune_block
 from rune_states import ALT_RATE, alt_meaning
 from runes_data import RUNES, get_rune_by_name
 from runes_interpretations import get_rune_day_text
@@ -106,14 +107,15 @@ def onboarding_result_text(palette: str) -> str:
 
 
 def product_rune_day_full_text(name: str, main: dict, palette: str) -> str:
+    del name  # The addressee is already clear from the private chat.
     day = get_rune_day_text(main["key"])
     palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
-    header = f"{palette_icon} <b>{name}, руна дня — {main['name']}</b>"
+    header = reading_title(palette_icon, "Руна дня") + "\n" + rune_block(main["name"])
     if palette == "premium":
         premium_data = bot.rune_text(main, "premium")
         archetype = (premium_data.get("archetype") or "").rstrip(".")
         if archetype:
-            header = f"{palette_icon} <b>{name}, руна дня — {main['name']} · {archetype}</b>"
+            header = reading_title(palette_icon, "Руна дня") + "\n" + rune_block(main["name"]) + f"\n<i>{escape(archetype)}</i>"
     parts = [header]
     if day.get("background"):
         parts.append(f"<b>На что обратить внимание сегодня</b>\n{day['background']}")
@@ -195,11 +197,10 @@ def build_daily_card_text(
     else:
         streak_line = ""
 
+    del name  # Do not repeat the user's name inside every personal result.
     return (
-        f"🌞 <b>Руна дня</b>\n"
-        f"{escape(name)}\n\n"
-        f"ᚱ <b>{escape(str(rune['name']))}</b>\n"
-        f"<i>{escape(position)}</i>\n\n"
+        f"{reading_title('🌞', 'Руна дня')}\n\n"
+        f"{rune_block(rune['name'], position)}\n\n"
         f"🔎 <b>Основной смысл</b>\n{escape(meaning)}\n\n"
         f"❔ <b>Вопрос для размышления</b>\n{escape(reflection)}\n\n"
         f"🧭 <b>Ориентир на день</b>\n{escape(advice)}"
@@ -255,11 +256,10 @@ def product_yes_no_text(
     """Format a one-rune answer with the same hierarchy as other readings."""
     del name  # Kept in the signature for compatibility; the result needs no repeated addressee.
     answer_icon = {"Да": "✅", "Нет": "🚫"}.get(sphere_data["answer_label"], "◻️")
-    rune_name = escape(str(rune["name"]))
-    position_line = f"\n<i>{escape(orientation_text)}</i>" if orientation_text else ""
+    rune_name = str(rune["name"])
     return (
-        f"🔮 <b>Ответ руны</b>\n\n"
-        f"ᚱ <b>{rune_name}</b>{position_line}\n\n"
+        f"{reading_title('🔮', 'Ответ руны')}\n\n"
+        f"{rune_block(rune_name, orientation_text)}\n\n"
         f"🔎 <b>Что показывает руна</b>\n{escape(str(sphere_data['short_desc']))}\n\n"
         f"{answer_icon} <b>Ответ</b>\n{escape(str(sphere_data['answer']))}\n\n"
         f"<i>Это текущая тенденция, а не неизменный исход.</i>"

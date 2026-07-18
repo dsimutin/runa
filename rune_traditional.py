@@ -12,6 +12,8 @@ meaning (Old Norse/Old English source name, common attested associations).
 Deliberately factual and brief — this is reference material, not a reading.
 """
 
+from reading_format import reading_title, rune_block
+
 from typing import Dict
 
 TRADITIONAL_MEANINGS: Dict[str, str] = {
@@ -173,5 +175,9 @@ def get_traditional_text(rune_key: str, rune_name: str) -> str:
     key = (rune_key or "").strip().lower()
     body = TRADITIONAL_MEANINGS.get(key)
     if not body:
-        return f"📜 <b>{rune_name}</b>\n\nТрадиционное описание для этой руны пока не добавлено."
-    return f"📜 <b>{rune_name}</b> — традиционное значение\n\n{body}"
+        return (
+            f"{reading_title('📜', 'Традиционное значение')}\n\n"
+            f"{rune_block(rune_name)}\n\n"
+            "Описание для этой руны пока не добавлено."
+        )
+    return f"{reading_title('📜', 'Традиционное значение')}\n\n{rune_block(rune_name)}\n\n{body}"

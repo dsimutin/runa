@@ -161,6 +161,28 @@ def test_every_rune_deck_orientation_and_position_has_safe_spread_text():
                     assert get_rasklad_text(rune["key"], palette, orientation, position)["text"].strip()
 
 
+def test_every_daily_reading_fits_photo_caption_and_uses_shared_hierarchy():
+    from product_runtime import build_daily_card_text
+
+    for rune in RUNES:
+        orientations = ("up", "rev") if is_reversible(rune["key"]) else ("up",)
+        for palette in ("light", "dark", "premium"):
+            for orientation in orientations:
+                text = build_daily_card_text(
+                    "Имя не должно попасть в ответ",
+                    palette,
+                    rune,
+                    orientation,
+                    "2026-07-18",
+                    12,
+                )
+                assert len(text) <= 1024
+                assert "Имя не должно попасть в ответ" not in text
+                assert text.startswith("🌞 <b>Руна дня</b>\n\nᚱ <b>")
+                assert "🔎 <b>Основной смысл</b>" in text
+                assert "🧭 <b>Ориентир на день</b>" in text
+
+
 def test_all_sphere_pages_fit_telegram_message_limit():
     draws = [
         ({"key": "fehu", "name": "Феху"}, "up"),

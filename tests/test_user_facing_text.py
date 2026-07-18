@@ -204,8 +204,9 @@ def test_daily_card_uses_consistent_sections_without_random_headlines():
         "Дмитрий", "light", {"key": "dagaz", "name": "Дагаз"}, "up", "2026-07-18", 2
     )
     assert text.startswith(
-        "🌞 <b>Руна дня</b>\nДмитрий\n\nᚱ <b>Дагаз</b>\n<i>необратимая</i>"
+        "🌞 <b>Руна дня</b>\n\nᚱ <b>Дагаз</b>\n<i>необратимая</i>"
     )
+    assert "Дмитрий" not in text
     assert "🔎 <b>Основной смысл</b>" in text
     assert "❔ <b>Вопрос для размышления</b>" in text
     assert "🧭 <b>Ориентир на день</b>" in text
@@ -231,6 +232,26 @@ def test_yes_no_answer_uses_consistent_sections():
     assert "❓" not in text
     assert "🔎 <b>Что показывает руна</b>" in text
     assert "✅ <b>Ответ</b>" in text
+
+
+def test_three_rune_result_does_not_repeat_user_name_or_question():
+    from spread_engine_approved import build_unified_spread
+
+    text = build_unified_spread(
+        "Когда он напишет?",
+        [
+            ({"key": "fehu", "name": "Феху"}, "up"),
+            ({"key": "uruz", "name": "Уруз"}, "rev"),
+            ({"key": "dagaz", "name": "Дагаз"}, "up"),
+        ],
+        "light",
+        "Дмитрий",
+    )
+    assert text.startswith("🔮 <b>Расклад на три руны</b>")
+    assert "Дмитрий" not in text
+    assert "Когда он напишет?" not in text
+    assert "ᚱ <b>Феху</b>" in text
+    assert "<i>прямое</i>" in text
 
 
 def test_reading_uses_compact_inline_menu_instead_of_large_reply_keyboard():

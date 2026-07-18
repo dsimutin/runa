@@ -12,6 +12,8 @@ from datetime import date, time, timezone, timedelta
 from telegram.error import Forbidden, TelegramError
 from telegram.ext import ContextTypes
 
+from reading_format import reading_title, rune_block
+
 import bot as _bot
 from database import (
     DatabaseError,
@@ -183,8 +185,9 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
         palette = user.get("palette") or "light"
         image_path = _bot.get_rune_image_path(weekly_rune, palette)
         text = (
-            f"🪬 <b>Руна недели — {weekly_rune['name']}</b>\n\n"
-            f"<b>Вопрос для рефлексии:</b>\n{question}\n\n"
+            f"{reading_title('🪬', 'Руна недели')}\n\n"
+            f"{rune_block(weekly_rune['name'])}\n\n"
+            f"❔ <b>Вопрос для размышления</b>\n{question}\n\n"
             f"<i>Можно просто подержать вопрос в голове. "
             f"Или сразу спросить руны — кнопка ниже.</i>"
         )
@@ -289,7 +292,6 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
         delivery_date = f"{today.year:04d}-{today.month:02d}"
         if not await _claim_delivery("monthly-rune", delivery_date, user_id):
             continue
-        name = user["preferred_name"] or "друг"
         palette = user["palette"] or "light"
         palette_icon = {"light": "🌕", "dark": "🌑", "premium": "💠"}.get(palette, "🌕")
         try:
@@ -297,16 +299,19 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
             from rune_text_repository import get_daily_text
             rune_text = get_daily_text(monthly_rune["key"], palette, "up")
             text = (
-                f"{palette_icon} <b>{name}, руна {month_label}а</b>\n\n"
-                f"<b>{monthly_rune['name']}</b>\n\n"
-                f"{rune_text}\n\n"
-                f"<i>Эта руна задаёт тон месяца. Держи её в уме при важных решениях.</i>"
+                f"{reading_title(palette_icon, f'Руна месяца · {month_label}')}\n\n"
+                f"{rune_block(monthly_rune['name'])}\n\n"
+                f"🔎 <b>Основной смысл</b>\n{rune_text}\n\n"
+                "🧭 <b>Ориентир на месяц</b>\n"
+                "Держи смысл этой руны в уме при важных решениях."
             )
             from telegram import ReplyKeyboardRemove
             if image_path:
                 await _bot.send_cached_photo(
                     context.bot.send_photo, image_path, chat_id=user_id,
-                    caption=f"<b>{monthly_rune['name']}</b>", parse_mode="HTML",
+                    caption=reading_title(palette_icon, f"Руна месяца · {month_label}")
+                    + "\n\n" + rune_block(monthly_rune["name"]),
+                    parse_mode="HTML",
                 )
                 await context.bot.send_message(
                     chat_id=user_id, text=text, parse_mode="HTML",

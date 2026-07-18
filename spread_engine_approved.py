@@ -1,5 +1,7 @@
 import asyncio
 from html import escape
+
+from reading_format import reading_title, rune_block
 import re
 from typing import Any
 
@@ -150,17 +152,14 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
     first, second, third = position_texts
     bridge = escape(bridge_text(groups, topic))
     finish = escape(final_text(topic, groups[2]))
-    header = "🔮 <b>Расклад на три руны</b>"
-    person_line = f"\n<b>{escape(name)}</b>" if name else ""
+    del name  # Kept for API compatibility; private readings need no repeated addressee.
+    header = reading_title("🔮", "Расклад на три руны")
     return (
-        f"{header}{person_line}\n\n{escape(intro_by_topic(topic))}\n\n"
-        f"1️⃣ <b>Прошлое</b>\nᚱ <b>{escape(names[0])}</b>\n"
-        f"<i>{position_descriptions[0]}</i>\n\n{first}\n\n"
-        f"2️⃣ <b>Настоящее</b>\nᚱ <b>{escape(names[1])}</b>\n"
-        f"<i>{position_descriptions[1]}</i>\n\n{second}\n\n"
+        f"{header}\n\n{escape(intro_by_topic(topic))}\n\n"
+        f"1️⃣ <b>Прошлое</b>\n{rune_block(names[0], position_descriptions[0])}\n\n{first}\n\n"
+        f"2️⃣ <b>Настоящее</b>\n{rune_block(names[1], position_descriptions[1])}\n\n{second}\n\n"
         f"🔗 <b>Связь между рунами</b>\n{bridge}\n\n"
-        f"3️⃣ <b>Будущее</b>\nᚱ <b>{escape(names[2])}</b>\n"
-        f"<i>{position_descriptions[2]}</i>\n\n"
+        f"3️⃣ <b>Будущее</b>\n{rune_block(names[2], position_descriptions[2])}\n\n"
         f"<b>Если текущая траектория сохранится</b>\n{third}\n\n"
         f"───\n\n{finish}"
     )

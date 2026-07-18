@@ -7,6 +7,7 @@ from html import escape
 import bot as _bot
 from database import get_pair_rasklad_runes
 from rune_text_repository import get_relationship_trio_texts
+from reading_format import reading_title, rune_block
 from runes_data import RUNES, get_rune_by_name
 
 
@@ -31,17 +32,26 @@ async def _build_pair_text(update, context, partner_name: str) -> None:
 
     safe_partner_name = escape(partner_name)
     message_text = (
-        f"👥 <b>Расклад на взаимоотношения</b>\n"
+        f"{reading_title('👥', 'Расклад на взаимоотношения')}\n"
         f"Ты и {safe_partner_name}\n\n"
-        f"1️⃣ <b>Твоя позиция</b>\nᚱ <b>{escape(rune1_name)}</b>\n\n"
+        f"1️⃣ <b>Твоя позиция</b>\n{rune_block(rune1_name)}\n\n"
         f"{texts['you']}\n"
-        f"\n\n2️⃣ <b>Позиция: {safe_partner_name}</b>\nᚱ <b>{escape(rune2_name)}</b>\n\n"
+        f"\n\n2️⃣ <b>Позиция: {safe_partner_name}</b>\n{rune_block(rune2_name)}\n\n"
         f"{texts['partner']}\n"
-        f"\n\n3️⃣ <b>Что между вами</b>\nᚱ <b>{escape(rune3_name)}</b>\n\n"
+        f"\n\n3️⃣ <b>Что между вами</b>\n{rune_block(rune3_name)}\n\n"
         f"{texts['between']}"
     )
 
-    image_path = _bot.get_rune_image_path(rune3, palette)
+    image_paths = [_bot.get_rune_image_path(rune, palette) for rune in (rune1, rune2, rune3)]
+    image_path = None
+    if all(image_paths):
+        from rune_collage import build_spread_collage
+        image_path = await asyncio.to_thread(
+            build_spread_collage,
+            image_paths,
+            palette,
+            ["ТЫ", partner_name[:18], "МЕЖДУ ВАМИ"],
+        )
     await _bot.send_private_or_group(update, context, message_text, image_path=image_path, reading_mode=True)
 
 

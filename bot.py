@@ -32,6 +32,7 @@ from rune_text_repository import (
     orientation_label,
 )
 from runes_data import RUNES, get_rune_by_name
+from reading_format import reading_title, rune_block
 
 try:
     from runes_interpretations import PSYCHOTYPES, get_interpretation
@@ -306,11 +307,10 @@ def check_deck_files() -> Dict[str, List[str]]:
 
 
 def format_daily_message(name: str, rune: Dict[str, Any], palette: str, orientation: str, text: str) -> str:
+    del name, palette
     return (
-        f"🌞 <b>{name}, карта дня</b>\n\n"
-        f"<b>Карта:</b> {rune['name']}\n"
-        f"<b>Положение:</b> {orientation_label(orientation, rune['key'])}\n"
-        f"<b>Колода:</b> {PALETTE_LABELS.get(palette, palette)}\n\n"
+        f"{reading_title('🌞', 'Руна дня')}\n\n"
+        f"{rune_block(rune['name'], orientation_label(orientation, rune['key']))}\n\n"
         f"{text}"
     )
 

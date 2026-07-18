@@ -8,6 +8,8 @@ from typing import Any, Dict, List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 
+from reading_format import reading_title, rune_block
+
 MONTH_NAMES = [
     "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
@@ -74,7 +76,7 @@ async def send_year_rasklad(update, context) -> None:
     year = date.today().year
     rune_names = await asyncio.to_thread(get_year_runes, user_id, year, RUNES)
 
-    text = f"🗓 <b>Расклад на {year} год</b>\n\nНажми на месяц — увидишь трактовку руны."
+    text = f"{reading_title('🗓', f'Расклад на {year} год')}\n\nНажми на месяц — увидишь трактовку руны."
     keyboard = _build_year_keyboard(rune_names, user_id, year)
 
     message = update.effective_message
@@ -108,7 +110,7 @@ async def send_rune_year_details(update, context, user_id: int, year: int, month
     interpretation = build_month_interpretation(rune["key"], palette)
     message_text = (
         f"{marker} <b>{MONTH_NAMES[month_num - 1]} {year}</b>\n\n"
-        f"ᚱ <b>{rune_name}</b>\n\n"
+        f"{rune_block(rune_name)}\n\n"
         f"{interpretation}"
     )
 
@@ -146,7 +148,7 @@ async def send_year_rasklad_from_callback(update, context, user_id: int, year: i
         await query.answer()
 
     rune_names = await asyncio.to_thread(get_year_runes, user_id, year, RUNES)
-    text = f"🗓 <b>Расклад на {year} год</b>\n\nНажми на месяц — увидишь трактовку руны."
+    text = f"{reading_title('🗓', f'Расклад на {year} год')}\n\nНажми на месяц — увидишь трактовку руны."
     keyboard = _build_year_keyboard(rune_names, user_id, year)
 
     if query and query.message:

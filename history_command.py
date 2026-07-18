@@ -2,6 +2,9 @@
 
 import bot as _bot
 from database import get_rune_history, get_streak
+from html import escape
+from rune_text_repository import orientation_label
+from runes_data import get_rune_by_name
 
 
 async def history_command(update, context):
@@ -25,8 +28,12 @@ async def history_command(update, context):
         raw_date = entry["date"]          # "2026-05-20"
         parts = raw_date.split("-")
         display_date = f"{parts[2]}.{parts[1]}"  # "20.05"
-        arrow = "↑" if entry["orientation"] == "up" else "↓"
-        lines.append(f"{display_date} — {entry['rune_name']} {arrow}")
+        try:
+            rune_key = get_rune_by_name(entry["rune_name"])["key"]
+        except KeyError:
+            rune_key = ""
+        position = orientation_label(entry["orientation"], rune_key)
+        lines.append(f"{display_date} · <b>{escape(entry['rune_name'])}</b> · <i>{escape(position)}</i>")
 
     history_block = "\n".join(lines)
     streak_line = f"🔥 {streak} {'день' if streak == 1 else 'дня' if 2 <= streak <= 4 else 'дней'} подряд" if streak > 0 else "Серия пока не набрана — открывай руну каждый день."
