@@ -118,6 +118,18 @@ def test_every_inline_button_family_has_a_registered_handler():
         assert f'pattern=r"{pattern}"' in source
 
 
+def test_relationship_reading_uses_clear_person_labels():
+    source = Path(product_runtime_final.__file__).with_name("relationship_rasklad.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'their_label = "Они"' not in source
+    assert 'their_label = "Они в работе"' not in source
+    assert "Твоя позиция" in source
+    assert "позиция в отношениях" in source
+    assert "Динамика между вами" in source
+    assert "Ты ↔" in source
+
+
 def test_question_guard_handles_facts_meta_past_lives_and_death_safely():
     objective_facts = (
         "Завтра воскресенье?",

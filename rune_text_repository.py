@@ -198,7 +198,7 @@ def normalize_orientation(rune_key: str, orientation: str) -> str:
 
 
 def get_relationship_trio_texts(rune1_key: str, rune2_key: str, rune3_key: str, palette: str) -> Dict[str, str]:
-    """Texts for 'Ты' / 'Партнёр' / 'Между вами' readings (pair & relationship spreads).
+    """Texts for both people and the connection in a relationship spread.
 
     IMPORTANT: this does NOT reuse the past/present/future spread texts.
     Those are written as position-of-a-situation narratives (they literally

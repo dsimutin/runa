@@ -54,23 +54,23 @@ async def _build_relationship_text(update, context, person_name: str, rel_type: 
 
     if rel_type == "personal":
         rel_label = "👥 <b>Личные отношения</b>"
-        your_label = "Ты"
-        their_label = "Они"
-        between_label = "Между вами"
+        your_label = "Твоя позиция"
+        their_label = f"{escape(person_name)}: позиция в отношениях"
+        between_label = "Динамика между вами"
     else:  # business
         rel_label = "💼 <b>Деловые отношения</b>"
-        your_label = "Ты в работе"
-        their_label = "Они в работе"
-        between_label = "Ваше сотрудничество"
+        your_label = "Твоя роль в сотрудничестве"
+        their_label = f"{escape(person_name)}: роль в сотрудничестве"
+        between_label = "Динамика сотрудничества"
 
     message_text = (
         f"{rel_label}\n"
-        f"Ты и <b>{escape(person_name)}</b>\n\n"
-        f"1️⃣ <b>{your_label}</b>\n{rune1_name}\n"
+        f"<b>Ты ↔ {escape(person_name)}</b>\n\n"
+        f"1️⃣ <b>{your_label}</b>\n<i>Руна: {escape(rune1_name)}</i>\n"
         f"{texts['you']}\n"
-        f"\n\n2️⃣ <b>{their_label}</b>\n{rune2_name}\n"
+        f"\n\n2️⃣ <b>{their_label}</b>\n<i>Руна: {escape(rune2_name)}</i>\n"
         f"{texts['partner']}\n"
-        f"\n\n3️⃣ <b>{between_label}</b>\n{rune3_name}\n"
+        f"\n\n3️⃣ <b>{between_label}</b>\n<i>Руна: {escape(rune3_name)}</i>\n"
         f"{texts['between']}"
     )
 
