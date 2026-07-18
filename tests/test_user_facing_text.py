@@ -203,7 +203,9 @@ def test_daily_card_uses_consistent_sections_without_random_headlines():
     text = build_daily_card_text(
         "Дмитрий", "light", {"key": "dagaz", "name": "Дагаз"}, "up", "2026-07-18", 2
     )
-    assert text.startswith("🌞 <b>Руна дня</b>\n<b>Дмитрий</b> · Дагаз · необратимая")
+    assert text.startswith(
+        "🌞 <b>Руна дня</b>\nДмитрий\n\nᚱ <b>Дагаз</b>\n<i>необратимая</i>"
+    )
     assert "🔎 <b>Основной смысл</b>" in text
     assert "❔ <b>Вопрос для размышления</b>" in text
     assert "🧭 <b>Ориентир на день</b>" in text

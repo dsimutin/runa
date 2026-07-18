@@ -107,7 +107,8 @@ async def send_rune_year_details(update, context, user_id: int, year: int, month
 
     interpretation = build_month_interpretation(rune["key"], palette)
     message_text = (
-        f"{marker} <b>{MONTH_NAMES[month_num - 1]} {year}</b> — {rune_name}\n\n"
+        f"{marker} <b>{MONTH_NAMES[month_num - 1]} {year}</b>\n\n"
+        f"ᚱ <b>{rune_name}</b>\n\n"
         f"{interpretation}"
     )
 

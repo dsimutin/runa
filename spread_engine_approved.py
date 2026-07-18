@@ -156,11 +156,14 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
     return (
         f"{header}{person_line}\n\n❓ <b>Вопрос</b>\n<i>«{safe_question}»</i>\n\n"
         f"{escape(intro_by_topic(topic))}\n\n"
-        f"1️⃣ <b>Прошлое</b>\n{escape(names[0])} · {position_descriptions[0]}\n{first}\n\n"
-        f"2️⃣ <b>Настоящее</b>\n{escape(names[1])} · {position_descriptions[1]}\n{second}\n\n"
+        f"1️⃣ <b>Прошлое</b>\nᚱ <b>{escape(names[0])}</b>\n"
+        f"<i>{position_descriptions[0]}</i>\n\n{first}\n\n"
+        f"2️⃣ <b>Настоящее</b>\nᚱ <b>{escape(names[1])}</b>\n"
+        f"<i>{position_descriptions[1]}</i>\n\n{second}\n\n"
         f"🔗 <b>Связь между рунами</b>\n{bridge}\n\n"
-        f"3️⃣ <b>Будущее</b>\n{escape(names[2])} · {position_descriptions[2]}\n"
-        f"<i>Если текущая траектория сохранится:</i>\n{third}\n\n"
+        f"3️⃣ <b>Будущее</b>\nᚱ <b>{escape(names[2])}</b>\n"
+        f"<i>{position_descriptions[2]}</i>\n\n"
+        f"<b>Если текущая траектория сохранится</b>\n{third}\n\n"
         f"───\n\n{finish}"
     )
 

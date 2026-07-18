@@ -119,10 +119,10 @@ def test_three_card_text_uses_past_present_and_conditional_future():
         ({"key": "thurisaz", "name": "Турисаз"}, "up"),
     ]
     text = build_unified_spread("Что происходит?", draws, "light", "Дмитрий")
-    assert "1️⃣ <b>Прошлое</b>\nФеху · прямое" in text
-    assert "2️⃣ <b>Настоящее</b>\nУруз · прямое" in text
-    assert "3️⃣ <b>Будущее</b>\nТурисаз · прямое" in text
-    assert "Если текущая траектория сохранится:" in text
+    assert "1️⃣ <b>Прошлое</b>\nᚱ <b>Феху</b>\n<i>прямое</i>" in text
+    assert "2️⃣ <b>Настоящее</b>\nᚱ <b>Уруз</b>\n<i>прямое</i>" in text
+    assert "3️⃣ <b>Будущее</b>\nᚱ <b>Турисаз</b>\n<i>прямое</i>" in text
+    assert "<b>Если текущая траектория сохранится</b>" in text
 
 
 def test_question_spheres_are_detected_and_generic_choice_does_not_override_domain():

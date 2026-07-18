@@ -66,11 +66,11 @@ async def _build_relationship_text(update, context, person_name: str, rel_type: 
     message_text = (
         f"{rel_label}\n"
         f"<b>Ты ↔ {escape(person_name)}</b>\n\n"
-        f"1️⃣ <b>{your_label}</b>\n<i>Руна: {escape(rune1_name)}</i>\n"
+        f"1️⃣ <b>{your_label}</b>\nᚱ <b>{escape(rune1_name)}</b>\n\n"
         f"{texts['you']}\n"
-        f"\n\n2️⃣ <b>{their_label}</b>\n<i>Руна: {escape(rune2_name)}</i>\n"
+        f"\n\n2️⃣ <b>{their_label}</b>\nᚱ <b>{escape(rune2_name)}</b>\n\n"
         f"{texts['partner']}\n"
-        f"\n\n3️⃣ <b>{between_label}</b>\n<i>Руна: {escape(rune3_name)}</i>\n"
+        f"\n\n3️⃣ <b>{between_label}</b>\nᚱ <b>{escape(rune3_name)}</b>\n\n"
         f"{texts['between']}"
     )
 

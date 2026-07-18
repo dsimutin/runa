@@ -197,7 +197,9 @@ def build_daily_card_text(
 
     return (
         f"🌞 <b>Руна дня</b>\n"
-        f"<b>{escape(name)}</b> · {escape(str(rune['name']))} · {escape(position)}\n\n"
+        f"{escape(name)}\n\n"
+        f"ᚱ <b>{escape(str(rune['name']))}</b>\n"
+        f"<i>{escape(position)}</i>\n\n"
         f"🔎 <b>Основной смысл</b>\n{escape(meaning)}\n\n"
         f"❔ <b>Вопрос для размышления</b>\n{escape(reflection)}\n\n"
         f"🧭 <b>Ориентир на день</b>\n{escape(advice)}"
@@ -253,10 +255,11 @@ def product_yes_no_text(
     """Format a one-rune answer with the same hierarchy as other readings."""
     answer_icon = {"Да": "✅", "Нет": "🚫"}.get(sphere_data["answer_label"], "◻️")
     rune_name = escape(str(rune["name"]))
-    rune_line = f"{rune_name} · {escape(orientation_text)}" if orientation_text else rune_name
+    position_line = f"\n<i>{escape(orientation_text)}</i>" if orientation_text else ""
     return (
         f"❓ <b>Ответ на вопрос</b>\n"
-        f"<b>{escape(name)}</b> · {rune_line}\n\n"
+        f"{escape(name)}\n\n"
+        f"ᚱ <b>{rune_name}</b>{position_line}\n\n"
         f"<i>«{escape(question)}»</i>\n\n"
         f"🔎 <b>Что показывает руна</b>\n{escape(str(sphere_data['short_desc']))}\n\n"
         f"{answer_icon} <b>Ответ</b>\n{escape(str(sphere_data['answer']))}\n\n"

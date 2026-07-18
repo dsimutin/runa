@@ -33,11 +33,11 @@ async def _build_pair_text(update, context, partner_name: str) -> None:
     message_text = (
         f"👥 <b>Расклад на взаимоотношения</b>\n"
         f"Ты и {safe_partner_name}\n\n"
-        f"1️⃣ <b>Твоя позиция</b>\n{rune1_name}\n"
+        f"1️⃣ <b>Твоя позиция</b>\nᚱ <b>{escape(rune1_name)}</b>\n\n"
         f"{texts['you']}\n"
-        f"\n\n2️⃣ <b>Позиция: {safe_partner_name}</b>\n{rune2_name}\n"
+        f"\n\n2️⃣ <b>Позиция: {safe_partner_name}</b>\nᚱ <b>{escape(rune2_name)}</b>\n\n"
         f"{texts['partner']}\n"
-        f"\n\n3️⃣ <b>Что между вами</b>\n{rune3_name}\n"
+        f"\n\n3️⃣ <b>Что между вами</b>\nᚱ <b>{escape(rune3_name)}</b>\n\n"
         f"{texts['between']}"
     )
 
