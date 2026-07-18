@@ -2,6 +2,7 @@ from pathlib import Path
 
 import bot
 import human_reading
+import product_runtime
 import product_runtime_final
 import premium_subscription
 from product_runtime import product_yes_no_text
@@ -184,6 +185,18 @@ def test_yes_no_question_is_html_escaped():
     )
     assert "&lt;Дима&gt;" in text
     assert "Я &lt;прав?&gt;" in text
+    assert "Сфера:" not in text
+
+
+def test_yes_no_answer_does_not_open_settings_after_result():
+    source = Path(product_runtime.__file__).read_text(encoding="utf-8")
+    branch = source[
+        source.index("async def product_send_one_rune_answer") : source.index(
+            "async def settings_command"
+        )
+    ]
+    assert "⚙️ Настройки" not in branch
+    assert "Выбери колоду" not in branch
 
 
 def test_daily_card_uses_consistent_sections_without_random_headlines():

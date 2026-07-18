@@ -252,8 +252,7 @@ def product_yes_no_text(
     return (
         f"❓ <b>Ответ на вопрос</b>\n"
         f"<b>{escape(name)}</b> · {rune_line}\n\n"
-        f"<i>«{escape(question)}»</i>\n"
-        f"Сфера: {escape(str(sphere_data['sphere_label']))}\n\n"
+        f"<i>«{escape(question)}»</i>\n\n"
         f"🔎 <b>Что показывает руна</b>\n{escape(str(sphere_data['short_desc']))}\n\n"
         f"{answer_icon} <b>Ответ</b>\n{escape(str(sphere_data['answer']))}\n\n"
         f"<i>Это текущая тенденция, а не неизменный исход.</i>"
@@ -300,16 +299,6 @@ async def product_send_one_rune_answer(update: Update, context: ContextTypes.DEF
         bot.user_name(update), question, rune, orientation_label(orientation, rune["key"]), sphere_data
     )
     await bot.send_private_or_group(update, context, text, image_path=image_path, reading_mode=True)
-    if not await bot.ensure_profile_ready(update, context):
-        return
-    palette = bot.get_user_palette(update)
-    markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🌕 Светлая", callback_data="settings:deck:light")],
-        [InlineKeyboardButton("🌑 Тёмная", callback_data="settings:deck:dark")],
-        [InlineKeyboardButton("💠 Премиум — только по подписке", callback_data="settings:deck:premium")],
-    ])
-    await bot.send_private_or_group(update, context, f"⚙️ Настройки\n\nТекущая колода: {PALETTE_NAMES.get(palette, 'Светлая')}\n\nСветлая и тёмная доступны всем. Премиум — только с активной подпиской.", image_path=None)
-    await update.effective_message.reply_text("Выбери колоду:", reply_markup=markup)
 
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
