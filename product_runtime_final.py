@@ -1,3 +1,4 @@
+import asyncio
 import re
 from pathlib import Path
 
@@ -20,14 +21,17 @@ from daily_broadcast import (
 from history_command import history_command
 from pair_rasklad import pair_rasklad_command
 from year_rasklad import send_year_rasklad
+from spread_engine_approved import send_approved_rasklad, spread_page_callback
 from human_reading import (
     HUMAN_READING_BUTTON,
     HUMAN_READING_CANCEL_TEXT,
     HUMAN_READING_PAID_PROMPT,
     HUMAN_READING_TEXT,
     PAYMENT_AMOUNT,
+    PAYMENT_CARD_DISPLAY,
     PAYMENT_CANCEL_CALLBACK,
     PAYMENT_CONFIRM_CALLBACK,
+    PAYMENT_PHONE_DISPLAY,
 )
 from premium_subscription import (
     get_premium_info_text,
@@ -54,9 +58,39 @@ from support_requests import (
     register_operator,
 )
 
+# Explicit runtime composition. This used to happen implicitly in
+# sitecustomize.py before the application module was even imported.
+product_runtime.configure_bot_runtime()
+bot.send_rasklad = send_approved_rasklad
+
 VERSION_MARKER = "RUNA FINAL 2026-05-07-6"
 
 HIDE_KEYBOARD_BUTTON = "🙈 Скрыть меню"
+
+
+async def _safe_callback_answer(query, *args, **kwargs) -> None:
+    """Stop a Telegram button spinner without failing if it was answered already."""
+    try:
+        await query.answer(*args, **kwargs)
+    except TelegramError:
+        pass
+
+
+async def reading_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Restore the full reply keyboard only when the reader asks for it."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+    # Give Telegram time to dismiss the inline-button tap before replacing it
+    # with the reply keyboard. This prevents the same tap from landing on a
+    # newly appeared menu item (most noticeably "Settings" on mobile).
+    await asyncio.sleep(0.25)
+    await context.bot.send_message(
+        chat_id=update.effective_user.id,
+        text="Меню открыто.",
+        reply_markup=build_main_keyboard(update.effective_user.id),
+    )
 
 
 def _kb(update: Update) -> ReplyKeyboardMarkup:
@@ -67,15 +101,17 @@ def _kb(update: Update) -> ReplyKeyboardMarkup:
 
 def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     """Возвращает клавиатуру с учётом premium статуса пользователя."""
-    from premium_subscription import is_premium_active, is_trial_active
+    from premium_subscription import get_premium_state
     base = [
         ["🌞 Руна дня", "❓ Вопрос (да/нет)"],
         ["🔮 Расклад", "🕯 Личный расклад"],
     ]
     try:
-        if is_premium_active(user_id):
-            if is_trial_active(user_id):
+        premium_active, trial_active = get_premium_state(user_id)
+        if premium_active:
+            if trial_active:
                 base.append(["🗓 Расклад на год", "💠 Премиум"])
+                base.append(["⚙️ Настройки"])
             else:
                 base.append(["🗓 Расклад на год", "👥 Взаимоотношения"])
                 base.append(["💠 Премиум", "⚙️ Настройки"])
@@ -83,8 +119,13 @@ def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
             base.append(["💠 Премиум", "⚙️ Настройки"])
     except Exception:
         base.append(["💠 Премиум", "⚙️ Настройки"])
-    base.append(["ℹ️ Помощь"])
-    return ReplyKeyboardMarkup(base, resize_keyboard=True)
+    base.append(["📜 Значения рун", "ℹ️ Помощь"])
+    return ReplyKeyboardMarkup(base, resize_keyboard=True, is_persistent=False)
+
+
+# bot.py owns the common sending helper; give it the product-aware keyboard
+# factory once this module is loaded, avoiding stale reduced keyboards.
+bot.MAIN_KEYBOARD_FACTORY = build_main_keyboard
 ALLOWED_OPERATOR_USERNAMES = {"mrgrief", "richstewardess"}
 PREMIUM_DIR_CANDIDATES = ["premium", "Premium", "Премиум", "премиум"]
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"]
@@ -96,12 +137,31 @@ def is_operator_chat(update: Update) -> bool:
     return bool(chat and chat.id in bot.ADMIN_IDS and chat.type != "private")
 
 
+def is_operator_reply(update: Update) -> bool:
+    """Accept request replies in an operator group or an admin's private chat.
+
+    A private admin chat must only be intercepted when the message is an
+    actual reply to a request notification. Otherwise the admin must still be
+    able to use the bot as an ordinary user.
+    """
+    if extract_request_id_from_reply(update) is None:
+        return False
+    return is_operator_chat(update) or is_authorized_operator(update)
+
+
 def is_authorized_operator(update: Update) -> bool:
     user = update.effective_user
-    chat = update.effective_chat
-    if chat and chat.id in bot.ADMIN_IDS:
+    if not user:
+        return False
+    if user.id in bot.ADMIN_IDS:
         return True
-    return bool(user and user.username and user.username.lower() in ALLOWED_OPERATOR_USERNAMES)
+    if user.username and user.username.lower() in ALLOWED_OPERATOR_USERNAMES:
+        return True
+    try:
+        return user.id in set(list_operator_ids())
+    except SupportRequestError:
+        bot.logger.exception("Failed to load registered operators")
+        return False
 
 
 def extract_request_id_from_reply(update: Update) -> int | None:
@@ -164,10 +224,12 @@ async def final_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     name = bot.user_name(update)
     try:
-        bot.ensure_user(update.effective_user.id, name)
-        profile = bot.get_user_profile(update.effective_user.id)
+        profile = await asyncio.to_thread(bot.get_user_profile, update.effective_user.id)
+        if not profile or profile.get("preferred_name") != name:
+            await asyncio.to_thread(bot.ensure_user, update.effective_user.id, name)
+            profile = await asyncio.to_thread(bot.get_user_profile, update.effective_user.id)
         if not profile or not profile.get("palette"):
-            bot.start_onboarding(update.effective_user.id)
+            await asyncio.to_thread(bot.start_onboarding, update.effective_user.id)
             await update.effective_message.reply_text(product_runtime.build_onboarding_question(1, name), reply_markup=product_runtime.onboarding_keyboard(1))
             return
     except bot.DatabaseError:
@@ -185,7 +247,12 @@ async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAUL
     try:
         _, step_raw, answer = query.data.split(":", 2)
         int(step_raw)
-        result = bot.save_onboarding_answer(update.effective_user.id, answer, len(bot.ONBOARDING_QUESTIONS))
+        result = await asyncio.to_thread(
+            bot.save_onboarding_answer,
+            update.effective_user.id,
+            answer,
+            len(bot.ONBOARDING_QUESTIONS),
+        )
     except Exception:
         bot.logger.exception("Final onboarding failed")
         await query.edit_message_text("Ответ не сохранился. Нажми /start и попробуем заново.")
@@ -200,6 +267,7 @@ async def final_onboarding_callback(update: Update, context: ContextTypes.DEFAUL
                 "❓ <b>Вопрос (да/нет)</b> — короткий ответ одной картой\n"
                 "🔮 <b>Расклад</b> — разбор ситуации на три карты\n"
                 "🕯 <b>Личный расклад</b> — живой ответ человека\n"
+                "📜 <b>Значения рун</b> — отдельный справочник\n"
                 "⚙️ <b>Настройки</b> — сменить колоду\n\n"
                 "Можно нажать кнопку ниже."
             ),
@@ -216,6 +284,16 @@ def _payment_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("✅ Я оплатил", callback_data=PAYMENT_CONFIRM_CALLBACK)],
         [InlineKeyboardButton("✖ Отмена", callback_data=PAYMENT_CANCEL_CALLBACK)],
     ])
+
+
+def premium_card_payment_text() -> str:
+    return (
+        f"💳 <b>Оплата премиума — {PREMIUM_PRICE_RUB} ₽</b>\n\n"
+        f"Карта: <code>{PAYMENT_CARD_DISPLAY}</code>\n"
+        f"СБП: <code>{PAYMENT_PHONE_DISPLAY}</code>\n\n"
+        f"Сумма точно: <b>{PREMIUM_PRICE_RUB} ₽</b>\n\n"
+        "После оплаты нажми «Я оплатил» — оператор проверит и активирует подписку."
+    )
 
 
 async def human_reading_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -248,7 +326,7 @@ async def human_reading_command(update: Update, context: ContextTypes.DEFAULT_TY
                 f"У тебя {free_left} бесплатных {'расклад' if free_left == 1 else 'расклада'} по премиуму.\n\n"
                 "Напиши вопрос одним сообщением — он уйдёт человеку для разбора.",
                 parse_mode=ParseMode.HTML,
-                reply_markup=_kb(update),
+                reply_markup=ReplyKeyboardRemove(),
             )
             return
 
@@ -296,7 +374,7 @@ async def human_reading_payment_callback(update: Update, context: ContextTypes.D
         await context.bot.send_message(
             chat_id=update.effective_user.id,
             text=HUMAN_READING_PAID_PROMPT,
-            reply_markup=_kb(update),
+            reply_markup=ReplyKeyboardRemove(),
         )
 
 
@@ -306,9 +384,11 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     palette = bot.get_user_palette(update)
     try:
-        init_support_db()
-        request_id = create_request(user.id, text, palette)
-        registered_operator_ids = list_operator_ids(ALLOWED_OPERATOR_USERNAMES)
+        await asyncio.to_thread(init_support_db)
+        request_id = await asyncio.to_thread(create_request, user.id, text, palette)
+        registered_operator_ids = await asyncio.to_thread(
+            list_operator_ids, ALLOWED_OPERATOR_USERNAMES
+        )
     except SupportRequestError:
         bot.logger.exception("Failed to create human reading request")
         await bot.send_private_or_group(update, context, "Не получилось создать заявку. Попробуй чуть позже.")
@@ -320,7 +400,7 @@ async def handle_human_request(update: Update, context: ContextTypes.DEFAULT_TYP
     is_free = context.user_data.pop("human_reading_is_free", False)
     context.user_data.pop("human_reading_payment_pending", None)
     if is_free:
-        use_free_reading(user.id)
+        await asyncio.to_thread(use_free_reading, user.id)
         free_left = get_free_readings_left(user.id)
         payment_line = f"💠 Премиум — бесплатный расклад (осталось после этого: {free_left})"
     elif payment_claimed:
@@ -364,7 +444,7 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
         await message.reply_text("Чтобы ответ ушёл пользователю, нажми «Ответить» на сообщение заявки и пришли текст или фото.")
         return
     try:
-        request = get_request(request_id)
+        request = await asyncio.to_thread(get_request, request_id)
     except SupportRequestError:
         bot.logger.exception("Failed to load request from operator reply")
         await message.reply_text("Не получилось найти заявку.")
@@ -384,7 +464,7 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
                 chat_id=user_id,
                 photo=photo_file_id,
                 caption=caption,
-                reply_markup=_kb(update),
+                reply_markup=build_main_keyboard(user_id),
             )
         elif message.document:
             caption = (message.caption or "").strip() or None
@@ -392,18 +472,18 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
                 chat_id=user_id,
                 document=message.document.file_id,
                 caption=caption,
-                reply_markup=_kb(update),
+                reply_markup=build_main_keyboard(user_id),
             )
         elif message.text:
             await context.bot.send_message(
                 chat_id=user_id,
                 text=message.text.strip(),
-                reply_markup=_kb(update),
+                reply_markup=build_main_keyboard(user_id),
             )
         else:
             await message.reply_text("Поддерживаются текст, фото и документ. Пришли реплаем на заявку.")
             return
-        close_request(request_id)
+        await asyncio.to_thread(close_request, request_id)
     except (TelegramError, SupportRequestError):
         bot.logger.exception("Failed to send operator reply to user")
         await message.reply_text("Не получилось отправить ответ пользователю.")
@@ -412,7 +492,7 @@ async def handle_operator_reply(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def operator_media_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_operator_chat(update):
+    if not is_operator_reply(update):
         return
     await handle_operator_reply(update, context)
 
@@ -421,7 +501,7 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     text = (update.effective_message.text or "").strip()
     state = context.user_data.get("state")
     user_id = update.effective_user.id if update.effective_user else 0
-    if is_operator_chat(update):
+    if is_operator_reply(update):
         await handle_operator_reply(update, context)
         return
     if text == HIDE_KEYBOARD_BUTTON:
@@ -438,26 +518,33 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if text == "🌞 Руна дня":
         await product_runtime.product_runa_command(update, context)
         return
-    if text in {"❓ Вопрос", "❓ Задать вопрос", "❓ Вопрос (да/нет)"}:
-        from trigger_questions import TRIGGER_QUESTIONS
-        context.user_data["state"] = bot.STATE_WAITING_ASK
-
-        # Create inline buttons for trigger questions
-        buttons = []
-        for question in TRIGGER_QUESTIONS[:4]:  # First 4 questions in first row
-            buttons.append([InlineKeyboardButton(question, callback_data=f"trigger_q:{question}")])
-        buttons.append([InlineKeyboardButton("+ Свой вопрос", callback_data="trigger_q:own")])
-
-        keyboard = InlineKeyboardMarkup(buttons)
+    if text == "📜 Значения рун":
+        from runes_data import RUNES
+        rune_pairs = [(rune["key"], rune["name"]) for rune in RUNES]
         await update.effective_message.reply_text(
-            "❓ <b>Выбери вопрос или напиши свой:</b>",
-            reply_markup=keyboard,
-            parse_mode="HTML"
+            "📜 <b>Традиционные значения рун</b>\n\n"
+            "Это отдельный справочник по символике и происхождению рун. "
+            "Он не заменяет и не уточняет полученный расклад.\n\n"
+            "Выбери руну:",
+            reply_markup=product_runtime.rune_info_keyboard(rune_pairs),
+            parse_mode="HTML",
+        )
+        return
+    if text in {"❓ Вопрос", "❓ Задать вопрос", "❓ Вопрос (да/нет)"}:
+        context.user_data["state"] = bot.STATE_WAITING_ASK
+        await update.effective_message.reply_text(
+            "❓ <b>Напиши свой вопрос</b> одним сообщением.\n\n"
+            "Лучше о ситуации, решении или отношениях, на которые ты можешь повлиять.",
+            reply_markup=ReplyKeyboardRemove() if bot.is_private(update) else None,
+            parse_mode="HTML",
         )
         return
     if text == "🔮 Расклад":
         context.user_data["state"] = bot.STATE_WAITING_RASKLAD
-        await update.effective_message.reply_text("🔮 Напиши вопрос — раскину три карты на ситуацию.", reply_markup=_kb(update) if bot.is_private(update) else None)
+        await update.effective_message.reply_text(
+            "🔮 Напиши вопрос — раскину три карты на ситуацию.",
+            reply_markup=ReplyKeyboardRemove() if bot.is_private(update) else None,
+        )
         return
     if text == product_runtime.SETTINGS_BUTTON:
         await product_runtime.settings_command(update, context)
@@ -490,7 +577,7 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             "Три карты: твоя энергия, энергия другого человека и то, что между вами.\n\n"
             "Напиши имя или описание человека:\n"
             "<i>Анна (подруга) · Андрей (коллега) · мой парень</i>",
-            reply_markup=build_main_keyboard(user_id),
+            reply_markup=ReplyKeyboardRemove(),
             parse_mode="HTML"
         )
         return
@@ -507,7 +594,7 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             "Три карты: твоя энергия, энергия другого человека и то, что между вами.\n\n"
             "Напиши имя или описание человека:\n"
             "<i>Анна (подруга) · Андрей (коллега) · мой парень</i>",
-            reply_markup=build_main_keyboard(user_id),
+            reply_markup=ReplyKeyboardRemove(),
             parse_mode="HTML"
         )
         return
@@ -534,7 +621,7 @@ async def final_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if state == bot.STATE_WAITING_RASKLAD:
         context.user_data.pop("state", None)
-        await product_runtime.bot.send_rasklad(update, context, text)
+        await send_approved_rasklad(update, context, text)
         return
     await update.effective_message.reply_text("Выбери действие на клавиатуре. Или напиши /help, если потерялся.", reply_markup=_kb(update) if bot.is_private(update) else bot.private_link_markup(context))
 
@@ -567,7 +654,7 @@ async def activatepremium_command(update: Update, context: ContextTypes.DEFAULT_
         return
     target_id = int(context.args[0])
     try:
-        activate_premium(target_id)
+        await asyncio.to_thread(activate_premium, target_id)
     except Exception:
         bot.logger.exception("Failed to activate premium for user_id=%s", target_id)
         await update.effective_message.reply_text("Не удалось активировать. Проверь user_id.")
@@ -599,6 +686,20 @@ async def whoami_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.effective_message.reply_text(f"User ID: {user.id}\nChat ID: {chat.id}\nUsername: @{user.username}" if user.username else f"User ID: {user.id}\nChat ID: {chat.id}")
 
 
+async def where_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show whether the current chat receives manual payment requests."""
+    chat = update.effective_chat
+    if not chat:
+        return
+    title = getattr(chat, "title", None) or "личный чат"
+    connected = chat.id in bot.ADMIN_IDS
+    status = "✅ подключён" if connected else "❌ не подключён"
+    await update.effective_message.reply_text(
+        f"Чат: {title}\nChat ID: {chat.id}\nПриём заявок на оплату: {status}\n\n"
+        "Чтобы подключить этот чат, добавь его Chat ID в ADMIN_IDS сервиса Cloud Run."
+    )
+
+
 async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text("Теперь не нужно брать заявку командой. Ответьте реплаем на сообщение заявки.")
 
@@ -613,7 +714,7 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     request_id = int(context.args[0])
     answer_text = " ".join(context.args[1:]).strip()
     try:
-        request = get_request(request_id)
+        request = await asyncio.to_thread(get_request, request_id)
     except SupportRequestError:
         await update.effective_message.reply_text("Не получилось найти заявку.")
         return
@@ -625,7 +726,7 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     try:
         await context.bot.send_message(chat_id=request["user_id"], text=answer_text, reply_markup=build_main_keyboard(request["user_id"]))
-        close_request(request_id)
+        await asyncio.to_thread(close_request, request_id)
     except (TelegramError, SupportRequestError):
         await update.effective_message.reply_text("Не получилось отправить ответ пользователю.")
         return
@@ -661,7 +762,7 @@ async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     name = bot.user_name(update)
     if is_premium_active(user.id):
         from database import get_premium_status
-        status = get_premium_status(user.id)
+        status = await asyncio.to_thread(get_premium_status, user.id)
         expires_str = status.get("expires_at") or status.get("trial_expires_at", "")
         on_trial = is_trial_active(user.id)
         try:
@@ -701,11 +802,11 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     query = update.callback_query
     if not query or not update.effective_user:
         return
-    await query.answer()
     user = update.effective_user
     data = query.data or ""
 
     if data == "premium:close":
+        await query.answer()
         try:
             await query.delete_message()
         except TelegramError:
@@ -717,8 +818,9 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if is_trial_used(user.id):
             await query.answer("Пробный период уже был использован.", show_alert=True)
             return
+        await query.answer()
         try:
-            expires_at = activate_trial(user.id)
+            expires_at = await asyncio.to_thread(activate_trial, user.id)
         except Exception:
             bot.logger.exception("Failed to activate trial for user_id=%s", user.id)
             await context.bot.send_message(
@@ -751,6 +853,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     if data == "premium:buy:stars":
+        await query.answer()
         try:
             await context.bot.send_invoice(
                 chat_id=user.id,
@@ -770,6 +873,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     if data == "premium:buy:card":
+        await query.answer()
         if PAYMENT_PROVIDER_TOKEN:
             try:
                 await context.bot.send_invoice(
@@ -789,26 +893,20 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     reply_markup=_kb(update),
                 )
         else:
-            from human_reading import PAYMENT_CARD, PAYMENT_PHONE
             manual_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Я оплатил", callback_data="premium:paid:card")],
                 [InlineKeyboardButton("✖ Отмена", callback_data="premium:close")],
             ])
             await context.bot.send_message(
                 chat_id=user.id,
-                text=(
-                    f"💳 <b>Оплата премиума — {PREMIUM_PRICE_RUB} ₽</b>\n\n"
-                    f"Карта (нажми чтобы скопировать):\n<pre>{PAYMENT_CARD}</pre>\n"
-                    f"СБП по номеру:\n<pre>{PAYMENT_PHONE}</pre>\n"
-                    f"Сумма точно: <b>{PREMIUM_PRICE_RUB} ₽</b>\n\n"
-                    "После оплаты нажми «Я оплатил» — оператор проверит и активирует подписку."
-                ),
+                text=premium_card_payment_text(),
                 parse_mode=ParseMode.HTML,
                 reply_markup=manual_kb,
             )
         return
 
     if data == "premium:paid:card":
+        await query.answer()
         sender = f"@{user.username}" if user.username else (user.first_name or str(user.id))
         note = (
             f"💠 Заявка на премиум (карта)\n\n"
@@ -820,19 +918,25 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             [InlineKeyboardButton("✅ Подтвердить оплату", callback_data=f"op:premium_confirm:{user.id}")],
             [InlineKeyboardButton("❌ Отклонить", callback_data=f"op:premium_decline:{user.id}")],
         ])
+        delivered_to = []
         for admin_id in bot.ADMIN_IDS:
             try:
                 await context.bot.send_message(chat_id=admin_id, text=note, reply_markup=confirm_kb)
+                delivered_to.append(admin_id)
             except TelegramError:
                 bot.logger.exception("Failed to notify admin about premium payment chat_id=%s", admin_id)
-        await context.bot.send_message(
-            chat_id=user.id,
-            text="✅ Заявка на премиум получена. После проверки оплаты подписка будет активирована.",
-            reply_markup=_kb(update),
-        )
+        if delivered_to:
+            response = "✅ Заявка на премиум получена. После проверки оплаты подписка будет активирована."
+        else:
+            response = (
+                "⚠️ Оплата отмечена, но заявка не дошла оператору. "
+                "Напиши в поддержку и не нажимай оплату повторно."
+            )
+        await context.bot.send_message(chat_id=user.id, text=response, reply_markup=_kb(update))
         return
 
     if data == "premium:year":
+        await query.answer()
         try:
             await query.delete_message()
         except TelegramError:
@@ -844,6 +948,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if is_trial_active(user.id):
             await query.answer("Расклад на взаимоотношения доступен только в платном премиуме.", show_alert=True)
             return
+        await query.answer()
         try:
             await query.delete_message()
         except TelegramError:
@@ -852,7 +957,8 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await context.bot.send_message(
             chat_id=user.id,
             text="👥 Напиши имя или описание человека:\n<i>Анна (подруга) · Андрей (коллега) · мой парень</i>",
-            reply_markup=_kb(update),
+            parse_mode=ParseMode.HTML,
+            reply_markup=ReplyKeyboardRemove(),
         )
         return
 
@@ -860,6 +966,7 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if is_trial_active(user.id):
             await query.answer("Настройка дня доступна только в платном премиуме.", show_alert=True)
             return
+        await query.answer()
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(d, callback_data=f"weekly_day:{i}")]
             for i, d in enumerate(["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"])
@@ -867,17 +974,33 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.edit_message_text("📅 Выбери день для еженедельной руны:", reply_markup=kb)
         return
 
+    await query.answer("Эта кнопка устарела. Открой раздел «Премиум» заново.", show_alert=True)
+
 
 async def precheckout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.pre_checkout_query.answer(ok=True)
+    query = update.pre_checkout_query
+    if not query:
+        return
+    if not _valid_premium_payment(query.invoice_payload, query.currency, query.total_amount):
+        await query.answer(ok=False, error_message="Параметры платежа не совпадают со счётом. Создай новый счёт в меню премиума.")
+        return
+    await query.answer(ok=True)
+
+
+def _valid_premium_payment(payload: str, currency: str, total_amount: int) -> bool:
+    expected = {
+        "premium_stars_1month": ("XTR", PREMIUM_PRICE_STARS),
+        "premium_card_1month": ("RUB", PREMIUM_PRICE_RUB * 100),
+    }
+    return expected.get(payload) == (currency, total_amount)
 
 
 async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     payment = update.message.successful_payment
-    if payment.invoice_payload.startswith("premium_"):
-        activate_premium(update.effective_user.id)
+    if _valid_premium_payment(payment.invoice_payload, payment.currency, payment.total_amount):
+        await asyncio.to_thread(activate_premium, update.effective_user.id)
         await update.message.reply_text(
-            "💠 <b>Премиум активирован на 30 дней!</b>\n\n"
+            "💠 <b>Премиум активирован на месяц!</b>\n\n"
             "✅ Доступно:\n"
             "• Премиум-колода\n"
             "• Расклад на год\n"
@@ -893,26 +1016,38 @@ async def operator_action_callback(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     if not query or not update.effective_user:
         return
+    if not is_authorized_operator(update):
+        await query.answer("Это действие доступно только оператору.", show_alert=True)
+        return
     await query.answer()
     data = query.data or ""
+
+    if data == "op:noop":
+        return
 
     if data.startswith("op:claim:"):
         request_id = int(data.split(":")[2])
         op = update.effective_user
         try:
-            claim_request(request_id, op.id, op.username or str(op.id))
+            await asyncio.to_thread(
+                claim_request, request_id, op.id, op.username or str(op.id)
+            )
             await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Взято в работу", callback_data="op:noop")]
             ]))
         except Exception:
-            await query.answer("Не удалось взять заявку.", show_alert=True)
+            bot.logger.exception("Failed to claim personal reading request")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Не удалось взять заявку. Обнови сообщение и попробуй ещё раз.",
+            )
         return
 
     if data.startswith("op:decline:"):
         request_id = int(data.split(":")[2])
         try:
-            req = get_request(request_id)
-            close_request(request_id)
+            req = await asyncio.to_thread(get_request, request_id)
+            await asyncio.to_thread(close_request, request_id)
             if req:
                 await context.bot.send_message(
                     chat_id=req["user_id"],
@@ -923,13 +1058,17 @@ async def operator_action_callback(update: Update, context: ContextTypes.DEFAULT
                 [InlineKeyboardButton("❌ Отклонено", callback_data="op:noop")]
             ]))
         except Exception:
-            await query.answer("Не удалось отклонить заявку.", show_alert=True)
+            bot.logger.exception("Failed to decline personal reading request")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Не удалось отклонить заявку. Попробуй ещё раз.",
+            )
         return
 
     if data.startswith("op:premium_confirm:"):
         target_id = int(data.split(":")[2])
         try:
-            activate_premium(target_id)
+            await asyncio.to_thread(activate_premium, target_id)
             await context.bot.send_message(
                 chat_id=target_id,
                 text="💠 <b>Премиум активирован!</b>\n\nОплата подтверждена.",
@@ -940,7 +1079,11 @@ async def operator_action_callback(update: Update, context: ContextTypes.DEFAULT
                 [InlineKeyboardButton("✅ Премиум активирован", callback_data="op:noop")]
             ]))
         except Exception:
-            await query.answer("Не удалось активировать.", show_alert=True)
+            bot.logger.exception("Failed to confirm premium payment")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Не удалось активировать премиум. Попробуй ещё раз.",
+            )
         return
 
     if data.startswith("op:premium_decline:"):
@@ -955,8 +1098,17 @@ async def operator_action_callback(update: Update, context: ContextTypes.DEFAULT
                 [InlineKeyboardButton("❌ Отклонено", callback_data="op:noop")]
             ]))
         except Exception:
-            await query.answer("Ошибка.", show_alert=True)
+            bot.logger.exception("Failed to decline premium payment")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Не удалось отклонить оплату. Попробуй ещё раз.",
+            )
         return
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="Эта кнопка устарела. Открой актуальную заявку.",
+    )
 
 
 _WEEKDAY_NAMES = {0: "Понедельник", 1: "Вторник", 2: "Среда",
@@ -990,7 +1142,7 @@ async def weekly_day_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         day = int(query.data.split(":")[1])
         from database import set_weekly_question_day
-        set_weekly_question_day(update.effective_user.id, day)
+        await asyncio.to_thread(set_weekly_question_day, update.effective_user.id, day)
     except Exception:
         bot.logger.exception("Failed to set weekly_question_day")
         await query.edit_message_text("Не получилось сохранить. Попробуй ещё раз.")
@@ -1026,7 +1178,7 @@ async def weekly_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_reply_markup(reply_markup=None)
     except TelegramError:
         pass
-    await product_runtime.bot.send_rasklad(update, context, question)
+    await send_approved_rasklad(update, context, question)
 
 
 async def relationship_type_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1037,9 +1189,19 @@ async def relationship_type_callback(update: Update, context: ContextTypes.DEFAU
 
     try:
         parts = query.data.split(":", 2)
-        if parts[0] == "rel_type" and len(parts) == 3:
+        if parts[0] == "rel_type" and len(parts) >= 2:
             rel_type = parts[1]  # personal or business
-            person_name = parts[2]
+            if rel_type not in {"personal", "business"}:
+                await query.answer("Этот тип расклада больше недоступен.", show_alert=True)
+                return
+            person_name = (
+                parts[2]
+                if len(parts) == 3
+                else context.user_data.get("relationship_person", "")
+            )
+            if not person_name:
+                await query.answer("Напиши имя ещё раз.", show_alert=True)
+                return
 
             await query.answer()
             await query.edit_message_text(f"⏳ Выбираю карты для {person_name}...")
@@ -1048,7 +1210,11 @@ async def relationship_type_callback(update: Update, context: ContextTypes.DEFAU
             await _build_relationship_text(update, context, person_name, rel_type)
     except Exception:
         bot.logger.exception("Failed to handle relationship type callback")
-        await query.answer("Что-то пошло не так.", show_alert=True)
+        await _safe_callback_answer(query)
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text="Не получилось запустить расклад. Попробуй выбрать тип ещё раз.",
+        )
 
 
 async def trigger_question_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1070,28 +1236,31 @@ async def trigger_question_callback(update: Update, context: ContextTypes.DEFAUL
                 await query.answer()
 
                 from philosophical_answers import get_truth_answer
-                from rune_text_repository import random_orientation, orientation_label
+                from rune_text_repository import orientation_label, yes_no_draw
 
-                # Draw a rune and use its orientation to determine yes/no —
-                # same rule as the rest of the yes/no flow, so this doesn't
-                # run its own disconnected coin flip.
+                # Use the same polarity rule as the rest of the yes/no flow;
+                # symmetric runes remain visually upright.
                 from runes_data import RUNES
                 rune = product_runtime.draw_yes_no_rune(RUNES)
-                orientation = random_orientation(rune["key"])
+                orientation, answer_kind = yes_no_draw(rune["key"])
                 palette = bot.get_user_palette(update)
                 image_path = bot.get_rune_image_path(rune, palette)
 
-                is_yes = orientation == "up"
+                is_yes = answer_kind == "yes"
                 philosophical_answer = get_truth_answer(is_yes)
 
                 message_text = (
                     f"❓ <b>{question}</b>\n\n{philosophical_answer}\n\n"
-                    f"<i>Руна: {rune['name']} · {orientation_label(orientation)}</i>"
+                    f"<i>Руна: {rune['name']} · {orientation_label(orientation, rune['key'])}</i>"
                 )
 
                 await query.edit_message_text(message_text, parse_mode="HTML")
                 if image_path:
-                    await context.bot.send_photo(chat_id=update.effective_user.id, photo=open(image_path, 'rb'))
+                    await bot.send_cached_photo(
+                        context.bot.send_photo,
+                        image_path,
+                        chat_id=update.effective_user.id,
+                    )
 
                 context.user_data.pop("state", None)
             else:
@@ -1102,11 +1271,16 @@ async def trigger_question_callback(update: Update, context: ContextTypes.DEFAUL
                 await product_runtime.product_send_one_rune_answer(update, context, question)
     except Exception:
         bot.logger.exception("Failed to handle trigger question callback")
-        await query.answer("Что-то пошло не так.", show_alert=True)
+        await _safe_callback_answer(query)
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text="Не получилось обработать этот вопрос. Попробуй через пункт «Вопрос (да/нет)».",
+            reply_markup=build_main_keyboard(update.effective_user.id),
+        )
 
 
 async def rune_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the optional 'ℹ️ О руне' button — traditional/etymological meaning."""
+    """Show a traditional/etymological meaning selected in the reference."""
     query = update.callback_query
     if not query or not update.effective_user:
         return
@@ -1121,7 +1295,11 @@ async def rune_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.message.reply_text(text, parse_mode="HTML")
     except Exception:
         bot.logger.exception("Failed to handle rune_info callback")
-        await query.answer("Не получилось показать традиционное значение.", show_alert=True)
+        await _safe_callback_answer(query)
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text="Не получилось показать значение руны. Открой справочник заново.",
+        )
 
 
 async def year_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1151,9 +1329,16 @@ async def year_rasklad_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 return
             from year_rasklad import send_year_rasklad_from_callback
             await send_year_rasklad_from_callback(update, context, user_id, year)
+        else:
+            await query.answer("Эта кнопка устарела.", show_alert=True)
     except Exception:
         bot.logger.exception("Failed to handle year rasklad callback")
-        await query.answer("Что-то пошло не так.", show_alert=True)
+        await _safe_callback_answer(query)
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text="Не получилось открыть месяц. Запусти расклад на год заново.",
+            reply_markup=build_main_keyboard(update.effective_user.id),
+        )
 
 
 async def show_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1165,24 +1350,45 @@ async def show_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
-async def _keep_alive_ping(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Ping own /health endpoint every 10 min so Render free tier doesn't spin down."""
-    if not bot.WEBHOOK_URL:
-        return
-    import httpx
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.get(f"{bot.WEBHOOK_URL}/health")
-    except Exception:
-        pass
-
-
 def final_build_application():
     if not bot.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Add it in environment variables.")
-    bot.init_db()
-    init_support_db()
-    app = bot.Application.builder().token(bot.BOT_TOKEN).post_init(bot.post_init).build()
+    from neon_persistence import NeonPersistence
+
+    app = (
+        bot.Application.builder()
+        .token(bot.BOT_TOKEN)
+        .persistence(NeonPersistence())
+        .post_init(bot.post_init)
+        .build()
+    )
+
+    async def warm_databases() -> None:
+        """Warm Neon after the HTTP server starts, not on the cold-start path."""
+        import asyncio
+        try:
+            await asyncio.to_thread(bot.init_db)
+            await asyncio.to_thread(init_support_db)
+        except Exception:
+            bot.logger.exception("Background database warmup failed")
+
+    app.bot_data["startup_warmup"] = warm_databases
+
+    async def scheduled_maintenance() -> str:
+        """Run all daily maintenance from one authenticated Cloud Scheduler call."""
+        from types import SimpleNamespace
+
+        # Each recipient is claimed independently in daily_broadcast. This
+        # lets a retry resume after a partial failure without duplicating
+        # messages that were already delivered.
+        job_context = SimpleNamespace(bot=app.bot)
+        await send_daily_rune(job_context)
+        await send_weekly_question(job_context)
+        await send_premium_expiry_warnings(job_context)
+        await send_monthly_rune(job_context)
+        return "OK"
+
+    app.bot_data["scheduled_maintenance"] = scheduled_maintenance
     app.add_handler(CommandHandler("start", final_start_command))
     app.add_handler(CommandHandler("help", product_runtime.bot.help_command))
     app.add_handler(CommandHandler("profile", product_runtime.bot.profile_command))
@@ -1192,6 +1398,7 @@ def final_build_application():
     app.add_handler(CommandHandler("rasklad", product_runtime.bot.rasklad_command))
     app.add_handler(CommandHandler("operator", operator_command))
     app.add_handler(CommandHandler("whoami", whoami_command))
+    app.add_handler(CommandHandler("where_admin", where_admin_command))
     app.add_handler(CommandHandler("activatepremium", activatepremium_command))
     app.add_handler(CommandHandler("claim", claim_command))
     app.add_handler(CommandHandler("answer", answer_command))
@@ -1204,6 +1411,8 @@ def final_build_application():
     app.add_handler(CommandHandler("menu", show_menu_command))
     app.add_handler(CallbackQueryHandler(final_onboarding_callback, pattern=r"^onboarding:"))
     app.add_handler(CallbackQueryHandler(product_runtime.settings_callback, pattern=r"^settings:deck:"))
+    app.add_handler(CallbackQueryHandler(spread_page_callback, pattern=r"^spread_page:"))
+    app.add_handler(CallbackQueryHandler(reading_menu_callback, pattern=r"^reading:menu$"))
     app.add_handler(CallbackQueryHandler(trigger_question_callback, pattern=r"^trigger_q:"))
     app.add_handler(CallbackQueryHandler(rune_info_callback, pattern=r"^rune_info:"))
     app.add_handler(CallbackQueryHandler(weekly_day_callback, pattern=r"^weekly_day:"))
@@ -1218,26 +1427,20 @@ def final_build_application():
     app.add_handler(MessageHandler((filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, operator_media_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, final_text_router))
     app.add_error_handler(bot.error_handler)
-    # Daily broadcast job — 09:00 Moscow time every day
-    app.job_queue.run_daily(send_daily_rune, time=BROADCAST_TIME, name="daily_rune_broadcast")
-    # Weekly reflection question — runs daily at 07:00 UTC, filters by user's preferred day
-    from datetime import time as dtime, timezone
-    weekly_time = dtime(7, 0, tzinfo=timezone.utc)
-    app.job_queue.run_daily(send_weekly_question, time=weekly_time, name="weekly_question")
-    # Premium expiry warnings — check daily at 08:00 Moscow (05:00 UTC)
-    expiry_time = dtime(5, 0, tzinfo=timezone.utc)
-    app.job_queue.run_daily(send_premium_expiry_warnings, time=expiry_time, name="premium_expiry_warnings")
-    # Monthly rune — runs daily at 07:00 UTC, acts only on day==1
-    monthly_time = dtime(7, 0, tzinfo=timezone.utc)
-    app.job_queue.run_daily(send_monthly_rune, time=monthly_time, name="monthly_rune")
-    # Keep Render free tier awake: ping /health every 10 minutes
-    # Without this, Render spins down after 15 min idle → first webhook times out
-    from datetime import timedelta
-    app.job_queue.run_repeating(_keep_alive_ping, interval=timedelta(minutes=10), first=60, name="keep_alive")
+    if not bot.SCHEDULER_SECRET:
+        # Local/polling fallback. In Cloud Run, configure SCHEDULER_SECRET and
+        # invoke /tasks/scheduled so work happens inside a billable request.
+        app.job_queue.run_daily(send_daily_rune, time=BROADCAST_TIME, name="daily_rune_broadcast")
+        from datetime import time as dtime, timezone
+        weekly_time = dtime(7, 0, tzinfo=timezone.utc)
+        app.job_queue.run_daily(send_weekly_question, time=weekly_time, name="weekly_question")
+        expiry_time = dtime(5, 0, tzinfo=timezone.utc)
+        app.job_queue.run_daily(send_premium_expiry_warnings, time=expiry_time, name="premium_expiry_warnings")
+        monthly_time = dtime(7, 0, tzinfo=timezone.utc)
+        app.job_queue.run_daily(send_monthly_rune, time=monthly_time, name="monthly_rune")
     return app
 
 
-bot.get_rune_image_path = robust_get_rune_image_path
 bot.build_application = final_build_application
 product_runtime.human_reading_command = human_reading_command
 product_runtime.handle_human_request = handle_human_request

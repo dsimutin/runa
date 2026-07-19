@@ -4,6 +4,22 @@ PAYMENT_PHONE = "+79992218689"
 PAYMENT_CARD = "5536914130694684"
 PAYMENT_AMOUNT = "100"
 
+
+def format_card_number(value: str) -> str:
+    digits = "".join(char for char in value if char.isdigit())
+    return " ".join(digits[index:index + 4] for index in range(0, len(digits), 4))
+
+
+def format_phone_number(value: str) -> str:
+    digits = "".join(char for char in value if char.isdigit())
+    if len(digits) == 11 and digits[0] in {"7", "8"}:
+        return f"+7 {digits[1:4]} {digits[4:7]}-{digits[7:9]}-{digits[9:11]}"
+    return value
+
+
+PAYMENT_CARD_DISPLAY = format_card_number(PAYMENT_CARD)
+PAYMENT_PHONE_DISPLAY = format_phone_number(PAYMENT_PHONE)
+
 HUMAN_READING_TEXT = (
     "🕯 <b>Личный расклад</b>\n\n"
     "Живой разбор от человека: пишешь вопрос одним сообщением — "
@@ -13,8 +29,8 @@ HUMAN_READING_TEXT = (
     "<b>🕐 Время выполнения:</b> 5–10 минут после оплаты\n"
     "<b>🕓 Доступно:</b> 19:00 – 22:00 (Мск)\n\n"
     "💳 <b>Реквизиты для оплаты</b>\n"
-    f"Карта:\n<pre>{PAYMENT_CARD}</pre>\n"
-    f"СБП по номеру телефона:\n<pre>{PAYMENT_PHONE}</pre>\n\n"
+    f"Карта: <code>{PAYMENT_CARD_DISPLAY}</code>\n"
+    f"СБП: <code>{PAYMENT_PHONE_DISPLAY}</code>\n\n"
     "Любой банк → перевод по номеру карты или по номеру телефона через СБП. "
     "Сумма ровно 100 ₽.\n\n"
     "После оплаты нажми кнопку «Я оплатил» и пришли вопрос следующим сообщением.\n\n"

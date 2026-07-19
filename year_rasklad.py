@@ -1,15 +1,36 @@
 """Расклад на год — 12 рун на 12 месяцев."""
+import asyncio
 import hashlib
+import re
 from datetime import date
 from typing import Any, Dict, List
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 
+from reading_format import reading_title, rune_block, section_title
+
 MONTH_NAMES = [
     "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 ]
+
+
+def build_month_interpretation(rune_key: str, palette: str) -> str:
+    """Return a month-scale reading, never a recycled card-of-the-day text."""
+    from rune_decks_approved import get_deck_meaning
+
+    meaning = get_deck_meaning(rune_key, palette, False)
+    body = meaning["text"]
+    body = re.sub(r"\bСейчас\b", "В этом месяце", body)
+    body = re.sub(r"\bсейчас\b", "в этом месяце", body)
+    body = re.sub(r"\bСегодня\b", "В течение месяца", body)
+    body = re.sub(r"\bсегодня\b", "в течение месяца", body)
+    advice = meaning["advice"].strip()
+    return (
+        f"{section_title('✦', 'Тема месяца')}\n{body}\n\n"
+        f"{section_title('🧭', 'Ориентир месяца')}\n{advice}"
+    )
 
 
 def _generate_year_runes(user_id: int, year: int, runes: List[Dict[str, Any]]) -> List[str]:
@@ -56,9 +77,9 @@ async def send_year_rasklad(update, context) -> None:
 
     user_id = update.effective_user.id
     year = date.today().year
-    rune_names = get_year_runes(user_id, year, RUNES)
+    rune_names = await asyncio.to_thread(get_year_runes, user_id, year, RUNES)
 
-    text = f"🗓 <b>Расклад на {year} год</b>\n\nНажми на месяц — увидишь трактовку руны."
+    text = f"{reading_title('🗓', f'Расклад на {year} год')}\n\nНажми на месяц — увидишь трактовку руны."
     keyboard = _build_year_keyboard(rune_names, user_id, year)
 
     message = update.effective_message
@@ -73,7 +94,6 @@ async def send_year_rasklad(update, context) -> None:
 async def send_rune_year_details(update, context, user_id: int, year: int, month_num: int) -> None:
     """Show interpretation for a specific month with navigation."""
     import bot as _bot
-    from rune_text_repository import get_daily_text
     from runes_data import RUNES, get_rune_by_name
 
     query = update.callback_query
@@ -81,7 +101,7 @@ async def send_rune_year_details(update, context, user_id: int, year: int, month
         await query.answer()
 
     palette = _bot.get_user_palette(update)
-    rune_names = get_year_runes(user_id, year, RUNES)
+    rune_names = await asyncio.to_thread(get_year_runes, user_id, year, RUNES)
     rune_name = rune_names[month_num - 1]
     rune = get_rune_by_name(rune_name)
 
@@ -90,9 +110,10 @@ async def send_rune_year_details(update, context, user_id: int, year: int, month
     is_current = year == today.year and month_num == today.month
     marker = "✅" if is_past else ("▶️" if is_current else "·")
 
-    interpretation = get_daily_text(rune["key"], palette, "up")
+    interpretation = build_month_interpretation(rune["key"], palette)
     message_text = (
-        f"{marker} <b>{MONTH_NAMES[month_num - 1]} {year}</b> — {rune_name}\n\n"
+        f"{marker} <b>{MONTH_NAMES[month_num - 1]} {year}</b>\n\n"
+        f"{rune_block(rune_name)}\n\n"
         f"{interpretation}"
     )
 
@@ -129,8 +150,8 @@ async def send_year_rasklad_from_callback(update, context, user_id: int, year: i
     if query:
         await query.answer()
 
-    rune_names = get_year_runes(user_id, year, RUNES)
-    text = f"🗓 <b>Расклад на {year} год</b>\n\nНажми на месяц — увидишь трактовку руны."
+    rune_names = await asyncio.to_thread(get_year_runes, user_id, year, RUNES)
+    text = f"{reading_title('🗓', f'Расклад на {year} год')}\n\nНажми на месяц — увидишь трактовку руны."
     keyboard = _build_year_keyboard(rune_names, user_id, year)
 
     if query and query.message:

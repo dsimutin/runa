@@ -1,5 +1,6 @@
 """Premium subscription logic for the rune bot."""
 import os
+import time
 from datetime import date, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -12,6 +13,8 @@ PREMIUM_MONTHLY_READINGS = 3
 TRIAL_DAYS = 7
 
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
+_STATUS_CACHE_TTL = 30.0
+_status_cache: dict[int, tuple[float, dict]] = {}
 
 PREMIUM_BENEFITS = (
     "💠 <b>Премиум-подписка</b>\n\n"
@@ -21,7 +24,7 @@ PREMIUM_BENEFITS = (
     "🕯 <b>3 личных расклада в месяц</b> — живой ответ человека на твой вопрос за 5–10 минут (19:00–22:00 Мск).\n\n"
     "🪬 <b>Еженедельный вопрос для рефлексии</b> — руна недели и вопрос в выбранный тобой день.\n\n"
     f"<b>Стоимость: {PREMIUM_PRICE_STARS} Stars / {PREMIUM_PRICE_RUB} ₽ в месяц</b>\n\n"
-    f"🎁 <b>Попробовать бесплатно</b> — {TRIAL_DAYS} дней со всеми функциями премиума"
+    f"🎁 <b>Попробовать бесплатно</b> — {TRIAL_DAYS} дней: премиум-колода, руна дня и расклад на год"
 )
 
 
@@ -45,14 +48,33 @@ def get_premium_keyboard(user_id: int = 0) -> InlineKeyboardMarkup:
 
 def is_premium_active(user_id: int) -> bool:
     """Return True if paid premium OR trial is currently active."""
+    return get_premium_state(user_id)[0]
+
+
+def _get_premium_status_cached(user_id: int) -> dict:
+    cached = _status_cache.get(user_id)
+    if cached and time.monotonic() - cached[0] < _STATUS_CACHE_TTL:
+        return dict(cached[1])
     from database import get_premium_status
+
     status = get_premium_status(user_id)
+    _status_cache[user_id] = (time.monotonic(), dict(status))
+    return status
+
+
+def _invalidate_premium_status(user_id: int) -> None:
+    _status_cache.pop(user_id, None)
+
+
+def get_premium_state(user_id: int) -> tuple[bool, bool]:
+    """Return ``(active, trial)`` using one database round trip."""
+    status = _get_premium_status_cached(user_id)
 
     expires_at = status.get("expires_at")
     if expires_at:
         try:
             if date.fromisoformat(expires_at) > date.today():
-                return True
+                return True, False
         except ValueError:
             pass
 
@@ -60,40 +82,21 @@ def is_premium_active(user_id: int) -> bool:
     if trial_expires_at:
         try:
             if date.fromisoformat(trial_expires_at) > date.today():
-                return True
+                return True, True
         except ValueError:
             pass
 
-    return False
+    return False, False
 
 
 def is_trial_active(user_id: int) -> bool:
     """Return True if the user is on a trial (not paid premium)."""
-    from database import get_premium_status
-    status = get_premium_status(user_id)
-
-    expires_at = status.get("expires_at")
-    if expires_at:
-        try:
-            if date.fromisoformat(expires_at) > date.today():
-                return False
-        except ValueError:
-            pass
-
-    trial_expires_at = status.get("trial_expires_at")
-    if trial_expires_at:
-        try:
-            return date.fromisoformat(trial_expires_at) > date.today()
-        except ValueError:
-            pass
-
-    return False
+    return get_premium_state(user_id)[1]
 
 
 def is_trial_used(user_id: int) -> bool:
     """Return True if the user has already used or is using a trial."""
-    from database import get_premium_status
-    status = get_premium_status(user_id)
+    status = _get_premium_status_cached(user_id)
     return bool(status.get("trial_expires_at"))
 
 
@@ -102,6 +105,7 @@ def activate_trial(user_id: int) -> str:
     from database import set_trial_expires, set_user_palette
     expires_at = (date.today() + timedelta(days=TRIAL_DAYS)).isoformat()
     set_trial_expires(user_id, expires_at)
+    _invalidate_premium_status(user_id)
     try:
         set_user_palette(user_id, "premium")
     except Exception:
@@ -114,6 +118,7 @@ def activate_premium(user_id: int) -> None:
     expires_at = (date.today() + timedelta(days=31)).isoformat()
     set_premium_expires(user_id, expires_at)
     reset_premium_readings(user_id)
+    _invalidate_premium_status(user_id)
     try:
         set_user_palette(user_id, "premium")
     except Exception:
@@ -124,8 +129,7 @@ def get_free_readings_left(user_id: int) -> int:
     """Trial users get 0 free readings. Paid premium users get 3/month."""
     if is_trial_active(user_id):
         return 0
-    from database import get_premium_status
-    status = get_premium_status(user_id)
+    status = _get_premium_status_cached(user_id)
     used = status.get("readings_used", 0) or 0
     return max(0, PREMIUM_MONTHLY_READINGS - used)
 
@@ -133,3 +137,4 @@ def get_free_readings_left(user_id: int) -> int:
 def use_free_reading(user_id: int) -> None:
     from database import increment_premium_readings
     increment_premium_readings(user_id)
+    _invalidate_premium_status(user_id)

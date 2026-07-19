@@ -25,11 +25,30 @@ RUNE_FILES = [
     ("othala", "Отал", "24-othala.jpg"),
 ]
 
+# A rune can only have a reversed position when its glyph is visibly different
+# after a 180-degree turn.  This list follows the actual glyph variants used by
+# the three bundled decks (rather than pretending every historical variant is
+# drawn identically).  Their difficult/shadow aspects still remain available in
+# the texts, but are not presented as a physically "reversed" card.
+NON_REVERSIBLE_RUNE_KEYS = {
+    "gebo",
+    "hagalaz",
+    "nauthiz",
+    "isa",
+    "jera",
+    "eihwaz",
+    "sowilo",
+    "ingwaz",
+    "dagaz",
+    "wyrd",
+}
+
 BLANK_RUNE = {
     "key": "wyrd",
     "name": "Пустая руна",
     "image_file": None,
     "palette_image_files": {"light": "00_light.jpg", "dark": "00_dark.jpg", "premium": "00_premium.jpg"},
+    "reversible": False,
 }
 
 RUNES = []
@@ -39,6 +58,7 @@ for key, name, image_file in RUNE_FILES:
             "key": key,
             "name": name,
             "image_file": image_file,
+            "reversible": key not in NON_REVERSIBLE_RUNE_KEYS,
         }
     )
 

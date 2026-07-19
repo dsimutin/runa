@@ -1,12 +1,17 @@
 import logging
 import os
 import random
+import time
+import json
 from contextlib import contextmanager
 from typing import Any, Dict, List, Tuple
+from urllib.parse import quote
 
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
+
+from rune_text_repository import normalize_orientation, random_orientation
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +19,10 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
 _schema_initialized = False
 _pool: psycopg2.pool.ThreadedConnectionPool | None = None
+_profile_cache: dict[int, tuple[float, Dict[str, Any] | None]] = {}
+_PROFILE_CACHE_TTL = 600.0
+_connection_last_used: dict[int, float] = {}
+_CONNECTION_HEALTHCHECK_INTERVAL = 60.0
 
 
 class DatabaseError(Exception):
@@ -41,6 +50,13 @@ def _conn_url() -> str:
         extra.append("keepalives_idle=10")
         extra.append("keepalives_interval=5")
         extra.append("keepalives_count=3")
+    if "options=" not in url:
+        # Bound server-side execution and lock waits. Normal queries finish in
+        # milliseconds; these limits only cut off pathological stalls.
+        extra.append(
+            "options="
+            + quote("-c statement_timeout=15000 -c lock_timeout=5000", safe="")
+        )
     if extra:
         sep = "&" if "?" in url else "?"
         url += sep + "&".join(extra)
@@ -58,11 +74,36 @@ def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
 def _db():
     """Borrow a connection from the pool, commit on success, rollback/discard on error."""
     global _pool
+    operation_started = time.monotonic()
+    pool = _get_pool()
     try:
-        conn = _get_pool().getconn()
+        conn = pool.getconn()
     except psycopg2.Error as exc:
         logger.error("DB connection failed: %s", exc)
         raise DatabaseError(f"Connection failed: {exc}") from exc
+
+    # Neon suspends compute and may close idle SSL connections. psycopg2's
+    # local `closed` flag does not notice that until the next query, so verify
+    # connections that have sat in the pool before handing them to callers.
+    last_used = _connection_last_used.get(id(conn), 0.0)
+    if time.monotonic() - last_used >= _CONNECTION_HEALTHCHECK_INTERVAL:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            logger.info("Discarding stale database connection")
+            _connection_last_used.pop(id(conn), None)
+            try:
+                pool.putconn(conn, close=True)
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            try:
+                conn = pool.getconn()
+            except psycopg2.Error as exc:
+                raise DatabaseError(f"Connection refresh failed: {exc}") from exc
     is_broken = False
     try:
         yield conn
@@ -85,14 +126,19 @@ def _db():
         try:
             if is_broken:
                 # Remove broken connection from pool; next getconn() creates a fresh one
-                _get_pool().putconn(conn, close=True)
+                _connection_last_used.pop(id(conn), None)
+                pool.putconn(conn, close=True)
             else:
-                _get_pool().putconn(conn)
+                _connection_last_used[id(conn)] = time.monotonic()
+                pool.putconn(conn)
         except Exception:
             try:
                 conn.close()
             except Exception:
                 pass
+        elapsed = time.monotonic() - operation_started
+        if elapsed >= 0.5:
+            logger.warning("Slow database operation duration_ms=%.1f", elapsed * 1000)
 
 
 def ensure_schema(conn) -> None:
@@ -145,6 +191,58 @@ def ensure_schema(conn) -> None:
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_file_cache (
+                asset_key  TEXT PRIMARY KEY,
+                file_id    TEXT NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scheduled_runs (
+                run_key    TEXT PRIMARY KEY,
+                claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_user_state (
+                user_id    BIGINT PRIMARY KEY,
+                data       JSONB NOT NULL DEFAULT '{}'::jsonb,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_updates (
+                update_id  BIGINT PRIMARY KEY,
+                status     TEXT NOT NULL,
+                claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                finished_at TIMESTAMPTZ
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS telegram_updates_finished_idx ON telegram_updates (finished_at)"
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scheduled_deliveries (
+                delivery_kind TEXT NOT NULL,
+                delivery_date TEXT NOT NULL,
+                user_id       BIGINT NOT NULL,
+                status        TEXT NOT NULL,
+                claimed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                finished_at   TIMESTAMPTZ,
+                PRIMARY KEY (delivery_kind, delivery_date, user_id)
+            )
+            """
+        )
     _schema_initialized = True
 
 
@@ -170,11 +268,15 @@ def ensure_user(user_id: int, preferred_name: str) -> None:
                     """,
                     (user_id, preferred_name or "друг"),
                 )
+        _profile_cache.pop(user_id, None)
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
 
 def get_user_profile(user_id: int) -> Dict[str, Any] | None:
+    cached = _profile_cache.get(user_id)
+    if cached and time.monotonic() - cached[0] < _PROFILE_CACHE_TTL:
+        return cached[1].copy() if cached[1] else None
     try:
         with _db() as conn:
             ensure_schema(conn)
@@ -190,8 +292,9 @@ def get_user_profile(user_id: int) -> Dict[str, Any] | None:
                 )
                 row = cur.fetchone()
                 if not row:
+                    _profile_cache[user_id] = (time.monotonic(), None)
                     return None
-                return {
+                profile = {
                     "preferred_name": row[0],
                     "palette": row[1],
                     "psychotype": row[2],
@@ -200,6 +303,264 @@ def get_user_profile(user_id: int) -> Dict[str, Any] | None:
                     "onboarding_score_dark": row[5] or 0,
                     "onboarding_score_premium": row[6] or 0,
                 }
+                _profile_cache[user_id] = (time.monotonic(), profile)
+                return profile.copy()
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def get_telegram_file_id(asset_key: str) -> str | None:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT file_id FROM telegram_file_cache WHERE asset_key = %s", (asset_key,))
+                row = cur.fetchone()
+                return row[0] if row else None
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def set_telegram_file_id(asset_key: str, file_id: str) -> None:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO telegram_file_cache (asset_key, file_id, updated_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (asset_key) DO UPDATE
+                    SET file_id = EXCLUDED.file_id, updated_at = NOW()
+                    """,
+                    (asset_key, file_id),
+                )
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def delete_telegram_file_id(asset_key: str) -> None:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM telegram_file_cache WHERE asset_key = %s", (asset_key,))
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def claim_scheduled_run(run_key: str) -> bool:
+    """Atomically claim a scheduled run; false means it already ran."""
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO scheduled_runs (run_key) VALUES (%s) ON CONFLICT DO NOTHING",
+                    (run_key,),
+                )
+                return cur.rowcount == 1
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def load_user_state(user_id: int) -> Dict[str, Any]:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT data FROM telegram_user_state WHERE user_id = %s", (user_id,))
+                row = cur.fetchone()
+                return dict(row[0]) if row and row[0] else {}
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def load_all_user_states() -> Dict[int, Dict[str, Any]]:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT user_id, data FROM telegram_user_state")
+                states = {int(row[0]): dict(row[1] or {}) for row in cur.fetchall()}
+                # Warm the profile cache in the same startup transaction so
+                # the first /start or reading does not need another Neon trip.
+                cur.execute(
+                    """
+                    SELECT user_id, preferred_name, palette, psychotype, onboarding_step,
+                           onboarding_score_light, onboarding_score_dark,
+                           onboarding_score_premium
+                    FROM users
+                    """
+                )
+                now = time.monotonic()
+                for row in cur.fetchall():
+                    _profile_cache[int(row[0])] = (
+                        now,
+                        {
+                            "preferred_name": row[1],
+                            "palette": row[2],
+                            "psychotype": row[3],
+                            "onboarding_step": row[4] or 0,
+                            "onboarding_score_light": row[5] or 0,
+                            "onboarding_score_dark": row[6] or 0,
+                            "onboarding_score_premium": row[7] or 0,
+                        },
+                    )
+                return states
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def save_user_state(user_id: int, data: Dict[str, Any]) -> None:
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO telegram_user_state (user_id, data, updated_at)
+                    VALUES (%s, %s::jsonb, NOW())
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET data = EXCLUDED.data, updated_at = NOW()
+                    """,
+                    (user_id, payload),
+                )
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def delete_user_state(user_id: int) -> None:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM telegram_user_state WHERE user_id = %s", (user_id,))
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def claim_telegram_update(update_id: int) -> bool:
+    """Claim an update globally, allowing recovery of abandoned claims."""
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO telegram_updates (update_id, status)
+                    VALUES (%s, 'processing')
+                    ON CONFLICT (update_id) DO UPDATE
+                    SET status = 'processing', claimed_at = NOW(), finished_at = NULL
+                    WHERE telegram_updates.status = 'failed'
+                       OR (telegram_updates.status = 'processing'
+                           AND telegram_updates.claimed_at < NOW() - INTERVAL '5 minutes')
+                    RETURNING update_id
+                    """,
+                    (update_id,),
+                )
+                return cur.fetchone() is not None
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def finish_telegram_update(update_id: int, success: bool) -> None:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE telegram_updates
+                    SET status = %s, finished_at = NOW()
+                    WHERE update_id = %s
+                    """,
+                    ("done" if success else "failed", update_id),
+                )
+                if success and random.random() < 0.01:
+                    cur.execute(
+                        "DELETE FROM telegram_updates WHERE finished_at < NOW() - INTERVAL '7 days'"
+                    )
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def save_user_state_and_finish_update(
+    user_id: int, data: Dict[str, Any], update_id: int
+) -> None:
+    """Persist state and acknowledge its Telegram update atomically."""
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO telegram_user_state (user_id, data, updated_at)
+                    VALUES (%s, %s::jsonb, NOW())
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET data = EXCLUDED.data, updated_at = NOW()
+                    """,
+                    (user_id, payload),
+                )
+                cur.execute(
+                    """
+                    UPDATE telegram_updates
+                    SET status = 'done', finished_at = NOW()
+                    WHERE update_id = %s
+                    """,
+                    (update_id,),
+                )
+                if random.random() < 0.01:
+                    cur.execute(
+                        "DELETE FROM telegram_updates WHERE finished_at < NOW() - INTERVAL '7 days'"
+                    )
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def claim_scheduled_delivery(kind: str, delivery_date: str, user_id: int) -> bool:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO scheduled_deliveries
+                        (delivery_kind, delivery_date, user_id, status)
+                    VALUES (%s, %s, %s, 'processing')
+                    ON CONFLICT (delivery_kind, delivery_date, user_id) DO UPDATE
+                    SET status = 'processing', claimed_at = NOW(), finished_at = NULL
+                    WHERE scheduled_deliveries.status = 'failed'
+                       OR (scheduled_deliveries.status = 'processing'
+                           AND scheduled_deliveries.claimed_at < NOW() - INTERVAL '15 minutes')
+                    RETURNING user_id
+                    """,
+                    (kind, delivery_date, user_id),
+                )
+                return cur.fetchone() is not None
+    except psycopg2.Error as exc:
+        raise DatabaseError(str(exc)) from exc
+
+
+def finish_scheduled_delivery(kind: str, delivery_date: str, user_id: int, success: bool) -> None:
+    try:
+        with _db() as conn:
+            ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE scheduled_deliveries
+                    SET status = %s, finished_at = NOW()
+                    WHERE delivery_kind = %s AND delivery_date = %s AND user_id = %s
+                    """,
+                    ("done" if success else "failed", kind, delivery_date, user_id),
+                )
+                if random.random() < 0.01:
+                    cur.execute(
+                        "DELETE FROM scheduled_deliveries WHERE finished_at < NOW() - INTERVAL '45 days'"
+                    )
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
@@ -222,6 +583,7 @@ def start_onboarding(user_id: int) -> None:
                     """,
                     (user_id,),
                 )
+        _profile_cache.pop(user_id, None)
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
@@ -324,6 +686,8 @@ def save_onboarding_answer(user_id: int, answer: str, total_questions: int) -> D
                 }
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
+    finally:
+        _profile_cache.pop(user_id, None)
 
 
 def set_user_palette(user_id: int, palette: str) -> None:
@@ -337,14 +701,13 @@ def set_user_palette(user_id: int, palette: str) -> None:
                     "UPDATE users SET palette = %s, psychotype = %s WHERE user_id = %s",
                     (palette, _psychotype_for_palette(palette), user_id),
                 )
+        _profile_cache.pop(user_id, None)
     except psycopg2.Error as exc:
         raise DatabaseError(str(exc)) from exc
 
 
 def _random_orientation_for_rune(rune: Dict[str, Any]) -> str:
-    if rune.get("key") in {"wyrd", "blank"} or rune.get("name") == "Пустая руна":
-        return "up"
-    return random.choice(["up", "rev"])
+    return random_orientation(rune.get("key", ""))
 
 
 def get_or_create_daily_card(user_id: int, day: str, runes: List[Dict[str, Any]]) -> Tuple[str, str]:
@@ -360,7 +723,8 @@ def get_or_create_daily_card(user_id: int, day: str, runes: List[Dict[str, Any]]
                 row = cur.fetchone()
 
                 if row and row[1] in DAILY_ORIENTATIONS:
-                    orientation = "up" if row[0] == "Пустая руна" else row[1]
+                    rune = next((r for r in runes if r["name"] == row[0]), None)
+                    orientation = normalize_orientation(rune.get("key", "") if rune else "", row[1])
                     if orientation != row[1]:
                         cur.execute(
                             "UPDATE daily_runes SET aux_rune = %s WHERE user_id = %s AND date = %s",
@@ -418,7 +782,8 @@ def get_broadcast_users() -> List[Dict[str, Any]]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT user_id, preferred_name, palette, weekly_question_day
+                    SELECT user_id, preferred_name, palette, weekly_question_day,
+                           premium_expires_at
                     FROM users
                     WHERE palette IS NOT NULL AND broadcast_enabled = 1
                     """
@@ -430,6 +795,7 @@ def get_broadcast_users() -> List[Dict[str, Any]]:
                         "preferred_name": row[1],
                         "palette": row[2],
                         "weekly_question_day": row[3] if row[3] is not None else 6,
+                        "premium_expires_at": row[4],
                     }
                     for row in rows
                 ]

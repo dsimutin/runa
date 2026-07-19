@@ -7,6 +7,7 @@ from rune_text_data import (
     rune_day_texts,
     sphere_answer_texts,
 )
+from runes_data import NON_REVERSIBLE_RUNE_KEYS
 
 PALETTES = {"light", "dark", "premium"}
 ORIENTATIONS = {"up", "rev"}
@@ -94,6 +95,35 @@ def _normalize_rune_names_in_text(text: str) -> str:
     return text
 
 
+def _normalize_user_address(text: str) -> str:
+    """Keep legacy compiled spread texts consistent with the bot's «ты» voice."""
+    replacements = (
+        (r"\bрядом с вами\b", "рядом с тобой"),
+        (r"\bс вами\b", "с тобой"),
+        (r"\bу вас\b", "у тебя"),
+        (r"\bв вас\b", "в тебе"),
+        (r"\bк вам\b", "к тебе"),
+        (r"\bдля вас\b", "для тебя"),
+        (r"\bваша\b", "твоя"),
+        (r"\bваше\b", "твоё"),
+        (r"\bвашей\b", "твоей"),
+        (r"\bвашу\b", "твою"),
+        (r"\bваши\b", "твои"),
+        (r"\bваших\b", "твоих"),
+        (r"\bвашим\b", "твоим"),
+        (r"\bвам\b", "тебе"),
+        (r"\bвас\b", "тебя"),
+    )
+    for pattern, replacement in replacements:
+        text = re.sub(
+            pattern,
+            lambda match: replacement.capitalize() if match.group(0)[0].isupper() else replacement,
+            text,
+            flags=re.IGNORECASE,
+        )
+    return text
+
+
 RUNE_KEY_ALIASES = {
     "teiwaz": "tiwaz",
     "tiwaz": "tiwaz",
@@ -161,14 +191,14 @@ def normalize_palette(palette: str) -> str:
 
 def normalize_orientation(rune_key: str, orientation: str) -> str:
     key = normalize_rune_key(rune_key)
-    if key == "wyrd":
+    if key in NON_REVERSIBLE_RUNE_KEYS:
         return "up"
     orientation = (orientation or "up").strip().lower()
     return orientation if orientation in ORIENTATIONS else "up"
 
 
 def get_relationship_trio_texts(rune1_key: str, rune2_key: str, rune3_key: str, palette: str) -> Dict[str, str]:
-    """Texts for 'Ты' / 'Партнёр' / 'Между вами' readings (pair & relationship spreads).
+    """Texts for both people and the connection in a relationship spread.
 
     IMPORTANT: this does NOT reuse the past/present/future spread texts.
     Those are written as position-of-a-situation narratives (they literally
@@ -201,13 +231,42 @@ def daily_texts() -> Dict[str, Any]:
 
 def random_orientation(rune_key: str) -> str:
     key = normalize_rune_key(rune_key)
-    if key == "wyrd":
+    if key in NON_REVERSIBLE_RUNE_KEYS:
         return "up"
     return random.choice(["up", "rev"])
 
 
-def orientation_label(orientation: str) -> str:
+def is_reversible(rune_key: str) -> bool:
+    return normalize_rune_key(rune_key) not in NON_REVERSIBLE_RUNE_KEYS
+
+
+def orientation_label(orientation: str, rune_key: str = "") -> str:
+    if rune_key and not is_reversible(rune_key):
+        return "необратимая"
     return "прямое" if orientation == "up" else "перевёрнутое"
+
+
+def orientation_symbol(rune_key: str, orientation: str) -> str:
+    if not is_reversible(rune_key):
+        return "◆"
+    return "↑" if orientation == "up" else "↓"
+
+
+def yes_no_draw(rune_key: str) -> tuple[str, str]:
+    """Return visual orientation and answer polarity for a yes/no draw.
+
+    For reversible glyphs the established behaviour remains intact: upright
+    means yes and reversed means no.  A non-reversible glyph has no honest
+    visual reversal, so its polarity is drawn independently while the card
+    remains upright.  This prevents symmetric runes from becoming automatic
+    "yes" answers.
+    """
+    if normalize_rune_key(rune_key) == "wyrd":
+        return "up", "unknown"
+    orientation = random_orientation(rune_key)
+    if is_reversible(rune_key):
+        return orientation, "yes" if orientation == "up" else "no"
+    return orientation, random.choice(["yes", "no"])
 
 
 def draw_rune_with_orientation(runes: List[Dict[str, Any]]) -> tuple[Dict[str, Any], str]:
@@ -221,7 +280,7 @@ def draw_distinct_runes_with_orientations(runes: List[Dict[str, Any]], count: in
 
 
 def draw_yes_no_rune(runes: List[Dict[str, Any]]) -> Dict[str, Any]:
-    available = set(sphere_answer_texts().keys())
+    available = set(sphere_answer_texts().keys()) | {"wyrd"}
     eligible = [rune for rune in runes if normalize_rune_key(rune.get("key", "")) in available]
     if not eligible:
         eligible = runes
@@ -268,27 +327,62 @@ def get_rasklad_text(rune_key: str, palette: str, orientation: str, position: st
 
     return {
         "name": _normalize_rune_names_in_text(rune_data.get("name", "")),
-        "text": _normalize_rune_names_in_text(text),
-        "extra": _normalize_rune_names_in_text(palette_data.get("extra", "")),
+        "text": _normalize_user_address(_normalize_rune_names_in_text(text)),
+        "extra": _normalize_user_address(_normalize_rune_names_in_text(palette_data.get("extra", ""))),
     }
 
 
 def detect_question_sphere(question: str) -> str:
-    question_l = (question or "").lower()
-    scores: Dict[str, int] = {}
-    for sphere, keywords in QUESTION_SPHERE_KEYWORDS.items():
-        score = sum(1 for keyword in keywords if keyword in question_l)
-        if score:
-            scores[sphere] = score
-    if not scores:
+    """Detect the subject area without matching fragments inside other words.
+
+    Domain spheres are deliberately preferred over the generic ``decision``
+    intent.  Thus «стоит ли менять работу» is about work, while «стоит ли
+    соглашаться» falls back to decision.  Timing is treated as an explicit
+    intent and wins when the question contains «когда», «срок» and the like.
+    """
+    question_l = " ".join((question or "").lower().replace("ё", "е").split())
+    if not question_l:
         return "decision"
-    return max(scores, key=scores.get)
+
+    def matches(keyword: str) -> bool:
+        keyword = keyword.replace("ё", "е")
+        # Entries are intentional stems (работ-, отнош-), so allow the final
+        # word to continue, but require a real word boundary at its start.
+        parts = [re.escape(part) for part in keyword.split()]
+        pattern = r"(?<!\w)" + r"\s+".join(parts) + r"\w*"
+        return re.search(pattern, question_l, flags=re.UNICODE) is not None
+
+    scores = {
+        sphere: sum(1 for keyword in keywords if matches(keyword))
+        for sphere, keywords in QUESTION_SPHERE_KEYWORDS.items()
+    }
+    if scores["timing"]:
+        return "timing"
+    domain_spheres = ("relationships", "work", "money", "health")
+    best_domain = max(domain_spheres, key=lambda sphere: scores[sphere])
+    if scores[best_domain]:
+        return best_domain
+    return "decision"
 
 
 def get_sphere_answer(rune_key: str, palette: str, sphere: str, answer_kind: str) -> Dict[str, str]:
     key = normalize_rune_key(rune_key)
     palette = normalize_palette(palette)
     sphere = (sphere or "decision").strip().lower()
+    if key == "wyrd":
+        return {
+            "short_desc": (
+                "Пустая руна показывает неизвестную переменную: ситуация ещё не сложилась "
+                "настолько, чтобы ответ был честно определён."
+            ),
+            "answer": (
+                "Сейчас нет ясного «да» или «нет». Не заполняй паузу догадками: "
+                "дождись новых фактов и задай вопрос снова позже."
+            ),
+            "sphere": sphere,
+            "sphere_label": SPHERE_LABELS.get(sphere, "Принятие решений"),
+            "answer_label": "Нет ясного ответа",
+        }
     answer_kind = "answer_yes" if answer_kind == "yes" else "answer_no"
 
     data = sphere_answer_texts()

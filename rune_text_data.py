@@ -9,6 +9,8 @@ The bot must use these datasets as the only source of rune readings:
 import base64
 import gzip
 import json
+import os as _os
+import re as _re
 from functools import lru_cache
 from typing import Any, Dict
 
@@ -618,9 +620,6 @@ AA==
 """
 
 
-
-import os as _os
-import re as _re
 
 @lru_cache(maxsize=None)
 def _decode_json(blob: str) -> Dict[str, Any]:

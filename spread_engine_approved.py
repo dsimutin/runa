@@ -1,7 +1,9 @@
+import asyncio
 from html import escape
-from typing import Any
 
-from rune_decks_approved import get_deck_meaning
+from reading_format import reading_title, rune_block, section_title
+import re
+from typing import Any
 
 TOPIC_KEYWORDS = {
     "love": ["вместе", "отнош", "люб", "чувств", "партнер", "партнёр", "бывш", "верн", "брак", "пара", "скуч", "напиш"],
@@ -25,10 +27,21 @@ RUNE_NAMES = {"fehu":"Феху","uruz":"Уруз","thurisaz":"Турисаз","a
 
 
 def detect_topic(question: str) -> str:
-    q = (question or "").lower()
-    scores = {topic: sum(1 for word in words if word in q) for topic, words in TOPIC_KEYWORDS.items()}
-    best = max(scores, key=scores.get)
-    return best if scores[best] else "general"
+    """Use the same sphere detector as the one-rune answer.
+
+    Keeping one detector prevents the same question being treated as work in
+    one product and as a generic choice in another.
+    """
+    from rune_text_repository import detect_question_sphere
+
+    return {
+        "relationships": "love",
+        "work": "work",
+        "money": "money",
+        "health": "health",
+        "timing": "timing",
+        "decision": "choice",
+    }[detect_question_sphere(question)]
 
 
 def rune_key(rune: dict[str, Any]) -> str:
@@ -58,6 +71,8 @@ def intro_by_topic(topic: str) -> str:
         "love": "Сейчас в центре вопроса не красивые слова, а то, как между вами на самом деле движется тепло, внимание и ответственность.",
         "work": "В этой истории важны не только возможности, но и условия: кто за что отвечает, где есть отдача и где уже начинается перегруз.",
         "money": "Здесь всё лучше смотреть через деньги, силы и цену участия. Не по обещаниям, а по тому, что реально остаётся у тебя на руках.",
+        "health": "В центре вопроса — самочувствие и запас сил. Руны здесь помогают увидеть нагрузку и направление заботы о себе, но не заменяют врача и диагностику.",
+        "timing": "В вопросе о сроках важнее увидеть, что ускоряет или задерживает развитие. Руны показывают динамику, а не гарантированную календарную дату.",
         "choice": "Этот выбор нельзя смотреть только через желание. Важно понять, какой вариант ты выдержишь не один день, а дальше.",
         "conflict": "Здесь уже есть напряжение, даже если его пытаются сгладить. Вопрос в том, где проходит граница и кто готов её уважать.",
         "future": "Ближайшее развитие зависит не от случайности, а от того, что уже повторяется сейчас. Именно это задаёт направление.",
@@ -90,6 +105,10 @@ def final_text(topic: str, last_group: str) -> str:
         return "Не бери на себя больше, пока не станет понятно, где твоя зона ответственности и какая будет отдача."
     if topic == "money":
         return "Сначала считай цену решения, потом уже смотри на обещанную выгоду."
+    if topic == "health":
+        return "Отнесись к сигналам тела серьёзно; при симптомах опирайся на врача, а не только на символический расклад."
+    if topic == "timing":
+        return "Срок прояснится по движению ситуации: смотри, исчезают ли задержки и появляются ли реальные шаги."
     if topic == "choice":
         return "Сильнее тот вариант, после которого тебе не придётся постоянно уговаривать себя."
     if topic == "conflict":
@@ -106,10 +125,9 @@ def final_text(topic: str, last_group: str) -> str:
 def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], str]], deck: str = "premium", name: str = "") -> str:
     """rune_draws: list of (rune_dict, orientation) — orientation is 'up' or 'rev'.
 
-    Orientation genuinely changes the reading: it selects the upright vs
-    reversed text/advice from rune_decks_approved (both were already
-    written and present in the data, just never wired to a real draw),
-    and is shown next to each card name.
+    Orientation and temporal position both change the reading. Each card uses
+    its dedicated past/present/future text, and the future is framed as a
+    trajectory rather than a fixed prediction.
 
     `name`, if given, is used once in the header only — deliberately not
     threaded through every line, to avoid the message reading like it's
@@ -120,23 +138,133 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
     topic = detect_topic(question)
     keys = [rune_key(r) for r in runes]
     groups = [group_of(k) for k in keys]
-    meanings = [get_deck_meaning(k, deck, o == "rev") for k, o in zip(keys, orientations)]
     names = [rune_name(r) for r in runes]
-    arrows = ["↑" if o == "up" else "↓" for o in orientations]
-    cards = " · ".join(f"{escape(name_)} {arrow}" for name_, arrow in zip(names, arrows))
-    safe_question = escape(short_sentence(question, 120))
-    first = escape(short_sentence(meanings[0]["text"], 260))
-    second = escape(short_sentence(meanings[1]["text"], 260))
-    third = escape(short_sentence(meanings[2]["text"], 260))
+    from rune_text_repository import get_rasklad_text, orientation_label
+    orientation_labels = [orientation_label(o, k) for k, o in zip(keys, orientations)]
+    position_descriptions = orientation_labels
+    position_keys = ("past", "present", "future")
+    position_labels = ("Прошлое", "Настоящее", "Будущее")
+    position_texts = []
+    for key, orientation, position, label in zip(keys, orientations, position_keys, position_labels):
+        raw = get_rasklad_text(key, deck, orientation, position)["text"]
+        raw = re.sub(rf"^{label}:\s*", "", raw, flags=re.IGNORECASE)
+        position_texts.append(escape(short_sentence(raw, 360)))
+    first, second, third = position_texts
     bridge = escape(bridge_text(groups, topic))
     finish = escape(final_text(topic, groups[2]))
-    header = f"🔮 <b>{escape(name)}, расклад</b>" if name else "🔮 <b>Расклад</b>"
-    return f"{header}\n\n<i>{safe_question}</i>\n\n<b>{cards}</b>\n\n{escape(intro_by_topic(topic))}\n\n{first}\n\n{second}\n\n{bridge}\n\n───\n\n{third}\n\n───\n\n<b>{finish}</b>"
+    del name  # Kept for API compatibility; private readings need no repeated addressee.
+    header = reading_title("🔮", "Расклад на три руны")
+    return (
+        f"{header}\n\n{escape(intro_by_topic(topic))}\n\n"
+        f"1️⃣ <b>Прошлое</b>\n{rune_block(names[0], position_descriptions[0])}\n\n{first}\n\n"
+        f"2️⃣ <b>Настоящее</b>\n{rune_block(names[1], position_descriptions[1])}\n\n{second}\n\n"
+        f"{section_title('🔗', 'Как связаны руны')}\n{bridge}\n\n"
+        f"3️⃣ <b>Будущее</b>\n{rune_block(names[2], position_descriptions[2])}\n\n"
+        f"<b>Если текущая траектория сохранится</b>\n{third}\n\n"
+        f"───\n\n{finish}"
+    )
+
+
+def build_unified_spread_pages(
+    question: str,
+    rune_draws: list[tuple[dict[str, Any], str]],
+    deck: str = "premium",
+    name: str = "",
+) -> list[str]:
+    """Split the reading into short, navigable pages for Telegram."""
+    full = build_unified_spread(question, rune_draws, deck, name)
+    markers = ("1️⃣ <b>Прошлое", "2️⃣ <b>Настоящее", "3️⃣ <b>Будущее", "───")
+    starts = [full.index(marker) for marker in markers]
+    header = full[:starts[0]].rstrip()
+    past = full[starts[0]:starts[1]].rstrip()
+    present = full[starts[1]:starts[2]].rstrip()
+    future = full[starts[2]:starts[3]].rstrip()
+    summary = full[starts[3]:].replace("───", section_title("🧭", "Итог расклада"), 1).strip()
+    # The conclusion belongs to the projected trajectory: showing it together
+    # with the third rune makes the reading finish naturally without a separate
+    # fourth screen that can feel detached from the future it summarises.
+    return [f"{header}\n\n{past}", present, f"{future}\n\n{summary}"]
+
+
+def spread_page_markup(token: str, page: int, total: int):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton("← Назад", callback_data=f"spread_page:{token}:{page - 1}"))
+    if page + 1 < total:
+        buttons.append(InlineKeyboardButton("Далее →", callback_data=f"spread_page:{token}:{page + 1}"))
+    rows = [buttons] if buttons else []
+    rows.append([InlineKeyboardButton("↩️ Меню", callback_data="reading:menu")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def spread_page_callback(update, context) -> None:
+    from telegram.error import TelegramError
+
+    query = update.callback_query
+    if not query:
+        return
+    match = re.fullmatch(r"spread_page:([a-f0-9]+):(\d+)", query.data or "")
+    if not match:
+        return
+    token, page_raw = match.groups()
+    stored = context.user_data.get("spread_pages") or {}
+    if stored.get("token") != token:
+        await query.answer("Этот расклад уже устарел. Сделай новый.", show_alert=True)
+        return
+    pages = stored.get("pages") or []
+    page = int(page_raw)
+    if page >= len(pages):
+        await query.answer("Страница не найдена.", show_alert=True)
+        return
+    await query.answer()
+    try:
+        if stored.get("media"):
+            await query.edit_message_caption(
+                caption=pages[page],
+                parse_mode="HTML",
+                reply_markup=spread_page_markup(token, page, len(pages)),
+            )
+        else:
+            await query.edit_message_text(
+                pages[page],
+                parse_mode="HTML",
+                reply_markup=spread_page_markup(token, page, len(pages)),
+            )
+    except TelegramError:
+        # An old Telegram client/message can occasionally reject editing.
+        # Continue the reading in a new message instead of losing the page.
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=pages[page],
+            parse_mode="HTML",
+            reply_markup=spread_page_markup(token, page, len(pages)),
+        )
 
 
 async def send_approved_rasklad(update, context, question: str) -> None:
     import bot
+    import time
+    from telegram import ReplyKeyboardRemove
 
+    from question_guard import guarded_question_response
+    guarded_response = guarded_question_response(question)
+    if guarded_response:
+        await bot.send_private_or_group(update, context, guarded_response)
+        return
+
+    started_at = time.perf_counter()
+    status_message = None
+    if update.effective_user:
+        try:
+            status_message = await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text="🔮 Подбираю три руны и собираю расклад…",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        except Exception:
+            bot.logger.debug("Could not send spread progress message", exc_info=True)
     chat = update.effective_chat
     if chat:
         try:
@@ -148,6 +276,81 @@ async def send_approved_rasklad(update, context, question: str) -> None:
         deck = "premium"
     from rune_text_repository import draw_distinct_runes_with_orientations
     rune_draws = draw_distinct_runes_with_orientations(bot.RUNES, 3)
-    image_path = bot.get_rune_image_path(rune_draws[2][0], deck)
-    text = build_unified_spread(question, rune_draws, deck, bot.user_name(update))
-    await bot.send_private_or_group(update, context, text, image_path=image_path)
+    image_paths = [bot.get_rune_image_path(rune, deck) for rune, _ in rune_draws]
+    if not all(image_paths):
+        if status_message:
+            try:
+                await status_message.delete()
+            except Exception:
+                pass
+        await bot.send_missing_image_error(update, context, rune_draws[image_paths.index(None)][0], deck)
+        return
+    from rune_collage import build_spread_collage
+    from rune_text_repository import orientation_label
+    collage_labels = [orientation_label(orientation, rune["key"]) for rune, orientation in rune_draws]
+    text_started_at = time.perf_counter()
+    pages = build_unified_spread_pages(question, rune_draws, deck, bot.user_name(update))
+    text_seconds = time.perf_counter() - text_started_at
+    collage_started_at = time.perf_counter()
+    try:
+        image_path = await asyncio.to_thread(
+            build_spread_collage, image_paths, deck, collage_labels
+        )
+    except Exception:
+        bot.logger.exception("Failed to build three-rune collage; sending text fallback")
+        image_path = None
+    collage_seconds = time.perf_counter() - collage_started_at
+    send_started_at = time.perf_counter()
+    import secrets
+    token = secrets.token_hex(4)
+    media_pages = bool(
+        image_path and all(len(page) <= bot.MAX_PHOTO_CAPTION_LENGTH for page in pages)
+    )
+    context.user_data["spread_pages"] = {
+        "token": token,
+        "pages": pages,
+        "media": media_pages,
+    }
+    if status_message:
+        try:
+            await status_message.delete()
+        except Exception:
+            bot.logger.debug("Could not remove spread progress message", exc_info=True)
+    try:
+        if media_pages:
+            await bot.send_cached_photo(
+                context.bot.send_photo,
+                image_path,
+                chat_id=update.effective_user.id,
+                caption=pages[0],
+                parse_mode="HTML",
+                reply_markup=spread_page_markup(token, 0, len(pages)),
+            )
+        else:
+            if image_path:
+                await bot.send_cached_photo(
+                    context.bot.send_photo,
+                    image_path,
+                    chat_id=update.effective_user.id,
+                )
+            await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text=pages[0],
+                parse_mode="HTML",
+                reply_markup=spread_page_markup(token, 0, len(pages)),
+            )
+    except Exception:
+        bot.logger.exception("Failed to send paginated spread; sending plain fallback")
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=bot.strip_html(build_unified_spread(question, rune_draws, deck, bot.user_name(update))),
+            reply_markup=bot.main_keyboard_for(update.effective_user.id),
+        )
+    finally:
+        bot.logger.info(
+            "Three-rune spread delivered total=%.2fs text=%.3fs collage=%.3fs telegram=%.2fs",
+            time.perf_counter() - started_at,
+            text_seconds,
+            collage_seconds,
+            time.perf_counter() - send_started_at,
+        )

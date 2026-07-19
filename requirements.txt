@@ -1,6 +1,6 @@
-python-telegram-bot[webhooks,job-queue]>=20.0
-python-dotenv>=1.0.0
-openai>=1.0.0
-uvicorn>=0.29.0
-starlette>=0.37.0
-psycopg2-binary>=2.9.9
+python-telegram-bot[webhooks,job-queue]>=21.3,<23
+python-dotenv>=1.0,<2
+uvicorn>=0.29,<1
+starlette>=0.37,<2
+psycopg2-binary>=2.9.9,<3
+Pillow>=10.3,<13
