@@ -12,7 +12,7 @@ from datetime import date, time, timezone, timedelta
 from telegram.error import Forbidden, TelegramError
 from telegram.ext import ContextTypes
 
-from reading_format import reading_title, rune_block
+from reading_format import reading_title, rune_block, section_title
 
 import bot as _bot
 from database import (
@@ -187,7 +187,7 @@ async def send_weekly_question(context: ContextTypes.DEFAULT_TYPE) -> None:
         text = (
             f"{reading_title('🪬', 'Руна недели')}\n\n"
             f"{rune_block(weekly_rune['name'])}\n\n"
-            f"❔ <b>Вопрос для размышления</b>\n{question}\n\n"
+            f"{section_title('💭', 'Вопрос к себе')}\n{question}\n\n"
             f"<i>Можно просто подержать вопрос в голове. "
             f"Или сразу спросить руны — кнопка ниже.</i>"
         )
@@ -301,8 +301,8 @@ async def send_monthly_rune(context: ContextTypes.DEFAULT_TYPE) -> None:
             text = (
                 f"{reading_title(palette_icon, f'Руна месяца · {month_label}')}\n\n"
                 f"{rune_block(monthly_rune['name'])}\n\n"
-                f"🔎 <b>Основной смысл</b>\n{rune_text}\n\n"
-                "🧭 <b>Ориентир на месяц</b>\n"
+                f"{section_title('✦', 'Тема месяца')}\n{rune_text}\n\n"
+                f"{section_title('🧭', 'Ориентир на месяц')}\n"
                 "Держи смысл этой руны в уме при важных решениях."
             )
             from telegram import ReplyKeyboardRemove

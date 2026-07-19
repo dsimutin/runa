@@ -14,3 +14,8 @@ def rune_block(name: str, orientation: str | None = None) -> str:
     if orientation:
         result += f"\n<i>{escape(str(orientation))}</i>"
     return result
+
+
+def section_title(icon: str, title: str) -> str:
+    """Return a consistent heading for a semantic block inside a reading."""
+    return f"{icon} <b>{escape(title)}</b>"

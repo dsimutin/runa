@@ -179,7 +179,10 @@ def test_every_daily_reading_fits_photo_caption_and_uses_shared_hierarchy():
                 assert len(text) <= 1024
                 assert "Имя не должно попасть в ответ" not in text
                 assert text.startswith("🌞 <b>Руна дня</b>\n\nᚱ <b>")
-                assert "🔎 <b>Основной смысл</b>" in text
+                assert "✦ <b>Послание руны</b>" in text
+                assert "<i>прямое</i>" not in text
+                assert "<i>перевёрнутое</i>" not in text
+                assert "<i>необратимая</i>" not in text
                 assert "🧭 <b>Ориентир на день</b>" in text
 
 

@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 
-from reading_format import reading_title, rune_block
+from reading_format import reading_title, rune_block, section_title
 
 MONTH_NAMES = [
     "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
@@ -27,7 +27,10 @@ def build_month_interpretation(rune_key: str, palette: str) -> str:
     body = re.sub(r"\bСегодня\b", "В течение месяца", body)
     body = re.sub(r"\bсегодня\b", "в течение месяца", body)
     advice = meaning["advice"].strip()
-    return f"<b>Тема месяца</b>\n{body}\n\n<b>Ориентир месяца</b>\n{advice}"
+    return (
+        f"{section_title('✦', 'Тема месяца')}\n{body}\n\n"
+        f"{section_title('🧭', 'Ориентир месяца')}\n{advice}"
+    )
 
 
 def _generate_year_runes(user_id: int, year: int, runes: List[Dict[str, Any]]) -> List[str]:

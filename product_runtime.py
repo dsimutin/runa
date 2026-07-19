@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes
 import bot
 from database import set_user_palette
 from human_reading import HUMAN_READING_BUTTON, HUMAN_READING_TEXT
-from reading_format import reading_title, rune_block
+from reading_format import reading_title, rune_block, section_title
 from rune_states import ALT_RATE, alt_meaning
 from runes_data import RUNES, get_rune_by_name
 from runes_interpretations import get_rune_day_text
@@ -174,7 +174,7 @@ def build_daily_card_text(
     can never drift into different formats again.
     """
     from rune_decks_approved import get_deck_meaning
-    from rune_text_repository import get_daily_text, orientation_label
+    from rune_text_repository import get_daily_text
 
     try:
         day_text = get_daily_text(rune["key"], palette, orientation)
@@ -189,8 +189,6 @@ def build_daily_card_text(
     except (KeyError, TypeError):
         advice = "Выбери один небольшой шаг, который поддерживает смысл этой руны."
 
-    position = orientation_label(orientation, rune["key"])
-
     if streak >= 2:
         streak_word = "день" if streak == 1 else "дня" if 2 <= streak <= 4 else "дней"
         streak_line = f"\n\n🔥 <b>Серия:</b> {streak} {streak_word} подряд"
@@ -200,10 +198,10 @@ def build_daily_card_text(
     del name  # Do not repeat the user's name inside every personal result.
     return (
         f"{reading_title('🌞', 'Руна дня')}\n\n"
-        f"{rune_block(rune['name'], position)}\n\n"
-        f"🔎 <b>Основной смысл</b>\n{escape(meaning)}\n\n"
-        f"❔ <b>Вопрос для размышления</b>\n{escape(reflection)}\n\n"
-        f"🧭 <b>Ориентир на день</b>\n{escape(advice)}"
+        f"{rune_block(rune['name'])}\n\n"
+        f"{section_title('✦', 'Послание руны')}\n{escape(meaning)}\n\n"
+        f"{section_title('💭', 'Вопрос к себе')}\n{escape(reflection)}\n\n"
+        f"{section_title('🧭', 'Ориентир на день')}\n{escape(advice)}"
         f"{streak_line}"
     )
 
@@ -260,7 +258,7 @@ def product_yes_no_text(
     return (
         f"{reading_title('🔮', 'Ответ руны')}\n\n"
         f"{rune_block(rune_name, orientation_text)}\n\n"
-        f"🔎 <b>Что показывает руна</b>\n{escape(str(sphere_data['short_desc']))}\n\n"
+        f"{section_title('✦', 'Толкование')}\n{escape(str(sphere_data['short_desc']))}\n\n"
         f"{answer_icon} <b>Ответ</b>\n{escape(str(sphere_data['answer']))}\n\n"
         f"<i>Это текущая тенденция, а не неизменный исход.</i>"
     )

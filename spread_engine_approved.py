@@ -1,7 +1,7 @@
 import asyncio
 from html import escape
 
-from reading_format import reading_title, rune_block
+from reading_format import reading_title, rune_block, section_title
 import re
 from typing import Any
 
@@ -158,7 +158,7 @@ def build_unified_spread(question: str, rune_draws: list[tuple[dict[str, Any], s
         f"{header}\n\n{escape(intro_by_topic(topic))}\n\n"
         f"1️⃣ <b>Прошлое</b>\n{rune_block(names[0], position_descriptions[0])}\n\n{first}\n\n"
         f"2️⃣ <b>Настоящее</b>\n{rune_block(names[1], position_descriptions[1])}\n\n{second}\n\n"
-        f"🔗 <b>Связь между рунами</b>\n{bridge}\n\n"
+        f"{section_title('🔗', 'Как связаны руны')}\n{bridge}\n\n"
         f"3️⃣ <b>Будущее</b>\n{rune_block(names[2], position_descriptions[2])}\n\n"
         f"<b>Если текущая траектория сохранится</b>\n{third}\n\n"
         f"───\n\n{finish}"
@@ -179,7 +179,7 @@ def build_unified_spread_pages(
     past = full[starts[0]:starts[1]].rstrip()
     present = full[starts[1]:starts[2]].rstrip()
     future = full[starts[2]:starts[3]].rstrip()
-    summary = full[starts[3]:].replace("───", "🧭 <b>Итог расклада</b>", 1).strip()
+    summary = full[starts[3]:].replace("───", section_title("🧭", "Итог расклада"), 1).strip()
     # The conclusion belongs to the projected trajectory: showing it together
     # with the third rune makes the reading finish naturally without a separate
     # fourth screen that can feel detached from the future it summarises.

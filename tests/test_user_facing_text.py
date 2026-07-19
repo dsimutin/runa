@@ -204,12 +204,15 @@ def test_daily_card_uses_consistent_sections_without_random_headlines():
         "Дмитрий", "light", {"key": "dagaz", "name": "Дагаз"}, "up", "2026-07-18", 2
     )
     assert text.startswith(
-        "🌞 <b>Руна дня</b>\n\nᚱ <b>Дагаз</b>\n<i>необратимая</i>"
+        "🌞 <b>Руна дня</b>\n\nᚱ <b>Дагаз</b>"
     )
     assert "Дмитрий" not in text
-    assert "🔎 <b>Основной смысл</b>" in text
-    assert "❔ <b>Вопрос для размышления</b>" in text
+    assert "необратимая" not in text
+    assert "✦ <b>Послание руны</b>" in text
+    assert "💭 <b>Вопрос к себе</b>" in text
     assert "🧭 <b>Ориентир на день</b>" in text
+    assert "🔎" not in text
+    assert "❔" not in text
     assert "сегодняшний знак" not in text.lower()
     assert "Будь готовы" not in text
 
@@ -230,7 +233,7 @@ def test_yes_no_answer_uses_consistent_sections():
     assert text.startswith("🔮 <b>Ответ руны</b>")
     assert "Дмитрий" not in text
     assert "❓" not in text
-    assert "🔎 <b>Что показывает руна</b>" in text
+    assert "✦ <b>Толкование</b>" in text
     assert "✅ <b>Ответ</b>" in text
 
 
